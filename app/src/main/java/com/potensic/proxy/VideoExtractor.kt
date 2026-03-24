@@ -112,7 +112,7 @@ class VideoExtractor {
                     val pl = readIntLE(payload, 12)
                     val rl = readIntLE(payload, 16)
 
-                    if (w == 1920 && h == 1080 && dt <= 2 && pl > 0 && pl < MAX_FRAME_SIZE && rl > 0 && rl <= pl) {
+                    if (w > 0 && w <= 4096 && h > 0 && h <= 4096 && dt <= 2 && pl > 0 && pl < MAX_FRAME_SIZE && rl > 0 && rl <= pl) {
                         // Valid video frame header — flush previous and start new
                         flushCurrentFrame()
 

@@ -302,11 +302,13 @@ object DroneProtocol {
     }
 
     fun buildLiveViewParams(): ByteArray {
+        // h264Level/h265Level: 0=1080P, 1=720P, 2=480P
+        // h264Rate/h265Rate: bitrate in Kbps (big-endian)
         val liveViewData = byteArrayOf(
             0x00,                   // h264Level = 0 (1080P)
-            0x13, 0x88.toByte(),    // h264Rate = 5000 (big-endian, k53 encoder uses BE)
+            0x13, 0x88.toByte(),   // h264Rate = 5000 Kbps
             0x00,                   // h265Level = 0 (1080P)
-            0x13, 0x88.toByte(),    // h265Rate = 5000 (big-endian)
+            0x13, 0x88.toByte(),   // h265Rate = 5000 Kbps
         )
         val inner = buildInnerCommand(0xD8.toByte(), liveViewData)
         val packet = wrapFE(inner)

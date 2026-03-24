@@ -139,13 +139,11 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     }
 
     private var decoderJob: Job? = null
-
-    // Raw USB data queue for async processing
-    private val rawDataQueue = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
     private var extractorJob: Job? = null
+    private val rawDataQueue = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
 
     override fun onDataReceived(data: ByteArray, length: Int) {
-        // Don't process on USB thread — just queue the data
+        while (rawDataQueue.size > 10) rawDataQueue.poll()
         rawDataQueue.offer(data.copyOf(length))
     }
 
@@ -161,7 +159,6 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                     delay(1)
                 }
             }
-            Log.i("[Service] Extractor loop ended")
         }
     }
 
