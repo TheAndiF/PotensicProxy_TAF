@@ -151,10 +151,15 @@ class WebServer(
                     call.respondBytesWriter(contentType = ContentType.parse("multipart/x-mixed-replace; boundary=frame")) {
                         val boundary = "--frame\r\n"
                         var framesSent = 0
+                        var lastSentTime = 0L
 
                         while (true) {
-                            val jpeg = videoDecoder.jpegQueue.poll()
-                            if (jpeg != null) {
+                            val jpeg = videoDecoder.lastJpeg
+                            val jpegTime = videoDecoder.lastJpegTime
+
+                            if (jpeg != null && jpegTime > lastSentTime) {
+                                // Always send the LATEST frame, skip queue
+                                lastSentTime = jpegTime
                                 val header = "${boundary}Content-Type: image/jpeg\r\nContent-Length: ${jpeg.size}\r\n\r\n"
                                 writeFully(header.toByteArray())
                                 writeFully(jpeg)
@@ -162,12 +167,10 @@ class WebServer(
                                 flush()
                                 framesSent++
                                 if (framesSent % 50 == 0) {
-                                    Log.d("[WebServer] MJPEG: $framesSent frames sent")
+                                    Log.d("[WebServer] MJPEG: $framesSent frames")
                                 }
-                            } else {
-                                // Send last known frame if available (reduces latency)
-                                kotlinx.coroutines.delay(20) // ~50fps max
                             }
+                            kotlinx.coroutines.delay(30) // ~33fps max display rate
                         }
                     }
                 }

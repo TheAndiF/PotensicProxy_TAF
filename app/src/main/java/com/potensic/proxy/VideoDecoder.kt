@@ -24,7 +24,7 @@ class VideoDecoder {
     @Volatile var publishFrame: Boolean = true
 
     companion object {
-        const val MAX_JPEG_QUEUE = 5
+        const val MAX_JPEG_QUEUE = 2 // minimal queue for low latency
         const val JPEG_QUALITY = 95
     }
 

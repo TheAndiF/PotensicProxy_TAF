@@ -201,7 +201,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
                     // But only publish JPEG for clean frames (IDR + first 10 P-frames after IDR)
                     // Beyond that, frames accumulate corruption from lost P-frames
-                    videoDecoder.publishFrame = (framesSinceIdr <= 3)
+                    // ONLY publish IDR frames — zero P-frame artifacts
+                    videoDecoder.publishFrame = nal.isIFrame
 
                     // Broadcast stats periodically
                     if (++statsCounter % 25 == 0) {
