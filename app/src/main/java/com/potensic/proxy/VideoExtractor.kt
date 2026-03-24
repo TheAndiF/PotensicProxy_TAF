@@ -20,7 +20,7 @@ class VideoExtractor {
         const val FE_HEADER_SIZE = 16
         const val VIDEO_HEADER_SIZE = 24
         const val MAX_FRAME_SIZE = 300_000 // IDR can be 130KB+
-        const val MAX_QUEUE_SIZE = 5 // small for low latency
+        const val MAX_QUEUE_SIZE = 15 // enough to feed decoder without starving
 
         val FALLBACK_VPS = hexToBytes("0000000140010c01ffff016000000300a0000003000003007bac0c00011940001a5e02a8")
         val FALLBACK_SPS = hexToBytes("00000001420101016000000300a0000003000003007ba003c08010e58d2ee452fcd404040410000465000069780a10")
@@ -168,11 +168,18 @@ class VideoExtractor {
         val data = if (videoData.size > expectedPayloadLen && expectedPayloadLen > 0)
             videoData.copyOf(expectedPayloadLen) else videoData
 
-        // CRC32 validation — discard corrupted frames
-        val expectedCrc = readIntLE(header, 20)
-        val actualCrc = crc32(data)
-        if (expectedCrc != actualCrc) {
-            return // drop silently
+        // CRC32 validation — discard corrupted P-frames
+        // IDR frames skip CRC (large, may have reassembly rounding)
+        if (data.size == expectedPayloadLen) {
+            val expectedCrc = readIntLE(header, 20)
+            val actualCrc = crc32(data)
+            if (expectedCrc != actualCrc) {
+                // Check if it contains an IDR — let those through regardless
+                val hasIDR = data.size > 5 && findAllNalStartCodes(data).any { pos ->
+                    pos + 4 < data.size && (data[pos + 4].toInt() and 0xFF) == 0x26
+                }
+                if (!hasIDR) return // drop corrupted P-frame
+            }
         }
 
         // Scan NAL units

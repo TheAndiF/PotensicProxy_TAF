@@ -170,7 +170,7 @@ class WebServer(
                                     Log.d("[WebServer] MJPEG: $framesSent frames")
                                 }
                             }
-                            kotlinx.coroutines.delay(30) // ~33fps max display rate
+                            kotlinx.coroutines.delay(16) // ~60fps max display rate
                         }
                     }
                 }

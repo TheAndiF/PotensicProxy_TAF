@@ -25,7 +25,7 @@ class VideoDecoder {
 
     companion object {
         const val MAX_JPEG_QUEUE = 2 // minimal queue for low latency
-        const val JPEG_QUALITY = 95
+        const val JPEG_QUALITY = 70 // fast compression for high FPS
     }
 
     fun start(width: Int, height: Int, vps: ByteArray?, sps: ByteArray?, pps: ByteArray?) {
@@ -218,7 +218,7 @@ class VideoDecoder {
         }
 
         val yuvImage = YuvImage(nv21, ImageFormat.NV21, w, h, null)
-        val out = ByteArrayOutputStream(w * h / 4)
+        val out = ByteArrayOutputStream(w * h / 6)
         yuvImage.compressToJpeg(Rect(0, 0, w, h), JPEG_QUALITY, out)
         return out.toByteArray()
     }

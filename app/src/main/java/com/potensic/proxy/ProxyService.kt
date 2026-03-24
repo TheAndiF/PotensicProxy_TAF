@@ -201,8 +201,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
                     // But only publish JPEG for clean frames (IDR + first 10 P-frames after IDR)
                     // Beyond that, frames accumulate corruption from lost P-frames
-                    // ONLY publish IDR frames — zero P-frame artifacts
-                    videoDecoder.publishFrame = nal.isIFrame
+                    // All frames passed CRC32 validation — safe to publish
+                    videoDecoder.publishFrame = true
 
                     // Broadcast stats periodically
                     if (++statsCounter % 25 == 0) {
@@ -262,8 +262,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                     }
 
                     // Request IDR frame every 5s until we get one
-                    // Request IDR every 30ms — aggressive, maximum clean frames
-                    if (now - lastIdrRequest > 30) {
+                    // Request IDR every 500ms — CRC validates all frames, IDR just for recovery
+                    if (now - lastIdrRequest > 500) {
                         val idrCmd = DroneProtocol.buildIDRRequest()
                         usbManager.send(idrCmd)
                         lastIdrRequest = now
