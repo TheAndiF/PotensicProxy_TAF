@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Potensic Proxy</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a0f; color: #e0e0e0; font-family: 'JetBrains Mono', monospace; overflow: hidden; height: 100vh; }
+
+.header { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; background: rgba(20,20,40,0.9); border-bottom: 1px solid #ff1744; }
+.header h1 { font-size: 16px; color: #ff1744; }
+.status { font-size: 12px; padding: 4px 8px; border-radius: 4px; }
+.status.connected { background: rgba(0,255,100,0.2); color: #00ff64; border: 1px solid #00ff64; }
+.status.disconnected { background: rgba(255,23,68,0.2); color: #ff1744; border: 1px solid #ff1744; }
+
+.main { display: flex; height: calc(100vh - 45px); }
+
+.controls { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
+
+.joystick-row { display: flex; gap: 40px; }
+.joystick-container { position: relative; width: 200px; height: 200px; }
+.joystick-bg { width: 200px; height: 200px; border-radius: 50%; background: rgba(30,30,60,0.8); border: 2px solid #333; }
+.joystick-thumb { position: absolute; width: 60px; height: 60px; border-radius: 50%; background: radial-gradient(circle, #ff1744, #b71c1c); border: 2px solid #ff4444; top: 70px; left: 70px; cursor: grab; touch-action: none; box-shadow: 0 0 15px rgba(255,23,68,0.5); }
+.joystick-label { text-align: center; font-size: 11px; color: #888; margin-top: 4px; }
+.joystick-values { text-align: center; font-size: 11px; color: #ff1744; font-family: monospace; }
+
+.buttons { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.btn { padding: 10px 20px; border: 1px solid #ff1744; background: rgba(255,23,68,0.1); color: #ff1744; border-radius: 6px; cursor: pointer; font-size: 13px; font-family: inherit; transition: all 0.2s; }
+.btn:hover { background: rgba(255,23,68,0.3); }
+.btn:active { background: rgba(255,23,68,0.5); }
+.btn.emergency { border-color: #ff0000; color: #ff0000; background: rgba(255,0,0,0.2); font-weight: bold; }
+
+.sidebar { width: 350px; background: rgba(15,15,30,0.95); border-left: 1px solid #222; display: flex; flex-direction: column; }
+.sidebar h2 { font-size: 13px; color: #ff1744; padding: 8px 12px; border-bottom: 1px solid #222; }
+
+.stats { padding: 8px 12px; font-size: 11px; line-height: 1.8; border-bottom: 1px solid #222; }
+.stats span { color: #ff1744; }
+
+.logs { flex: 1; overflow-y: auto; padding: 8px; font-size: 10px; line-height: 1.5; }
+.logs .line { white-space: pre-wrap; word-break: break-all; }
+.logs .line.error { color: #ff4444; }
+.logs .line.warn { color: #ffa726; }
+.logs .line.info { color: #42a5f5; }
+.logs .line.debug { color: #666; }
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>POTENSIC PROXY v0.1</h1>
+    <div id="status" class="status disconnected">DISCONNECTED</div>
+</div>
+
+<div class="main">
+    <div class="controls">
+        <div style="width:640px;height:360px;border:1px solid #ff1744;margin-bottom:10px;background:#000;position:relative;">
+            <img id="videoFeed" src="/api/video/mjpeg" style="width:100%;height:100%;object-fit:contain;" onerror="this.style.display='none'" onload="this.style.display='block'">
+            <div id="noVideo" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#555;font-size:12px;">Waiting for video...</div>
+        </div>
+        <div class="joystick-row">
+            <div>
+                <div class="joystick-container" id="leftStick">
+                    <div class="joystick-bg"></div>
+                    <div class="joystick-thumb" id="leftThumb"></div>
+                </div>
+                <div class="joystick-label">THROTTLE / YAW</div>
+                <div class="joystick-values" id="leftValues">0 / 0</div>
+            </div>
+            <div>
+                <div class="joystick-container" id="rightStick">
+                    <div class="joystick-bg"></div>
+                    <div class="joystick-thumb" id="rightThumb"></div>
+                </div>
+                <div class="joystick-label">PITCH / ROLL</div>
+                <div class="joystick-values" id="rightValues">0 / 0</div>
+            </div>
+        </div>
+        <div class="buttons">
+            <button class="btn" onclick="sendCommand('connect')">CONNECT USB</button>
+            <button class="btn" onclick="sendCommand('disconnect')">DISCONNECT</button>
+            <button class="btn emergency" onclick="emergencyStop()">EMERGENCY STOP</button>
+        </div>
+    </div>
+
+    <div class="sidebar">
+        <h2>TELEMETRY</h2>
+        <div class="stats" id="stats">
+            TX: <span id="txBytes">0</span> bytes (<span id="txPkts">0</span> pkts)<br>
+            RX: <span id="rxBytes">0</span> bytes (<span id="rxPkts">0</span> pkts)<br>
+            WS Clients: <span id="wsClients">0</span><br>
+            Joystick: <span id="joystickState">0,0,0,0</span><br>
+            Video: <span id="videoFrames">0</span> frames (<span id="videoRes">-</span>) I:<span id="iFrames">0</span> P:<span id="pFrames">0</span>
+        </div>
+        <h2>LOGS</h2>
+        <div class="logs" id="logs"></div>
+    </div>
+</div>
+
+<script>
+let ws = null;
+let logIndex = 0;
+
+// WebSocket connection
+function connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws/control`);
+    ws.onopen = () => addLog('INFO', 'WebSocket connected');
+    ws.onclose = () => { addLog('WARN', 'WebSocket disconnected'); setTimeout(connectWS, 2000); };
+    ws.onmessage = (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            if (data.type === 'telemetry') {
+                // handle telemetry
+            }
+        } catch (_) {}
+    };
+}
+
+// Joystick state
+const sticks = { left: {x:0,y:0}, right: {x:0,y:0} };
+
+function setupJoystick(containerId, thumbId, side) {
+    const container = document.getElementById(containerId);
+    const thumb = document.getElementById(thumbId);
+    let active = false;
+    const center = 100, radius = 70, thumbR = 30;
+
+    function update(clientX, clientY) {
+        const rect = container.getBoundingClientRect();
+        let dx = clientX - rect.left - center;
+        let dy = clientY - rect.top - center;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist > radius) { dx = dx/dist*radius; dy = dy/dist*radius; }
+        thumb.style.left = (center + dx - thumbR) + 'px';
+        thumb.style.top = (center + dy - thumbR) + 'px';
+        // Normalize to -1000..1000
+        sticks[side].x = Math.round(dx / radius * 1000);
+        sticks[side].y = Math.round(-dy / radius * 1000); // invert Y
+        updateLabels();
+        sendSticks();
+    }
+
+    function reset() {
+        active = false;
+        thumb.style.left = (center - thumbR) + 'px';
+        thumb.style.top = (center - thumbR) + 'px';
+        sticks[side].x = 0;
+        sticks[side].y = 0;
+        updateLabels();
+        sendSticks();
+    }
+
+    // Touch
+    thumb.addEventListener('touchstart', (e) => { active = true; e.preventDefault(); });
+    document.addEventListener('touchmove', (e) => { if (active) { update(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); } }, {passive:false});
+    document.addEventListener('touchend', () => { if (active) reset(); });
+
+    // Mouse
+    thumb.addEventListener('mousedown', (e) => { active = true; e.preventDefault(); });
+    document.addEventListener('mousemove', (e) => { if (active) update(e.clientX, e.clientY); });
+    document.addEventListener('mouseup', () => { if (active) reset(); });
+}
+
+function updateLabels() {
+    document.getElementById('leftValues').textContent = `${sticks.left.y} / ${sticks.left.x}`;
+    document.getElementById('rightValues').textContent = `${sticks.right.y} / ${sticks.right.x}`;
+}
+
+let lastSend = 0;
+function sendSticks() {
+    const now = Date.now();
+    if (now - lastSend < 20) return; // throttle to 50Hz
+    lastSend = now;
+    if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({
+            throttle: sticks.left.y,
+            yaw: sticks.left.x,
+            pitch: sticks.right.y,
+            roll: sticks.right.x,
+            gimbal: 0
+        }));
+    }
+}
+
+function sendCommand(cmd) {
+    fetch(`/api/${cmd}`, {method:'POST'}).then(r=>r.json()).then(d => addLog('INFO', JSON.stringify(d)));
+}
+
+function emergencyStop() {
+    sticks.left = {x:0,y:0}; sticks.right = {x:0,y:0};
+    sendSticks();
+    addLog('WARN', 'EMERGENCY STOP — all sticks zeroed');
+}
+
+// Logs
+function addLog(level, msg) {
+    const el = document.getElementById('logs');
+    const line = document.createElement('div');
+    line.className = 'line ' + level.toLowerCase();
+    line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+}
+
+function pollLogs() {
+    fetch(`/api/logs?since=${logIndex}`).then(r=>r.json()).then(d => {
+        d.lines.forEach(l => {
+            const el = document.getElementById('logs');
+            const line = document.createElement('div');
+            const cls = l.includes('ERROR') ? 'error' : l.includes('WARN') ? 'warn' : l.includes('INFO') ? 'info' : 'debug';
+            line.className = 'line ' + cls;
+            line.textContent = l;
+            el.appendChild(line);
+            el.scrollTop = el.scrollHeight;
+        });
+        logIndex = d.nextIndex;
+    }).catch(()=>{});
+}
+
+function pollStatus() {
+    fetch('/api/status').then(r=>r.json()).then(d => {
+        const el = document.getElementById('status');
+        el.className = 'status ' + (d.connected ? 'connected' : 'disconnected');
+        el.textContent = d.connected ? 'CONNECTED' : 'DISCONNECTED';
+        document.getElementById('txBytes').textContent = d.bytesSent;
+        document.getElementById('txPkts').textContent = d.packetsSent;
+        document.getElementById('rxBytes').textContent = d.bytesReceived;
+        document.getElementById('rxPkts').textContent = d.packetsReceived;
+        document.getElementById('wsClients').textContent = d.wsClients;
+        const j = d.joystick;
+        document.getElementById('joystickState').textContent = `${j.throttle},${j.yaw},${j.pitch},${j.roll}`;
+        // Video stats from status endpoint don't exist yet, poll separately
+    }).catch(()=>{});
+
+    fetch('/api/video/stats').then(r=>r.json()).then(d => {
+        document.getElementById('videoFrames').textContent = d.framesExtracted;
+        document.getElementById('videoRes').textContent = d.width > 0 ? `${d.width}x${d.height}` : '-';
+        document.getElementById('iFrames').textContent = d.iFrames;
+        document.getElementById('pFrames').textContent = d.pFrames;
+    }).catch(()=>{});
+}
+
+// Init
+setupJoystick('leftStick', 'leftThumb', 'left');
+setupJoystick('rightStick', 'rightThumb', 'right');
+connectWS();
+setInterval(pollLogs, 1000);
+setInterval(pollStatus, 2000);
+addLog('INFO', 'Potensic Proxy UI loaded');
+</script>
+</body>
+</html>
