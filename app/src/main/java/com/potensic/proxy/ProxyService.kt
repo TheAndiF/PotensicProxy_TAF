@@ -190,7 +190,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                     if (!gotFirstIdr && !nal.isIFrame) { continue }
                     if (nal.isIFrame) gotFirstIdr = true
 
-                    videoDecoder.decode(nal.data)
+                    videoDecoder.decode(nal.data, nal.isIFrame)
 
                     // Broadcast stats periodically
                     if (++statsCounter % 25 == 0) {
@@ -250,8 +250,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                     }
 
                     // Request IDR frame every 5s until we get one
-                    // Request IDR every 1s (continuous — keeps refreshing reference frames)
-                    if (now - lastIdrRequest > 1000) {
+                    // Request IDR every 500ms (continuous — keeps refreshing reference frames)
+                    if (now - lastIdrRequest > 500) {
                         val idrCmd = DroneProtocol.buildIDRRequest()
                         usbManager.send(idrCmd)
                         lastIdrRequest = now

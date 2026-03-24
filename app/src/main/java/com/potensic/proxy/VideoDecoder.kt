@@ -33,8 +33,13 @@ class VideoDecoder {
         try {
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_HEVC, width, height)
             format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
+            // Low latency mode (Android 11+)
+            try { format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1) } catch (_: Exception) {}
+            try { format.setInteger("low-latency", 1) } catch (_: Exception) {} // vendor-specific
             if (vps != null && sps != null && pps != null) {
-                format.setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(vps + sps + pps))
+                val csd = vps + sps + pps
+                csdData = csd
+                format.setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(csd))
             }
             codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_HEVC)
             codec!!.configure(format, null, null, 0)
@@ -47,7 +52,35 @@ class VideoDecoder {
         }
     }
 
-    fun decode(nalData: ByteArray) {
+    private var csdData: ByteArray? = null
+
+    /**
+     * Flush decoder and resubmit CSD (VPS+SPS+PPS).
+     * Required after flush per Android docs: "You must resubmit the data
+     * using buffers marked with BUFFER_FLAG_CODEC_CONFIG after such flush"
+     */
+    fun flush() {
+        val c = codec ?: return
+        try {
+            c.flush()
+            // Resubmit CSD after flush
+            val csd = csdData
+            if (csd != null) {
+                val idx = c.dequeueInputBuffer(5000)
+                if (idx >= 0) {
+                    val buf = c.getInputBuffer(idx)!!
+                    buf.clear()
+                    buf.put(csd)
+                    c.queueInputBuffer(idx, 0, csd.size, 0, MediaCodec.BUFFER_FLAG_CODEC_CONFIG)
+                }
+            }
+            Log.i("[Decoder] Flushed + CSD resubmitted")
+        } catch (e: Exception) {
+            Log.e("[Decoder] Flush failed: ${e.message}")
+        }
+    }
+
+    fun decode(nalData: ByteArray, isKeyFrame: Boolean = false) {
         val c = codec ?: return
         if (!running.get()) return
 
@@ -57,7 +90,8 @@ class VideoDecoder {
                 val buf = c.getInputBuffer(inputIdx)!!
                 buf.clear()
                 buf.put(nalData)
-                c.queueInputBuffer(inputIdx, 0, nalData.size, System.nanoTime() / 1000, 0)
+                val flags = if (isKeyFrame) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+                c.queueInputBuffer(inputIdx, 0, nalData.size, System.nanoTime() / 1000, flags)
             }
 
             val info = MediaCodec.BufferInfo()
@@ -121,6 +155,11 @@ class VideoDecoder {
         val uvRowStride = uPlane.rowStride
         val uvPixelStride = uPlane.pixelStride
 
+        if (framesDecoded.get() <= 1) {
+            Log.i("[Decoder] Image planes: Y=${yBuf.remaining()}B stride=$yRowStride, U=${uBuf.remaining()}B stride=$uvRowStride pxStride=$uvPixelStride, V=${vBuf.remaining()}B")
+            Log.i("[Decoder] Expected: Y=${w*h} UV=${w*h/2} total=${w*h*3/2}")
+        }
+
         val nv21 = ByteArray(w * h * 3 / 2)
 
         // Y plane — fast row copy if pixelStride==1 (always true for Y)
@@ -141,19 +180,23 @@ class VideoDecoder {
         val uvW = w / 2
         val uvOffset = w * h
 
-        if (uvPixelStride == 2 && uvRowStride == w) {
-            // Semi-planar, contiguous — the U and V buffers overlap by 1 byte
-            // V buffer contains: V0 U0 V1 U1 ... (interleaved, this IS NV21 already)
-            vBuf.position(0)
-            val uvSize = minOf(vBuf.remaining(), w * uvH)
-            vBuf.get(nv21, uvOffset, uvSize)
-        } else if (uvPixelStride == 2) {
-            // Semi-planar but with row padding — copy row by row from V buffer
+        if (uvPixelStride == 2) {
+            // Semi-planar — V and U buffers share memory, interleaved
+            // V buffer: V0 U0 V1 U1 ... → this IS NV21 format
+            // Buffer is exactly (w * uvH - 1) bytes (last V has no trailing U)
+            val vSize = vBuf.remaining() // typically w*h/2 - 1
             for (row in 0 until uvH) {
-                vBuf.position(row * uvRowStride)
-                val rowLen = minOf(w, vBuf.remaining())
-                if (rowLen > 0) {
-                    vBuf.get(nv21, uvOffset + row * w, rowLen)
+                val srcPos = row * uvRowStride
+                val dstPos = uvOffset + row * w
+                // Last row may be 1 byte short
+                val available = vSize - srcPos
+                if (available <= 0) break
+                val bytesToCopy = minOf(w, available)
+                vBuf.position(srcPos)
+                vBuf.get(nv21, dstPos, bytesToCopy)
+                // If we copied 1 less byte (last row), fill the missing U with neighbor
+                if (bytesToCopy == w - 1) {
+                    nv21[dstPos + w - 1] = nv21[dstPos + w - 2] // duplicate last U
                 }
             }
         } else {
@@ -161,10 +204,11 @@ class VideoDecoder {
             for (row in 0 until uvH) {
                 for (col in 0 until uvW) {
                     val idx = uvOffset + row * w + col * 2
-                    vBuf.position(row * uvRowStride + col * uvPixelStride)
-                    nv21[idx] = vBuf.get()
-                    uBuf.position(row * uvRowStride + col * uvPixelStride)
-                    nv21[idx + 1] = uBuf.get()
+                    val srcIdx = row * uvRowStride + col
+                    if (srcIdx < vBuf.remaining() && srcIdx < uBuf.remaining()) {
+                        nv21[idx] = vBuf.get(srcIdx)
+                        nv21[idx + 1] = uBuf.get(srcIdx)
+                    }
                 }
             }
         }
