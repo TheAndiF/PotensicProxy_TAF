@@ -31,6 +31,12 @@
                 android:resource="@xml/usb_accessory_filter" />
         </activity>
 
+        <activity
+            android:name=".VideoActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
+
         <service
             android:name=".ProxyService"
             android:foregroundServiceType="connectedDevice"

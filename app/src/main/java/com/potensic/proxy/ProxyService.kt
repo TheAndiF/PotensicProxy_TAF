@@ -143,7 +143,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     private val rawDataQueue = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
 
     override fun onDataReceived(data: ByteArray, length: Int) {
-        while (rawDataQueue.size > 10) rawDataQueue.poll()
+        // Never drop USB data — dropping causes corrupted frames
         rawDataQueue.offer(data.copyOf(length))
     }
 
@@ -251,8 +251,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                     }
 
                     // Request IDR frame every 5s until we get one
-                    // Request IDR every 30ms — maximum clean keyframes
-                    if (now - lastIdrRequest > 30) {
+                    // Request IDR every 100ms — balanced (15ms causes send queue overflow)
+                    if (now - lastIdrRequest > 100) {
                         val idrCmd = DroneProtocol.buildIDRRequest()
                         usbManager.send(idrCmd)
                         lastIdrRequest = now

@@ -47,6 +47,7 @@ class VideoExtractor {
     @Volatile var pps: ByteArray? = null; private set
     val hasStreamInit: Boolean get() = vps != null && sps != null && pps != null
     @Volatile var lastIdrSequence: ByteArray? = null; private set
+    @Volatile var crcEnabled: Boolean = true // drop corrupted frames
 
     val framesExtracted = AtomicInteger(0)
     val iFrames = AtomicInteger(0)
@@ -55,6 +56,8 @@ class VideoExtractor {
     var lastHeight = 0; private set
     var lastFrameTime = 0L; private set
     val feFramesParsed = AtomicInteger(0)
+    var crcPassCount = 0; private set
+    var crcFailCount = 0; private set
 
     data class NalUnit(
         val data: ByteArray,
@@ -112,7 +115,9 @@ class VideoExtractor {
                     val pl = readIntLE(payload, 12)
                     val rl = readIntLE(payload, 16)
 
-                    if (w > 0 && w <= 4096 && h > 0 && h <= 4096 && dt <= 2 && pl > 0 && pl < MAX_FRAME_SIZE && rl > 0 && rl <= pl) {
+                    // Strict validation: known resolutions only (1920x1080, 1280x720)
+                    val validRes = (w == 1920 && h == 1080) || (w == 1280 && h == 720)
+                    if (validRes && dt <= 2 && pl > 0 && pl < MAX_FRAME_SIZE && rl > 0 && rl <= pl) {
                         // Valid video frame header — flush previous and start new
                         flushCurrentFrame()
 
@@ -168,11 +173,21 @@ class VideoExtractor {
         val data = if (videoData.size > expectedPayloadLen && expectedPayloadLen > 0)
             videoData.copyOf(expectedPayloadLen) else videoData
 
-        // CRC32 validation — drop ALL corrupted frames (IDR + P-frames)
+        // CRC32 validation + corruption analysis
         val expectedCrc = readIntLE(header, 20)
         val actualCrc = crc32(data)
-        if (expectedCrc != actualCrc) {
-            return // drop corrupted frame
+        val crcOk = (expectedCrc == actualCrc)
+        val sizeMatch = (data.size == expectedPayloadLen)
+
+        if (!crcOk) {
+            crcFailCount++
+            if (crcFailCount <= 10 || crcFailCount % 50 == 0) {
+                val hasIDR = findAllNalStartCodes(data).any { pos -> pos + 4 < data.size && (data[pos + 4].toInt() and 0xFF) == 0x26 }
+                Log.w("[Video] CRC FAIL #$crcFailCount: size=${data.size} expected=$expectedPayloadLen sizeMatch=$sizeMatch IDR=$hasIDR ${width}x${height}")
+            }
+            if (crcEnabled) return
+        } else {
+            crcPassCount++
         }
 
         // Scan NAL units
