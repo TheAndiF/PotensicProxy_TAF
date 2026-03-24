@@ -260,6 +260,28 @@ class WebServer(
                     call.respondText(JSONObject().put("disconnected", true).toString(), ContentType.Application.Json)
                 }
 
+                // WebSocket for raw H265 NAL streaming (decoded by browser WebCodecs)
+                webSocket("/ws/video") {
+                    Log.i("[WebServer] Video WebSocket client connected")
+                    try {
+                        while (true) {
+                            val nal = videoExtractor.nalQueue.poll()
+                            if (nal != null) {
+                                // Send binary frame: [1 byte type] [NAL data]
+                                // type: 0=P-frame, 1=IDR
+                                val frame = ByteArray(1 + nal.data.size)
+                                frame[0] = if (nal.isIFrame) 1 else 0
+                                System.arraycopy(nal.data, 0, frame, 1, nal.data.size)
+                                send(Frame.Binary(true, frame))
+                            } else {
+                                kotlinx.coroutines.delay(2)
+                            }
+                        }
+                    } finally {
+                        Log.i("[WebServer] Video WebSocket client disconnected")
+                    }
+                }
+
                 // WebSocket for real-time control
                 webSocket("/ws/control") {
                     wsClients.add(this)

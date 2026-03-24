@@ -54,9 +54,10 @@ body { background: #0a0a0f; color: #e0e0e0; font-family: 'JetBrains Mono', monos
 
 <div class="main">
     <div class="controls">
-        <div style="width:640px;height:360px;border:1px solid #ff1744;margin-bottom:10px;background:#000;position:relative;">
-            <img id="videoFeed" src="/api/video/mjpeg" style="width:100%;height:100%;object-fit:contain;" onerror="this.style.display='none'" onload="this.style.display='block'">
-            <div id="noVideo" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#555;font-size:12px;">Waiting for video...</div>
+        <div style="width:800px;height:450px;border:1px solid #ff1744;margin-bottom:10px;background:#000;position:relative;">
+            <canvas id="videoCanvas" width="1920" height="1080" style="width:100%;height:100%;object-fit:contain;"></canvas>
+            <div id="noVideo" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#555;font-size:12px;">Connecting WebCodecs...</div>
+            <div id="fpsCounter" style="position:absolute;top:4px;right:8px;color:#0f0;font-size:11px;font-family:monospace;text-shadow:0 0 4px #000;">0 fps</div>
         </div>
         <div class="joystick-row">
             <div>
@@ -101,12 +102,143 @@ body { background: #0a0a0f; color: #e0e0e0; font-family: 'JetBrains Mono', monos
 let ws = null;
 let logIndex = 0;
 
-// WebSocket connection
+// === WebCodecs H265 Decoder ===
+const canvas = document.getElementById('videoCanvas');
+const ctx = canvas.getContext('2d');
+let decoder = null;
+let frameCount = 0;
+let lastFpsTime = Date.now();
+let fpsFrames = 0;
+
+// VPS+SPS+PPS from drone (hardcoded fallback)
+const CSD_HEX = '0000000140010c01ffff016000000300a0000003000003007bac0c00011940001a5e02a800000001420101016000000300a0000003000003007ba003c08010e58d2ee452fcd404040410000465000069780a10000000014401c0f28e783b34';
+const CSD = new Uint8Array(CSD_HEX.match(/.{2}/g).map(b => parseInt(b, 16)));
+
+async function initWebCodecs() {
+    if (!('VideoDecoder' in window)) {
+        addLog('ERROR', 'WebCodecs not supported');
+        fallbackMJPEG();
+        return;
+    }
+
+    // Test HEVC support
+    const codecs = ['hev1.1.6.L120.B0', 'hvc1.1.6.L120.B0', 'hev1.1.6.L93.B0', 'hvc1.1.6.L93.B0'];
+    let supportedCodec = null;
+
+    for (const codec of codecs) {
+        try {
+            const support = await VideoDecoder.isConfigSupported({
+                codec: codec,
+                codedWidth: 1920,
+                codedHeight: 1080,
+            });
+            if (support.supported) {
+                supportedCodec = codec;
+                addLog('INFO', 'WebCodecs supports: ' + codec);
+                break;
+            }
+        } catch (_) {}
+    }
+
+    if (!supportedCodec) {
+        addLog('WARN', 'HEVC not supported in WebCodecs — falling back to MJPEG');
+        fallbackMJPEG();
+        return;
+    }
+
+    decoder = new VideoDecoder({
+        output: (frame) => {
+            ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+            frame.close();
+            frameCount++;
+            fpsFrames++;
+            const now = Date.now();
+            if (now - lastFpsTime >= 1000) {
+                document.getElementById('fpsCounter').textContent = fpsFrames + ' fps';
+                fpsFrames = 0;
+                lastFpsTime = now;
+            }
+            document.getElementById('noVideo').style.display = 'none';
+        },
+        error: (e) => {
+            addLog('ERROR', 'WebCodecs decode: ' + e.message);
+        }
+    });
+
+    // Try with description (hvcC format) first, then without
+    try {
+        decoder.configure({
+            codec: supportedCodec,
+            codedWidth: 1920,
+            codedHeight: 1080,
+            description: CSD,
+        });
+        addLog('INFO', 'Decoder configured with CSD');
+    } catch (e1) {
+        addLog('WARN', 'CSD config failed: ' + e1.message + ' — trying without');
+        try {
+            decoder.configure({
+                codec: supportedCodec,
+                codedWidth: 1920,
+                codedHeight: 1080,
+            });
+            addLog('INFO', 'Decoder configured without CSD');
+        } catch (e2) {
+            addLog('ERROR', 'Decoder config failed: ' + e2.message);
+            fallbackMJPEG();
+            return;
+        }
+    }
+
+    addLog('INFO', 'WebCodecs H265 decoder ready (' + supportedCodec + ')');
+    connectVideoWS();
+}
+
+function fallbackMJPEG() {
+    addLog('INFO', 'Using MJPEG fallback');
+    document.getElementById('videoCanvas').style.display = 'none';
+    const img = document.createElement('img');
+    img.src = '/api/video/mjpeg';
+    img.style = 'width:100%;height:100%;object-fit:contain;';
+    img.onerror = () => { setTimeout(() => { img.src = '/api/video/mjpeg'; }, 2000); };
+    document.getElementById('videoCanvas').parentElement.appendChild(img);
+    document.getElementById('noVideo').style.display = 'none';
+}
+
+function connectVideoWS() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const vws = new WebSocket(`${proto}//${location.host}/ws/video`);
+    vws.binaryType = 'arraybuffer';
+    vws.onopen = () => addLog('INFO', 'Video WebSocket connected');
+    vws.onclose = () => { addLog('WARN', 'Video WS disconnected'); setTimeout(connectVideoWS, 2000); };
+    vws.onmessage = (e) => {
+        if (!decoder || decoder.state === 'closed') return;
+        const data = new Uint8Array(e.data);
+        if (data.length < 2) return;
+        const isKey = data[0] === 1;
+        const nalData = data.slice(1);
+
+        try {
+            const chunk = new EncodedVideoChunk({
+                type: isKey ? 'key' : 'delta',
+                timestamp: frameCount * 40000, // ~25fps = 40ms per frame
+                data: nalData,
+            });
+            if (decoder.decodeQueueSize < 5) {
+                decoder.decode(chunk);
+            }
+        } catch (ex) {
+            // skip invalid chunks
+        }
+    };
+}
+
+// WebSocket for control
 function connectWS() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${proto}//${location.host}/ws/control`);
-    ws.onopen = () => addLog('INFO', 'WebSocket connected');
-    ws.onclose = () => { addLog('WARN', 'WebSocket disconnected'); setTimeout(connectWS, 2000); };
+    ws.onopen = () => addLog('INFO', 'Control WebSocket connected');
+    ws.onclose = () => { addLog('WARN', 'Control WS disconnected'); setTimeout(connectWS, 2000); };
     ws.onmessage = (e) => {
         try {
             const data = JSON.parse(e.data);
@@ -244,6 +376,7 @@ function pollStatus() {
 // Init
 setupJoystick('leftStick', 'leftThumb', 'left');
 setupJoystick('rightStick', 'rightThumb', 'right');
+initWebCodecs();
 connectWS();
 setInterval(pollLogs, 1000);
 setInterval(pollStatus, 2000);

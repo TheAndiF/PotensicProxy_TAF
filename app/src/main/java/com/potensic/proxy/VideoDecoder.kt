@@ -25,7 +25,7 @@ class VideoDecoder {
 
     companion object {
         const val MAX_JPEG_QUEUE = 2 // minimal queue for low latency
-        const val JPEG_QUALITY = 70 // fast compression for high FPS
+        const val JPEG_QUALITY = 95
     }
 
     fun start(width: Int, height: Int, vps: ByteArray?, sps: ByteArray?, pps: ByteArray?) {

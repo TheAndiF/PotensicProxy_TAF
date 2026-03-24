@@ -175,10 +175,15 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             Log.i("[Service] Decoder loop started")
             var statsCounter = 0
             var gotFirstIdr = false
-            var framesSinceIdr = 0
             while (isActive && usbManager.isConnected) {
-                val nal = videoExtractor.nalQueue.poll()
-                if (nal != null) {
+                // Drain queue — grab only the LATEST IDR to minimize latency
+                var latestIdr: VideoExtractor.NalUnit? = null
+                while (true) {
+                    val nal = videoExtractor.nalQueue.poll() ?: break
+                    if (nal.isIFrame) latestIdr = nal
+                }
+
+                if (latestIdr != null) {
                     // Start decoder on first frame
                     if (videoDecoder.framesDecoded.get() == 0 && videoExtractor.lastWidth > 0) {
                         val v = videoExtractor.vps ?: VideoExtractor.FALLBACK_VPS
@@ -187,22 +192,9 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                         videoDecoder.start(videoExtractor.lastWidth, videoExtractor.lastHeight, v, s, p)
                     }
 
-                    // Skip P-frames before first IDR for clean start
-                    if (!gotFirstIdr && !nal.isIFrame) { continue }
-                    if (nal.isIFrame) {
-                        gotFirstIdr = true
-                        framesSinceIdr = 0
-                    } else {
-                        framesSinceIdr++
-                    }
-
-                    // Always decode (keeps decoder state correct)
-                    videoDecoder.decode(nal.data, nal.isIFrame)
-
-                    // But only publish JPEG for clean frames (IDR + first 10 P-frames after IDR)
-                    // Beyond that, frames accumulate corruption from lost P-frames
-                    // All frames passed CRC32 validation — safe to publish
+                    gotFirstIdr = true
                     videoDecoder.publishFrame = true
+                    videoDecoder.decode(latestIdr.data, true)
 
                     // Broadcast stats periodically
                     if (++statsCounter % 25 == 0) {
@@ -262,8 +254,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                     }
 
                     // Request IDR frame every 5s until we get one
-                    // Request IDR every 500ms — CRC validates all frames, IDR just for recovery
-                    if (now - lastIdrRequest > 500) {
+                    // Request IDR every 30ms — maximum clean keyframes
+                    if (now - lastIdrRequest > 30) {
                         val idrCmd = DroneProtocol.buildIDRRequest()
                         usbManager.send(idrCmd)
                         lastIdrRequest = now
