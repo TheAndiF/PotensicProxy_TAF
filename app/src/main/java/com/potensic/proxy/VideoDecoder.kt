@@ -21,10 +21,11 @@ class VideoDecoder {
 
     @Volatile var lastJpeg: ByteArray? = null; private set
     @Volatile var lastJpegTime: Long = 0; private set
+    @Volatile var publishFrame: Boolean = true
 
     companion object {
         const val MAX_JPEG_QUEUE = 5
-        const val JPEG_QUALITY = 92
+        const val JPEG_QUALITY = 95
     }
 
     fun start(width: Int, height: Int, vps: ByteArray?, sps: ByteArray?, pps: ByteArray?) {
@@ -115,13 +116,16 @@ class VideoDecoder {
                     }
 
                     if (jpeg != null) {
-                        lastJpeg = jpeg
-                        lastJpegTime = System.currentTimeMillis()
-                        while (jpegQueue.size >= MAX_JPEG_QUEUE) jpegQueue.poll()
-                        jpegQueue.offer(jpeg)
                         val count = framesDecoded.incrementAndGet()
+                        // Only publish clean frames (controlled by ProxyService)
+                        if (publishFrame) {
+                            lastJpeg = jpeg
+                            lastJpegTime = System.currentTimeMillis()
+                            while (jpegQueue.size >= MAX_JPEG_QUEUE) jpegQueue.poll()
+                            jpegQueue.offer(jpeg)
+                        }
                         if (count <= 3 || count % 100 == 0) {
-                            Log.i("[Decoder] #$count → ${jpeg.size / 1024}KB")
+                            Log.i("[Decoder] #$count → ${jpeg.size / 1024}KB pub=$publishFrame")
                         }
                     }
                     c.releaseOutputBuffer(outputIdx, false)
