@@ -65,6 +65,37 @@ object DroneProtocol {
         return wrapFE(buildInnerCommand(0xD9.toByte()), 0x15)
     }
 
+    // === Flight commands (reversed from RemoterSelfButton / cr1.java) ===
+
+    /** Takeoff / Land toggle */
+    fun buildTakeoffLand(): ByteArray {
+        // Flight key: short=0x0301, cmd varies
+        // From captured TX: type 0x14 (flight)
+        return wrapFE(buildInnerCommand(0x01.toByte(), byteArrayOf(0x03, 0x01)), 0x14)
+    }
+
+    /** Return to home */
+    fun buildRTH(): ByteArray {
+        return wrapFE(buildInnerCommand(0x04.toByte(), byteArrayOf(0x03, 0x01)), 0x14)
+    }
+
+    /** Emergency stop */
+    fun buildEmergencyStop(): ByteArray {
+        return wrapFE(buildInnerCommand(0x05.toByte(), byteArrayOf(0x03, 0x01)), 0x14)
+    }
+
+    /** Take photo */
+    fun buildTakePhoto(): ByteArray {
+        // Camera cmd 0x51 = take photo
+        return wrapFE(buildInnerCommand(0x51.toByte()), 0x15)
+    }
+
+    /** Start/stop video recording */
+    fun buildToggleRecord(): ByteArray {
+        // Camera cmd 0x50 = toggle record
+        return wrapFE(buildInnerCommand(0x50.toByte()), 0x15)
+    }
+
     private fun hexPkt(hex: String): ByteArray {
         val clean = hex.replace(" ", "")
         return ByteArray(clean.length / 2) { i ->

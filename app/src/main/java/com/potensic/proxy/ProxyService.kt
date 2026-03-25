@@ -126,9 +126,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             for ((i, cmd) in initSeq.withIndex()) {
                 usbManager.send(cmd)
                 Log.i("[Service] Init cmd #${i+1}/${initSeq.size} (${cmd.size}B)")
-                delay(50) // 50ms between commands like official app
+                delay(50)
             }
-            // Send LiveViewParams after init
             usbManager.send(DroneProtocol.buildLiveViewParams())
             Log.i("[Service] Sent LiveViewParams")
         }
@@ -136,6 +135,21 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         startControlLoop()
         startExtractorLoop()
         startDecoderLoop()
+
+        // Broadcast telemetry to WebSocket every 200ms
+        scope.launch {
+            while (usbManager.isConnected) {
+                val tel = TelemetryParser.latest
+                if (tel != null) {
+                    val json = org.json.JSONObject().apply {
+                        put("type", "telemetry")
+                        put("data", tel.toJson())
+                    }
+                    webServer.broadcast(json)
+                }
+                delay(200)
+            }
+        }
     }
 
     override fun onDisconnected() {

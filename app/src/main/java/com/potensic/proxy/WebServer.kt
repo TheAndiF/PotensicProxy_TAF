@@ -195,6 +195,32 @@ class WebServer(
                     }
                 }
 
+                // Flight commands
+                post("/api/cmd/takeoff") {
+                    usbManager.send(DroneProtocol.buildTakeoffLand())
+                    call.respondText("""{"cmd":"takeoff"}""", ContentType.Application.Json)
+                }
+                post("/api/cmd/land") {
+                    usbManager.send(DroneProtocol.buildTakeoffLand())
+                    call.respondText("""{"cmd":"land"}""", ContentType.Application.Json)
+                }
+                post("/api/cmd/rth") {
+                    usbManager.send(DroneProtocol.buildRTH())
+                    call.respondText("""{"cmd":"rth"}""", ContentType.Application.Json)
+                }
+                post("/api/cmd/emergency") {
+                    usbManager.send(DroneProtocol.buildEmergencyStop())
+                    call.respondText("""{"cmd":"emergency_stop"}""", ContentType.Application.Json)
+                }
+                post("/api/cmd/photo") {
+                    usbManager.send(DroneProtocol.buildTakePhoto())
+                    call.respondText("""{"cmd":"photo"}""", ContentType.Application.Json)
+                }
+                post("/api/cmd/record") {
+                    usbManager.send(DroneProtocol.buildToggleRecord())
+                    call.respondText("""{"cmd":"record"}""", ContentType.Application.Json)
+                }
+
                 // Request IDR frame from drone
                 post("/api/video/request-idr") {
                     Log.i("[WebServer] POST /api/video/request-idr")
