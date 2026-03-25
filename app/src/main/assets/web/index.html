@@ -52,6 +52,9 @@ body{background:#0a0a0f;color:#e0e0e0;font-family:'JetBrains Mono',monospace;ove
       <div class="tel-item">DIST: <span id="tdist">--m</span></div>
       <div class="tel-item">SAT: <span id="tsat">--</span></div>
       <div class="tel-item">GPS: <span id="tgps">--</span></div>
+      <div class="tel-item">VOLT: <span id="tvolt">--V</span></div>
+      <div class="tel-item">HDG: <span id="thdg">--°</span></div>
+      <div class="tel-item">JOY: <span id="tjoy">0,0,0,0</span></div>
     </div>
     <div class="controls">
       <div>
@@ -97,6 +100,8 @@ function connectWS(){
         document.getElementById('tdist').textContent=t.horizontalDistance.toFixed(1)+'m';
         document.getElementById('tsat').textContent=t.satellites;
         document.getElementById('tgps').textContent=t.latitude.toFixed(5)+','+t.longitude.toFixed(5);
+        document.getElementById('tvolt').textContent=t.flightVoltage.toFixed(1)+'V';
+        document.getElementById('thdg').textContent=t.heading+'°';
       }
     }catch(_){}
   };
@@ -126,7 +131,9 @@ function setupJoystick(cid,tid,side){
 let lastSend=0;
 function send(){
   const now=Date.now();if(now-lastSend<20)return;lastSend=now;
-  if(ws&&ws.readyState===1)ws.send(JSON.stringify({throttle:sticks.left.y,yaw:sticks.left.x,pitch:sticks.right.y,roll:sticks.right.x,gimbal:0}));
+  const j={throttle:sticks.left.y,yaw:sticks.left.x,pitch:sticks.right.y,roll:sticks.right.x,gimbal:0};
+  document.getElementById('tjoy').textContent=`${j.throttle},${j.yaw},${j.pitch},${j.roll}`;
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify(j));
 }
 
 function cmd(c){fetch('/api/cmd/'+c,{method:'POST'}).then(r=>r.json()).then(d=>log('INFO','CMD: '+JSON.stringify(d)))}

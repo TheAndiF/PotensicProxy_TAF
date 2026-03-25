@@ -71,40 +71,49 @@ object TelemetryParser {
      * Parse a raw FE packet that might contain telemetry.
      * Called for every non-video FE packet.
      */
+    private var parseCount = 0
+
     fun parse(feType: Int, payload: ByteArray): TelemetryData? {
-        // vt1 (FlightRevGps) comes in packets of ~52+ bytes
-        if (payload.size < 30) return null
+        if (payload.size < 10) return null
 
         try {
-            // Skip the inner FF FD header (find data start)
-            var offset = 0
-            if (payload.size > 4 && (payload[0].toInt() and 0xFF) == 0xFF) {
-                // Inner command: FF FD [len LE 2] [short LE 2] [cmd 1] [data...]
-                offset = 7 // skip FF FD + len(2) + short(2) + cmd(1)
-                if (offset >= payload.size - 20) return null
+            // The inner command starts with FF FD [len] [short] [cmd] [data...]
+            // or FF FE [len] [short] [cmd] [data...]
+            // Find the data start after the inner header
+            var i = 0
+            if (payload.size > 4 && (payload[0].toInt() and 0xFF) >= 0xFD) {
+                val innerLen = readUShortLE(payload, 2)
+                i = 4 + 2 + 1 // FF/FE + len(2) + short(2) + cmd(1) = 7
+                // But cmd might have sub-fields, find the actual data
+                // The short at [4-5] tells us the command category
+                val cmdShort = readUShortLE(payload, 4)
+                val cmdByte = if (i - 1 < payload.size) payload[i - 1].toInt() and 0xFF else 0
+
+                // Log first few packets for debugging
+                if (parseCount < 5) {
+                    val hex = payload.take(30).joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
+                    Log.i("[Telemetry] type=0x${"%02x".format(feType)} short=0x${"%04x".format(cmdShort)} cmd=0x${"%02x".format(cmdByte)} size=${payload.size} hex=$hex")
+                    parseCount++
+                }
+
+                // Parse type 0x21 short=0x0206 (high-freq flight data, 514 bytes)
+                // Also try 0x32/0x0300 (vt1 GPS)
+                if (!((feType == 0x21 && cmdShort == 0x0206) || (feType == 0x32 && cmdShort == 0x0300))) return null
+            } else {
+                return null
             }
 
-            val data = payload
-            val i = offset
+            if (i + 12 > payload.size) return null
 
-            if (i + 26 > data.size) return null
+            // For type 0x21 (high-freq flight data), battery is at relative offset 11
+            // maxHeight at offset 7, battery at offset 11
+            val bat = if (i + 11 < payload.size) payload[i + 11].toInt() and 0xFF else 0
 
+            // Try to extract what we can — the full vt1 format needs more analysis
             val tel = TelemetryData(
-                flightVoltage = readUShortLE(data, i) / 100f,
-                remoterVoltage = readUShortLE(data, i + 2) / 100f,
-                longitude = readIntLE(data, i + 4) / 10_000_000.0,
-                latitude = readIntLE(data, i + 8) / 10_000_000.0,
-                satellites = data[i + 12].toInt() and 0xFF,
-                heading = readUShortLE(data, i + 13),
-                horizontalDistance = if (i + 18 < data.size) readIntLE(data, i + 15) / 10f else 0f,
-                verticalDistance = if (i + 20 < data.size) readShortLE(data, i + 19) / 10f else 0f,
-                horizontalSpeed = if (i + 22 < data.size) readUShortLE(data, i + 21) / 10f else 0f,
-                verticalSpeed = if (i + 24 < data.size) readShortLE(data, i + 23) / 10f else 0f,
-                battery = if (i + 25 < data.size) data[i + 25].toInt() and 0xFF else 0,
-                pitch = if (i + 28 < data.size) readShortLE(data, i + 27) else 0,
-                roll = if (i + 30 < data.size) readShortLE(data, i + 29) else 0,
-                windSpeed = if (i + 34 < data.size) readShortLE(data, i + 33) / 100f else 0f,
-                altitude = if (i + 51 < data.size) readIntLE(data, i + 48) else 0,
+                battery = bat,
+                flightVoltage = if (i + 1 < payload.size) (payload[i].toInt() and 0xFF) / 10f else 0f,
+                altitude = if (i + 5 < payload.size) readShortLE(payload, i + 4) else 0,
             )
 
             latest = tel
