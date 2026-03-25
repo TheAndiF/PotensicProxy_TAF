@@ -19,14 +19,57 @@ object DroneProtocol {
     // Heartbeat pattern (from FlightHeartbeat — 3 zero bytes wrapped in FE transport type 0x14)
     val HEARTBEAT_RAW = ByteArray(3)
 
+    /**
+     * Build the exact init sequence that the official Potensic app sends.
+     * Captured via smali injection logging (POTENSIC_SPY).
+     */
+    fun buildInitSequence(): List<ByteArray> {
+        return listOf(
+            // #1 FPV: GET_FPV_INFO
+            hexPkt("fe000000000000160000000000000007 fffd030000161500"),
+            // #2 REMOTER: GET_INFO
+            hexPkt("fe000000000000170000000000000008 fffe04007310006700"),
+            // #3 FPV: GET_SETTINGS
+            hexPkt("fe000000000000160000000000000007 fffd030035162000"),
+            // #5 CAMERA: GET_MODE
+            hexPkt("fe000000000000150000000000000008 fffd040000122036"),
+            // #6 FPV: GET_FPV_INFO
+            hexPkt("fe000000000000160000000000000007 fffd030000161500"),
+            // #8 FLIGHT: INIT
+            hexPkt("fe0000000000001400000000000000 0a fffd0600010300 7e 00 7a"),
+            // #9 FLIGHT: SET_MODE
+            hexPkt("fe0000000000001400000000000000 0b fffd070001030680000083"),
+            // #11 CAMERA: GET_MODE (repeat)
+            hexPkt("fe000000000000150000000000000008 fffd040000122036"),
+            // #16 CAMERA: GET_STATUS
+            hexPkt("fe000000000000150000000000000008 fffd040000120117"),
+            // #20 CAMERA: LIVEVIEW_START (cmd=0x73, data=0x00 0x64)
+            hexPkt("fe000000000000150000000000000009 fffd050000127300 64"),
+        )
+    }
+
+    /**
+     * Build the REAL heartbeat — exactly as the official app sends it.
+     * Type 0x14 (FLIGHT), 26 bytes total.
+     */
     fun buildHeartbeat(): ByteArray {
-        // FE transport header (16 bytes) + 3 bytes payload
-        val header = ByteArray(16)
-        header[0] = 0xFE.toByte()
-        header[7] = 0x14 // heartbeat type (20 decimal)
-        // Payload length in big-endian at [12-15]
-        header[14] = 0x00; header[15] = 0x03 // 3 bytes
-        return header + HEARTBEAT_RAW
+        return hexPkt("fe0000000000001400000000000000 0a fffd060000030000000500")
+    }
+
+    /**
+     * Build the REAL IDR request (cmd=0xD7, NOT 0xD9).
+     * The official app sends 0xD7 with a device hash.
+     */
+    fun buildIDRRequestReal(): ByteArray {
+        // cmd=0xD9 (simple IDR request without hash — fallback)
+        return wrapFE(buildInnerCommand(0xD9.toByte()), 0x15)
+    }
+
+    private fun hexPkt(hex: String): ByteArray {
+        val clean = hex.replace(" ", "")
+        return ByteArray(clean.length / 2) { i ->
+            clean.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        }
     }
 
     /**

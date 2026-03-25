@@ -120,10 +120,18 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         Log.i("[Service] USB Connected — resetting and starting loops")
         videoExtractor.reset()
 
-        // Send LiveViewParams to init video stream
-        val liveView = DroneProtocol.buildLiveViewParams()
-        usbManager.send(liveView)
-        Log.i("[Service] Queued LiveViewParams")
+        // Send the EXACT init sequence captured from the official app
+        scope.launch {
+            val initSeq = DroneProtocol.buildInitSequence()
+            for ((i, cmd) in initSeq.withIndex()) {
+                usbManager.send(cmd)
+                Log.i("[Service] Init cmd #${i+1}/${initSeq.size} (${cmd.size}B)")
+                delay(50) // 50ms between commands like official app
+            }
+            // Send LiveViewParams after init
+            usbManager.send(DroneProtocol.buildLiveViewParams())
+            Log.i("[Service] Sent LiveViewParams")
+        }
 
         startControlLoop()
         startExtractorLoop()
@@ -245,7 +253,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                     val now = System.currentTimeMillis()
 
                     // Send heartbeat every 500ms to keep connection alive
-                    if (now - lastHeartbeat > 500) {
+                    if (now - lastHeartbeat > 100) {
                         usbManager.sendDirect(heartbeatPacket)
                         lastHeartbeat = now
                     }
