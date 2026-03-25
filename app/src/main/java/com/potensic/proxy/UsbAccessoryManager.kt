@@ -246,7 +246,7 @@ class UsbAccessoryManager(private val context: Context) {
     // === Internal loops ===
 
     private suspend fun readLoop() {
-        val buffer = ByteArray(65536) // 64KB buffer to minimize syscalls
+        val buffer = ByteArray(16384) // Match official app read behavior — individual USB packets
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO) // max priority
         while (running.get() && connected.get()) {
             try {
