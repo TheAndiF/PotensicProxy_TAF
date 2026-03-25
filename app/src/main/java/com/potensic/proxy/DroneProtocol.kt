@@ -37,8 +37,7 @@ object DroneProtocol {
             hexPkt("fe000000000000160000000000000007 fffd030000161500"),
             // #8 FLIGHT: INIT
             hexPkt("fe0000000000001400000000000000 0a fffd0600010300 7e 00 7a"),
-            // #9 FLIGHT: SET_MODE
-            hexPkt("fe0000000000001400000000000000 0b fffd070001030680000083"),
+            // #9 FLIGHT: SET_MODE — REMOVED: overwrites user's controller config (left/right hand mode)
             // #11 CAMERA: GET_MODE (repeat)
             hexPkt("fe000000000000150000000000000008 fffd040000122036"),
             // #16 CAMERA: GET_STATUS
@@ -65,34 +64,57 @@ object DroneProtocol {
         return wrapFE(buildInnerCommand(0xD9.toByte()), 0x15)
     }
 
-    // === Flight commands (reversed from RemoterSelfButton / cr1.java) ===
+    // === Flight commands (reversed from np1.java / mp1.java enum) ===
+    // Inner short: 0x0301, FE type: 0x14
+    // Format: FF FD [len] [01 03] [group] [subcmd] [xor_checksum]
+    // mp1 enum: TAKEOFF=group 0x01, LAND=group 0x02, RETURN=group 0x03
+    // subcmd: 0x01=execute, 0x00=cancel
 
-    /** Takeoff / Land toggle */
-    fun buildTakeoffLand(): ByteArray {
-        // Flight key: short=0x0301, cmd varies
-        // From captured TX: type 0x14 (flight)
-        return wrapFE(buildInnerCommand(0x01.toByte(), byteArrayOf(0x03, 0x01)), 0x14)
-    }
+    /** Takeoff */
+    fun buildTakeoff(): ByteArray = buildFlightCommand(0x01, 0x01)
+
+    /** Land */
+    fun buildLand(): ByteArray = buildFlightCommand(0x02, 0x01)
 
     /** Return to home */
-    fun buildRTH(): ByteArray {
-        return wrapFE(buildInnerCommand(0x04.toByte(), byteArrayOf(0x03, 0x01)), 0x14)
-    }
+    fun buildRTH(): ByteArray = buildFlightCommand(0x03, 0x01)
 
-    /** Emergency stop */
+    /** Cancel RTH */
+    fun buildCancelRTH(): ByteArray = buildFlightCommand(0x03, 0x00)
+
+    /** Emergency stop — cancel all */
     fun buildEmergencyStop(): ByteArray {
-        return wrapFE(buildInnerCommand(0x05.toByte(), byteArrayOf(0x03, 0x01)), 0x14)
+        return buildFlightCommand(0x01, 0x00)
     }
 
-    /** Take photo */
+    /**
+     * Build a flight command with short 0x0301.
+     * Reversed from np1.java + mp1.java enum.
+     * Data format: [seq_lo] [seq_hi] [group] [subcmd] — 4 bytes.
+     * Sequence counter (fk5.java): starts at 125, increments per call.
+     */
+    private var flightSeq: Short = 125
+
+    private fun buildFlightCommand(group: Int, subcmd: Int): ByteArray {
+        val seq = flightSeq++
+        val data = byteArrayOf(
+            0x04,  // cmd byte: flight key (np1 registered as byte 4 in cr1.java)
+            (seq.toInt() and 0xFF).toByte(),
+            ((seq.toInt() shr 8) and 0xFF).toByte(),
+            group.toByte(),
+            subcmd.toByte(),
+        )
+        val inner = buildInnerCommandWithShort(0x0301, data)
+        return wrapFE(inner, 0x14)
+    }
+
+    /** Take photo — camera cmd, short 0x1200 */
     fun buildTakePhoto(): ByteArray {
-        // Camera cmd 0x51 = take photo
         return wrapFE(buildInnerCommand(0x51.toByte()), 0x15)
     }
 
-    /** Start/stop video recording */
+    /** Start/stop video recording — camera cmd, short 0x1200 */
     fun buildToggleRecord(): ByteArray {
-        // Camera cmd 0x50 = toggle record
         return wrapFE(buildInnerCommand(0x50.toByte()), 0x15)
     }
 
@@ -325,6 +347,34 @@ object DroneProtocol {
      * k53 encodes: [h264Level, h264Rate_BE_2bytes, h265Level, h265Rate_BE_2bytes]
      */
     /**
+     * Build inner command with CUSTOM short (for flight commands etc).
+     * Format: FF FD [len_LE_2] [short_LE_2] [data...] [xor_checksum]
+     * No cmd byte — data follows directly after the short.
+     */
+    private fun buildInnerCommandWithShort(short: Int, data: ByteArray): ByteArray {
+        // Total: FF(1) + FD(1) + len(2) + short(2) + data(N) + checksum(1) = 7 + N
+        val totalSize = 7 + data.size
+        val payload = ByteArray(totalSize)
+        // iW = short(2) + data(N) + checksum(1) = 3 + N
+        val iW = 3 + data.size
+        payload[0] = 0xFF.toByte()
+        payload[1] = 0xFD.toByte()
+        // Length in LE
+        payload[2] = (iW and 0xFF).toByte()
+        payload[3] = ((iW shr 8) and 0xFF).toByte()
+        // Short in LE
+        payload[4] = (short and 0xFF).toByte()
+        payload[5] = ((short shr 8) and 0xFF).toByte()
+        // Data
+        System.arraycopy(data, 0, payload, 6, data.size)
+        // XOR checksum over [2..last-1]
+        var xor = 0
+        for (i in 2 until payload.size - 1) xor = xor xor (payload[i].toInt() and 0xFF)
+        payload[payload.size - 1] = xor.toByte()
+        return payload
+    }
+
+    /**
      * Build inner camera command with correct endianness.
      * Format: FF FD [len_LE_2] [short_LE_2(0x1200)] [cmd_byte] [data...] [xor_checksum]
      * Reversed from zy2.x() bytecode — ALL shorts are little-endian via kc4.J()
@@ -362,6 +412,8 @@ object DroneProtocol {
         return payload
     }
 
+    fun wrapFEPublic(inner: ByteArray, feType: Int): ByteArray = wrapFE(inner, feType.toByte())
+
     private fun wrapFE(inner: ByteArray, feType: Byte = 0x15): ByteArray {
         val header = ByteArray(16)
         header[0] = 0xFE.toByte()
@@ -373,6 +425,54 @@ object DroneProtocol {
         header[14] = ((plen shr 8) and 0xFF).toByte()
         header[15] = (plen and 0xFF).toByte()
         return header + inner
+    }
+
+    /**
+     * Build the combined HFD2+HFD1+HFD3 packet (127 bytes) as the official app sends.
+     * Order: HFD2(35B) → HFD1(55B) → HFD3(37B), then FE-wrapped with type 0x14.
+     * HFD1/HFD2 are echoed telemetry (zeros for now), HFD3 has joystick values.
+     */
+    /**
+     * Build the combined HFD2+HFD1+HFD3 packet (127 bytes) as the official app sends.
+     * Order: HFD2(35B) → HFD1(55B) → HFD3(37B).
+     * Sent RAW — NO FE wrapping (confirmed from AOAEngine decompilation).
+     */
+    fun buildCombinedControl(
+        throttle: Short = 0, yaw: Short = 0, pitch: Short = 0, roll: Short = 0,
+        gimbalTilt: Short = 0, phoneLat: Double = 0.0, phoneLng: Double = 0.0,
+    ): ByteArray {
+        // HFD2: ID=2, 32 bytes data → 35 bytes total
+        val hfd2 = ByteArray(35)
+        hfd2[0] = 2
+        writeShortLE(hfd2, 1, 32)
+
+        // HFD1: ID=1, 52 bytes data → 55 bytes total
+        val hfd1 = ByteArray(55)
+        hfd1[0] = 1
+        writeShortLE(hfd1, 1, 52)
+
+        // HFD3: 37 bytes (our existing control packet)
+        val hfd3 = buildControlPacket(throttle, yaw, pitch, roll, gimbalTilt,
+            phoneLat = phoneLat, phoneLng = phoneLng)
+
+        // Concatenate RAW: HFD2 + HFD1 + HFD3 = 127 bytes (NO FE wrapping)
+        return hfd2 + hfd1 + hfd3
+    }
+
+    /**
+     * Build WifiDirectSwitch command — activates WiFi hotspot on the controller.
+     * Reversed from ol3.u0() + iv6.java + g10.F0().
+     * funcId/cmd = 0xD2 (-46), short = 0x1200, FE type = 0x15 (camera channel)
+     * Payload: [0x01=enter/0x00=exit] + [16 bytes phoneId]
+     */
+    fun buildWifiDirectSwitch(enter: Boolean): ByteArray {
+        val phoneId = ByteArray(16)
+        java.security.SecureRandom().nextBytes(phoneId)
+        val data = ByteArray(17)
+        data[0] = if (enter) 0x01 else 0x00
+        System.arraycopy(phoneId, 0, data, 1, 16)
+        val inner = buildInnerCommand(0xD2.toByte(), data)
+        return wrapFE(inner, 0x15)
     }
 
     fun buildLiveViewParams(): ByteArray {

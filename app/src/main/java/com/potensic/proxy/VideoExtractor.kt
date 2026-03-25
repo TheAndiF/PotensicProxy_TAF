@@ -87,20 +87,12 @@ class VideoExtractor {
 
             if (plen <= 0 || plen > 65536) return
 
-            // Log large packet types to identify video FE type
-            if (feFramesParsed.get() < 50 && plen > 1000) {
-                Log.i("[Video] LARGE FE type=0x${"%02x".format(feType)} plen=$plen")
-            }
-            // Skip small telemetry packets
-            if (plen < 100) return
-            // Parse telemetry from non-video types
+            // Parse telemetry from non-video FE types (0x21=flight, 0x41=remoter, etc)
             if (feType != 0x06) {
-                if (plen > 20) {
-                    val telSize = minOf(plen, length - FE_HEADER_SIZE)
-                    if (telSize > 0) {
-                        val telPayload = usbPacket.copyOfRange(FE_HEADER_SIZE, FE_HEADER_SIZE + telSize)
-                        TelemetryParser.parse(feType, telPayload)
-                    }
+                val telSize = minOf(plen, length - FE_HEADER_SIZE)
+                if (telSize > 6) { // minimum FF FD + len(2) + short(2) = 6 bytes
+                    val telPayload = usbPacket.copyOfRange(FE_HEADER_SIZE, FE_HEADER_SIZE + telSize)
+                    TelemetryParser.parse(feType, telPayload)
                 }
                 return
             }

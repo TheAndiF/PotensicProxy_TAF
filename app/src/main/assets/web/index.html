@@ -22,6 +22,7 @@ body{background:#0a0a0f;color:#e0e0e0;font-family:'JetBrains Mono',monospace;ove
 .joystick-bg{width:160px;height:160px;border-radius:50%;background:rgba(30,30,60,.8);border:2px solid #333}
 .joystick-thumb{position:absolute;width:50px;height:50px;border-radius:50%;background:radial-gradient(circle,#ff1744,#b71c1c);border:2px solid #ff4444;top:55px;left:55px;cursor:grab;touch-action:none;box-shadow:0 0 10px rgba(255,23,68,.5)}
 .joystick-label{text-align:center;font-size:10px;color:#888;margin-top:2px}
+.rc-dot{position:absolute;width:14px;height:14px;border-radius:50%;background:#0f6;opacity:.8;top:73px;left:73px;pointer-events:none;box-shadow:0 0 6px #0f6;z-index:10}
 .cmd-buttons{display:flex;flex-direction:column;gap:6px}
 .btn{padding:8px 14px;border:1px solid #ff1744;background:rgba(255,23,68,.1);color:#ff1744;border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit}
 .btn:hover{background:rgba(255,23,68,.3)}
@@ -49,16 +50,22 @@ body{background:#0a0a0f;color:#e0e0e0;font-family:'JetBrains Mono',monospace;ove
       <div class="tel-item">BAT: <span id="tbat">--%</span></div>
       <div class="tel-item">ALT: <span id="talt">--m</span></div>
       <div class="tel-item">SPD: <span id="tspd">--m/s</span></div>
+      <div class="tel-item">VSPD: <span id="tvspd">--m/s</span></div>
       <div class="tel-item">DIST: <span id="tdist">--m</span></div>
       <div class="tel-item">SAT: <span id="tsat">--</span></div>
       <div class="tel-item">GPS: <span id="tgps">--</span></div>
       <div class="tel-item">VOLT: <span id="tvolt">--V</span></div>
       <div class="tel-item">HDG: <span id="thdg">--°</span></div>
+      <div class="tel-item">PITCH: <span id="tpitch">--°</span></div>
+      <div class="tel-item">ROLL: <span id="troll">--°</span></div>
+      <div class="tel-item">WIND: <span id="twind">--m/s</span></div>
+      <div class="tel-item">RC: <span id="trc">--V</span></div>
+      <div class="tel-item">RC-JOY: <span id="trcjoy">--</span></div>
       <div class="tel-item">JOY: <span id="tjoy">0,0,0,0</span></div>
     </div>
     <div class="controls">
       <div>
-        <div class="joystick-container" id="leftStick"><div class="joystick-bg"></div><div class="joystick-thumb" id="leftThumb"></div></div>
+        <div class="joystick-container" id="leftStick"><div class="joystick-bg"></div><div class="joystick-thumb" id="leftThumb"></div><div class="rc-dot" id="leftRC"></div></div>
         <div class="joystick-label">THROTTLE / YAW</div>
       </div>
       <div class="cmd-buttons">
@@ -68,9 +75,10 @@ body{background:#0a0a0f;color:#e0e0e0;font-family:'JetBrains Mono',monospace;ove
         <button class="btn" onclick="cmd('photo')">PHOTO</button>
         <button class="btn" onclick="cmd('record')">REC</button>
         <button class="btn red" onclick="cmd('emergency')">STOP</button>
+        <button class="btn" onclick="testJoy()">TEST JOY</button>
       </div>
       <div>
-        <div class="joystick-container" id="rightStick"><div class="joystick-bg"></div><div class="joystick-thumb" id="rightThumb"></div></div>
+        <div class="joystick-container" id="rightStick"><div class="joystick-bg"></div><div class="joystick-thumb" id="rightThumb"></div><div class="rc-dot" id="rightRC"></div></div>
         <div class="joystick-label">PITCH / ROLL</div>
       </div>
     </div>
@@ -95,13 +103,22 @@ function connectWS(){
       if(d.type==='telemetry'&&d.data){
         const t=d.data;
         document.getElementById('tbat').textContent=t.battery+'%';
-        document.getElementById('talt').textContent=(t.altitude/100).toFixed(1)+'m';
+        document.getElementById('talt').textContent=t.altitude.toFixed(1)+'m';
         document.getElementById('tspd').textContent=t.horizontalSpeed.toFixed(1)+'m/s';
+        document.getElementById('tvspd').textContent=t.verticalSpeed.toFixed(1)+'m/s';
         document.getElementById('tdist').textContent=t.horizontalDistance.toFixed(1)+'m';
         document.getElementById('tsat').textContent=t.satellites;
-        document.getElementById('tgps').textContent=t.latitude.toFixed(5)+','+t.longitude.toFixed(5);
+        if(t.latitude!==0||t.longitude!==0)document.getElementById('tgps').textContent=t.latitude.toFixed(6)+','+t.longitude.toFixed(6);
         document.getElementById('tvolt').textContent=t.flightVoltage.toFixed(1)+'V';
         document.getElementById('thdg').textContent=t.heading+'°';
+        document.getElementById('tpitch').textContent=t.pitch+'°';
+        document.getElementById('troll').textContent=t.roll+'°';
+        document.getElementById('twind').textContent=t.windSpeed.toFixed(1)+'m/s';
+        if(t.remoterBatteryVoltage>0)document.getElementById('trc').textContent=t.remoterBatteryVoltage.toFixed(1)+'V';
+        document.getElementById('trcjoy').textContent=t.rcThrottle+','+t.rcYaw+','+t.rcPitch+','+t.rcRoll;
+        // Move RC dots to reflect physical controller positions
+        updateRCDot('leftRC',t.rcYaw,t.rcThrottle);
+        updateRCDot('rightRC',t.rcRoll,t.rcPitch);
       }
     }catch(_){}
   };
@@ -133,7 +150,25 @@ function send(){
   const now=Date.now();if(now-lastSend<20)return;lastSend=now;
   const j={throttle:sticks.left.y,yaw:sticks.left.x,pitch:sticks.right.y,roll:sticks.right.x,gimbal:0};
   document.getElementById('tjoy').textContent=`${j.throttle},${j.yaw},${j.pitch},${j.roll}`;
-  if(ws&&ws.readyState===1)ws.send(JSON.stringify(j));
+  fetch(`/api/test/joy?t=${j.throttle}&y=${j.yaw}&p=${j.pitch}&r=${j.roll}`).catch(()=>{});
+}
+
+// Move RC indicator dot to reflect physical controller stick position
+function updateRCDot(dotId,x,y){
+  const d=document.getElementById(dotId);
+  if(!d)return;
+  const cn=80,r=55,dr=7;
+  const dx=Math.max(-r,Math.min(r,(x/1000)*r));
+  const dy=Math.max(-r,Math.min(r,(y/1000)*r));
+  d.style.left=(cn+dx-dr)+'px';
+  d.style.top=(cn+dy-dr)+'px';
+}
+
+function testJoy(){
+  fetch('/api/test/joy?r=500').then(r=>r.json()).then(d=>{
+    log('INFO','TEST JOY sent: roll=500');
+    setTimeout(()=>fetch('/api/test/joy?r=0').then(()=>log('INFO','TEST JOY reset')),1000);
+  }).catch(e=>log('ERROR','TEST JOY failed: '+e));
 }
 
 function cmd(c){fetch('/api/cmd/'+c,{method:'POST'}).then(r=>r.json()).then(d=>log('INFO','CMD: '+JSON.stringify(d)))}

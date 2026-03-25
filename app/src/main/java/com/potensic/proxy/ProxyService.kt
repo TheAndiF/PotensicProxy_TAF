@@ -36,6 +36,11 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     val videoExtractor = VideoExtractor()
     val videoDecoder = VideoDecoder()
 
+    // WiFi Direct transport
+    var wifiTransport: WifiTransport? = null; private set
+    private var blePairing: BlePairing? = null
+    @Volatile var bleStatus: String = "idle"; private set
+
     private var wakeLock: PowerManager.WakeLock? = null
     private var controlJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -106,10 +111,111 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         controlJob?.cancel()
         webServer.stop()
         usbManager.destroy()
+        wifiTransport?.destroy()
+        blePairing?.stop()
         releaseWakeLock()
         instance = null
         scope.cancel()
         super.onDestroy()
+    }
+
+    // === WiFi Direct ===
+
+    fun startBlePairing() {
+        bleStatus = "scanning"
+        blePairing = BlePairing(applicationContext)
+        blePairing?.start(object : BlePairing.Callback {
+            override fun onStatus(status: String) {
+                bleStatus = status
+                Log.i("[Service] BLE: $status")
+                scope.launch {
+                    webServer.broadcast(org.json.JSONObject().apply {
+                        put("type", "ble")
+                        put("status", status)
+                    })
+                }
+            }
+            override fun onCredentials(creds: BlePairing.WifiCredentials) {
+                bleStatus = "credentials: SSID=${creds.ssid}"
+                Log.i("[Service] BLE credentials: SSID=${creds.ssid} pw=${creds.password} bat=${creds.battery}%")
+                scope.launch {
+                    webServer.broadcast(org.json.JSONObject().apply {
+                        put("type", "ble")
+                        put("status", "credentials")
+                        put("ssid", creds.ssid)
+                        put("password", creds.password)
+                        put("battery", creds.battery)
+                        put("wifiMode", creds.wifiMode)
+                        put("isOpen", creds.isOpen)
+                    })
+                }
+            }
+            override fun onError(error: String) {
+                bleStatus = "error: $error"
+                Log.e("[Service] BLE error: $error")
+                scope.launch {
+                    webServer.broadcast(org.json.JSONObject().apply {
+                        put("type", "ble")
+                        put("status", "error")
+                        put("error", error)
+                    })
+                }
+            }
+        })
+    }
+
+    fun connectWifi(ip: String = "192.168.29.1", port: Int = 8889): Boolean {
+        Log.i("[Service] WiFi connecting to $ip:$port")
+        val wt = WifiTransport()
+        wt.listener = object : WifiTransport.Listener {
+            override fun onConnected() {
+                Log.i("[Service] WiFi Connected!")
+                videoExtractor.reset()
+
+                // Send init sequence (same as USB)
+                scope.launch {
+                    val initSeq = DroneProtocol.buildInitSequence()
+                    for ((i, cmd) in initSeq.withIndex()) {
+                        wt.send(cmd)
+                        Log.i("[Service] WiFi init cmd #${i+1}/${initSeq.size}")
+                        delay(50)
+                    }
+                    wt.send(DroneProtocol.buildLiveViewParams())
+                    Log.i("[Service] WiFi LiveViewParams sent")
+                }
+
+                startControlLoop()
+                startExtractorLoop()
+                startDecoderLoop()
+
+                // Broadcast telemetry
+                scope.launch {
+                    while (wt.isConnected) {
+                        val tel = TelemetryParser.latest
+                        val json = org.json.JSONObject().apply {
+                            put("type", "telemetry")
+                            put("data", tel.toJson())
+                        }
+                        webServer.broadcast(json)
+                        delay(200)
+                    }
+                }
+            }
+
+            override fun onDisconnected() {
+                Log.w("[Service] WiFi Disconnected")
+                controlJob?.cancel(); controlJob = null
+            }
+
+            override fun onDataReceived(data: ByteArray, length: Int) {
+                rawDataQueue.offer(data.copyOf(length))
+            }
+        }
+
+        wifiTransport = wt
+        return scope.async { wt.connect(ip, port) }.let {
+            runBlocking { it.await() }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -140,13 +246,11 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         scope.launch {
             while (usbManager.isConnected) {
                 val tel = TelemetryParser.latest
-                if (tel != null) {
-                    val json = org.json.JSONObject().apply {
-                        put("type", "telemetry")
-                        put("data", tel.toJson())
-                    }
-                    webServer.broadcast(json)
+                val json = org.json.JSONObject().apply {
+                    put("type", "telemetry")
+                    put("data", tel.toJson())
                 }
+                webServer.broadcast(json)
                 delay(200)
             }
         }
@@ -164,6 +268,21 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     private var extractorJob: Job? = null
     private val rawDataQueue = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
 
+    /** True if any transport (USB or WiFi) is connected */
+    private val isAnyConnected: Boolean
+        get() = usbManager.isConnected || (wifiTransport?.isConnected == true)
+
+    /** Send via whichever transport is active */
+    fun sendAny(data: ByteArray) {
+        wifiTransport?.let { if (it.isConnected) { it.send(data); return } }
+        if (usbManager.isConnected) usbManager.send(data)
+    }
+
+    fun sendDirectAny(data: ByteArray) {
+        wifiTransport?.let { if (it.isConnected) { it.sendDirect(data); return } }
+        if (usbManager.isConnected) usbManager.sendDirect(data)
+    }
+
     override fun onDataReceived(data: ByteArray, length: Int) {
         // Never drop USB data — dropping causes corrupted frames
         rawDataQueue.offer(data.copyOf(length))
@@ -173,7 +292,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         if (extractorJob?.isActive == true) return
         extractorJob = scope.launch(Dispatchers.Default) {
             Log.i("[Service] Extractor loop started")
-            while (isActive && usbManager.isConnected) {
+            while (isActive && isAnyConnected) {
                 val data = rawDataQueue.poll()
                 if (data != null) {
                     videoExtractor.feed(data, data.size)
@@ -194,7 +313,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             Log.i("[Service] Decoder loop started")
             var statsCounter = 0
             var gotFirstIdr = false
-            while (isActive && usbManager.isConnected) {
+            while (isActive && isAnyConnected) {
                 // Drain queue — grab only the LATEST IDR to minimize latency
                 var latestIdr: VideoExtractor.NalUnit? = null
                 while (true) {
@@ -250,33 +369,33 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             val heartbeatPacket = DroneProtocol.buildHeartbeat()
             Log.hex("[Service] Heartbeat packet", heartbeatPacket)
 
-            while (isActive && usbManager.isConnected) {
+            while (isActive && isAnyConnected) {
                 try {
-                    // Build control packet from current joystick state
-                    val packet = DroneProtocol.buildControlPacket(
-                        throttle = webServer.throttle,
-                        yaw = webServer.yaw,
-                        pitch = webServer.pitch,
-                        roll = webServer.roll,
-                        gimbalTilt = webServer.gimbalTilt,
-                    )
-
-                    // Send via USB
-                    usbManager.send(packet)
+                    // Send combined HFD2+HFD1+HFD3 (127B) FE-wrapped when web joysticks active
+                    // Must match official app format: all 3 concatenated, FE type 0x14
+                    if (webServer.hasActiveInput) {
+                        val packet = DroneProtocol.buildCombinedControl(
+                            throttle = webServer.throttle,
+                            yaw = webServer.yaw,
+                            pitch = webServer.pitch,
+                            roll = webServer.roll,
+                            gimbalTilt = webServer.gimbalTilt,
+                        )
+                        sendDirectAny(packet)
+                    }
 
                     val now = System.currentTimeMillis()
 
-                    // Send heartbeat every 500ms to keep connection alive
+                    // Send heartbeat every 100ms to keep connection alive
                     if (now - lastHeartbeat > 100) {
-                        usbManager.sendDirect(heartbeatPacket)
+                        sendDirectAny(heartbeatPacket)
                         lastHeartbeat = now
                     }
 
-                    // Request IDR frame every 5s until we get one
-                    // Request IDR every 100ms — balanced (15ms causes send queue overflow)
+                    // Request IDR every 100ms
                     if (now - lastIdrRequest > 100) {
                         val idrCmd = DroneProtocol.buildIDRRequest()
-                        usbManager.send(idrCmd)
+                        sendAny(idrCmd)
                         lastIdrRequest = now
                     }
 

@@ -10,6 +10,7 @@ import io.ktor.http.*
 import io.ktor.utils.io.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -42,6 +43,8 @@ class WebServer(
     @Volatile var pitch: Short = 0
     @Volatile var roll: Short = 0
     @Volatile var gimbalTilt: Short = 0
+    @Volatile var hasActiveInput: Boolean = false
+    @Volatile private var lastInputTime: Long = 0
 
     fun start(port: Int = 9090) {
         Log.i("[WebServer] Starting on port $port...")
@@ -187,37 +190,66 @@ class WebServer(
 
                 // Telemetry
                 get("/api/telemetry") {
-                    val tel = TelemetryParser.latest
-                    if (tel != null) {
-                        call.respondText(tel.toJson().toString(), ContentType.Application.Json)
-                    } else {
-                        call.respondText("{}", ContentType.Application.Json)
-                    }
+                    call.respondText(TelemetryParser.latest.toJson().toString(), ContentType.Application.Json)
                 }
 
                 // Flight commands
                 post("/api/cmd/takeoff") {
-                    usbManager.send(DroneProtocol.buildTakeoffLand())
-                    call.respondText("""{"cmd":"takeoff"}""", ContentType.Application.Json)
+                    // Send multiple times like official app (hold button behavior)
+                    CoroutineScope(Dispatchers.IO).launch {
+                        repeat(20) {
+                            (ProxyService.instance ?: return@launch).sendDirectAny(DroneProtocol.buildTakeoff())
+                            kotlinx.coroutines.delay(50)
+                        }
+                    }
+                    call.respondText("""{"cmd":"takeoff","repeats":20}""", ContentType.Application.Json)
                 }
                 post("/api/cmd/land") {
-                    usbManager.send(DroneProtocol.buildTakeoffLand())
-                    call.respondText("""{"cmd":"land"}""", ContentType.Application.Json)
+                    CoroutineScope(Dispatchers.IO).launch {
+                        repeat(20) {
+                            (ProxyService.instance ?: return@launch).sendDirectAny(DroneProtocol.buildLand())
+                            kotlinx.coroutines.delay(50)
+                        }
+                    }
+                    call.respondText("""{"cmd":"land","repeats":20}""", ContentType.Application.Json)
                 }
                 post("/api/cmd/rth") {
-                    usbManager.send(DroneProtocol.buildRTH())
-                    call.respondText("""{"cmd":"rth"}""", ContentType.Application.Json)
+                    CoroutineScope(Dispatchers.IO).launch {
+                        repeat(20) {
+                            (ProxyService.instance ?: return@launch).sendDirectAny(DroneProtocol.buildRTH())
+                            kotlinx.coroutines.delay(50)
+                        }
+                    }
+                    call.respondText("""{"cmd":"rth","repeats":20}""", ContentType.Application.Json)
                 }
                 post("/api/cmd/emergency") {
-                    usbManager.send(DroneProtocol.buildEmergencyStop())
-                    call.respondText("""{"cmd":"emergency_stop"}""", ContentType.Application.Json)
+                    // Emergency: send immediately and repeatedly
+                    CoroutineScope(Dispatchers.IO).launch {
+                        repeat(30) {
+                            (ProxyService.instance ?: return@launch).sendDirectAny(DroneProtocol.buildEmergencyStop())
+                            kotlinx.coroutines.delay(30)
+                        }
+                    }
+                    call.respondText("""{"cmd":"emergency_stop","repeats":30}""", ContentType.Application.Json)
+                }
+                // Test endpoint: set joystick values via HTTP (bypass WebSocket)
+                // Usage: GET /api/test/joy?t=0&y=0&p=0&r=500 (r=500 = roll right)
+                get("/api/test/joy") {
+                    val t = call.request.queryParameters["t"]?.toShortOrNull() ?: 0
+                    val y = call.request.queryParameters["y"]?.toShortOrNull() ?: 0
+                    val p = call.request.queryParameters["p"]?.toShortOrNull() ?: 0
+                    val r = call.request.queryParameters["r"]?.toShortOrNull() ?: 0
+                    throttle = t; yaw = y; pitch = p; roll = r
+                    hasActiveInput = (t != 0.toShort() || y != 0.toShort() || p != 0.toShort() || r != 0.toShort())
+                    Log.i("[WebServer] TEST JOY: t=$t y=$y p=$p r=$r active=$hasActiveInput")
+                    call.respondText("""{"test":"joy","t":$t,"y":$y,"p":$p,"r":$r,"active":$hasActiveInput}""", ContentType.Application.Json)
                 }
                 post("/api/cmd/photo") {
-                    usbManager.send(DroneProtocol.buildTakePhoto())
+                    ProxyService.instance?.sendAny(DroneProtocol.buildTakePhoto())
                     call.respondText("""{"cmd":"photo"}""", ContentType.Application.Json)
                 }
                 post("/api/cmd/record") {
-                    usbManager.send(DroneProtocol.buildToggleRecord())
+                    ProxyService.instance?.sendAny(DroneProtocol.buildToggleRecord())
                     call.respondText("""{"cmd":"record"}""", ContentType.Application.Json)
                 }
 
@@ -225,7 +257,7 @@ class WebServer(
                 post("/api/video/request-idr") {
                     Log.i("[WebServer] POST /api/video/request-idr")
                     val idrCmd = DroneProtocol.buildIDRRequest()
-                    usbManager.sendDirect(idrCmd)
+                    ProxyService.instance?.sendDirectAny(idrCmd)
                     call.respondText(JSONObject().put("sent", true).put("size", idrCmd.size).toString(), ContentType.Application.Json)
                 }
 
@@ -246,7 +278,8 @@ class WebServer(
                 // Status
                 get("/api/status") {
                     val json = JSONObject().apply {
-                        put("connected", usbManager.isConnected)
+                        put("connected", usbManager.isConnected || (ProxyService.instance?.wifiTransport?.isConnected == true))
+                        put("mode", if (ProxyService.instance?.wifiTransport?.isConnected == true) "wifi" else if (usbManager.isConnected) "usb" else "none")
                         put("bytesSent", usbManager.bytesSent)
                         put("bytesReceived", usbManager.bytesReceived)
                         put("packetsSent", usbManager.packetsSent)
@@ -281,11 +314,65 @@ class WebServer(
                     call.respondText(json.toString(), ContentType.Application.Json)
                 }
 
-                // Connect
+                // Connect USB
                 post("/api/connect") {
                     Log.i("[WebServer] POST /api/connect — attempting USB connection")
                     val ok = usbManager.connect()
                     val json = JSONObject().put("success", ok)
+                    call.respondText(json.toString(), ContentType.Application.Json)
+                }
+
+                // WiFi Direct: send WifiDirectSwitch via USB to activate hotspot
+                post("/api/wifi/activate") {
+                    Log.i("[WebServer] POST /api/wifi/activate — sending WifiDirectSwitch via USB")
+                    val cmd = DroneProtocol.buildWifiDirectSwitch(true)
+                    ProxyService.instance?.sendDirectAny(cmd)
+                    // Send 3 times for reliability
+                    CoroutineScope(Dispatchers.IO).launch {
+                        repeat(3) {
+                            ProxyService.instance?.sendDirectAny(DroneProtocol.buildWifiDirectSwitch(true))
+                            kotlinx.coroutines.delay(200)
+                        }
+                    }
+                    call.respondText("""{"cmd":"wifi_activate","sent":true}""", ContentType.Application.Json)
+                }
+
+                // WiFi Direct: BLE scan + pairing
+                post("/api/wifi/scan") {
+                    Log.i("[WebServer] POST /api/wifi/scan — starting BLE pairing")
+                    val service = ProxyService.instance
+                    if (service == null) {
+                        call.respondText("""{"error":"service not running"}""", ContentType.Application.Json)
+                    } else {
+                        service.startBlePairing()
+                        call.respondText("""{"status":"scanning"}""", ContentType.Application.Json)
+                    }
+                }
+
+                // WiFi Direct: connect TCP to drone
+                post("/api/wifi/connect") {
+                    val ip = call.request.queryParameters["ip"] ?: "192.168.29.1"
+                    val port = call.request.queryParameters["port"]?.toIntOrNull() ?: 8889
+                    Log.i("[WebServer] POST /api/wifi/connect → $ip:$port")
+                    val service = ProxyService.instance
+                    if (service == null) {
+                        call.respondText("""{"error":"service not running"}""", ContentType.Application.Json)
+                    } else {
+                        val ok = service.connectWifi(ip, port)
+                        call.respondText("""{"success":$ok,"ip":"$ip","port":$port}""", ContentType.Application.Json)
+                    }
+                }
+
+                // WiFi Direct: status
+                get("/api/wifi/status") {
+                    val service = ProxyService.instance
+                    val wt = service?.wifiTransport
+                    val json = JSONObject().apply {
+                        put("wifiConnected", wt?.isConnected ?: false)
+                        put("usbConnected", usbManager.isConnected)
+                        put("mode", if (wt?.isConnected == true) "wifi" else if (usbManager.isConnected) "usb" else "none")
+                        put("bleStatus", service?.bleStatus ?: "idle")
+                    }
                     call.respondText(json.toString(), ContentType.Application.Json)
                 }
 
@@ -334,8 +421,10 @@ class WebServer(
                                     pitch = json.optInt("pitch", 0).toShort()
                                     roll = json.optInt("roll", 0).toShort()
                                     gimbalTilt = json.optInt("gimbal", 0).toShort()
+                                    lastInputTime = System.currentTimeMillis()
+                                    hasActiveInput = (throttle != 0.toShort() || yaw != 0.toShort() || pitch != 0.toShort() || roll != 0.toShort() || gimbalTilt != 0.toShort())
 
-                                    Log.d("[WebServer] WS input: t=$throttle y=$yaw p=$pitch r=$roll g=$gimbalTilt")
+                                    Log.d("[WebServer] WS input: t=$throttle y=$yaw p=$pitch r=$roll g=$gimbalTilt active=$hasActiveInput")
                                 } catch (e: Exception) {
                                     Log.e("[WebServer] WS parse error: ${e.message}")
                                 }
@@ -346,6 +435,7 @@ class WebServer(
                         Log.i("[WebServer] WebSocket client disconnected (remaining: ${wsClients.size})")
                         // Reset joysticks when client disconnects (safety!)
                         throttle = 0; yaw = 0; pitch = 0; roll = 0; gimbalTilt = 0
+                        hasActiveInput = false
                         Log.w("[WebServer] Joysticks reset to zero (client disconnected)")
                     }
                 }
