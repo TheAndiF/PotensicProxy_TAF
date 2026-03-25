@@ -185,6 +185,16 @@ class WebServer(
                     }
                 }
 
+                // Telemetry
+                get("/api/telemetry") {
+                    val tel = TelemetryParser.latest
+                    if (tel != null) {
+                        call.respondText(tel.toJson().toString(), ContentType.Application.Json)
+                    } else {
+                        call.respondText("{}", ContentType.Application.Json)
+                    }
+                }
+
                 // Request IDR frame from drone
                 post("/api/video/request-idr") {
                     Log.i("[WebServer] POST /api/video/request-idr")

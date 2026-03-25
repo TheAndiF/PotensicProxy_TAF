@@ -93,8 +93,17 @@ class VideoExtractor {
             }
             // Skip small telemetry packets
             if (plen < 100) return
-            // Only accept type 0x06 (video data) — skip ALL other types
-            if (feType != 0x06) return
+            // Parse telemetry from non-video types
+            if (feType != 0x06) {
+                if (plen > 20) {
+                    val telSize = minOf(plen, length - FE_HEADER_SIZE)
+                    if (telSize > 0) {
+                        val telPayload = usbPacket.copyOfRange(FE_HEADER_SIZE, FE_HEADER_SIZE + telSize)
+                        TelemetryParser.parse(feType, telPayload)
+                    }
+                }
+                return
+            }
 
             val payloadSize = minOf(plen, length - FE_HEADER_SIZE)
             if (payloadSize <= 0) return
