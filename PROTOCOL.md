@@ -375,9 +375,268 @@ Only available with PTD-1 controller or equivalent WiFi-equipped hardware.
 | NAND | Macronix MX35UF4GE4AD | 4Gbit SPI |
 | RAM | Samsung K4A8G16 x2 | |
 
-## OTA Server
+## OTA Firmware Update Protocol
 
-- Production: `https://atom-server.potensic.com`
-- Auth: AES-256-GCM, key `be0343d13327a710cbed4a2a1e987837`
-- Firmware format: DEPS container (magic + JSON manifest + encrypted modules)
-- Product ID: ATOM 2 = 179 (DSDR23A)
+### Server
+
+| Environment | URL |
+|-------------|-----|
+| Production | `https://atom-server.potensic.com` |
+| Test | `http://atom-admin-test.potensic.com:18080/` |
+
+### Authentication
+
+All API requests use an `Authorization` header encrypted with AES-128-GCM.
+
+**Keys:**
+- Primary: `be0343d13327a710cbed4a2a1e987837` (16 bytes)
+- Alternate: `dadfa106e2ec41f5a7433d9e0fa8528b`
+- Key selection: `zd4.c` flag in APK (default = primary)
+
+**Header format:**
+```
+Base64( [IV_length (4B BE)] [IV (12B)] [AES-GCM ciphertext] )
+```
+
+**Plaintext payload:**
+```json
+{"userToken": "<token_string>", "timestamp": <unix_epoch>}
+```
+
+### Endpoints
+
+| Method | Path | Body | Description |
+|--------|------|------|-------------|
+| POST | `atom/client/user/login` | Encrypted `{"data": "<AES-GCM(LoginRequest)>"}` | Login, returns encrypted userToken |
+| POST | `atom/client/ota/checkUpgrade` | Plain JSON | Check for available updates |
+| POST | `atom/client/ota/upgrade` | Plain JSON | Get firmware download URLs |
+| POST | `atom/client/ota/upgrade/callback` | Plain JSON | Report upgrade result |
+| GET | `@Url` (streaming) | — | Download firmware binary |
+| GET | `atom/client/noFlyZone/upgradeV2` | Query params | No-fly zone database update |
+
+### Login request
+
+Body is AES-GCM encrypted and wrapped in `{"data": "<base64>"}`:
+
+```json
+{
+  "password": "<base64(password)>",
+  "clientType": 2,
+  "timestamp": 1774461984,
+  "appVersion": "2.9.6",
+  "confirm": false,
+  "mail": "user@example.com",
+  "phoneNumber": null,
+  "phoneType": "Pixel 7",
+  "phoneSystems": "14"
+}
+```
+
+Response `userToken` is also AES-GCM encrypted. Decrypt to get:
+```
+<userId>:<email>:<clientType>:<sessionId>:null:null:2
+```
+
+### Check upgrade request
+
+Plain JSON body (NOT encrypted):
+
+```json
+{
+  "appName": "Potensic Eve",
+  "appVersion": "2.9.6",
+  "clientType": 2,
+  "flightVersion": "V021",
+  "rcVersion": "V017",
+  "flightSN": "<drone_serial>",
+  "rcSN": "<rc_serial>",
+  "languageType": 1,
+  "product": 179
+}
+```
+
+Response:
+```json
+{
+  "hasNewVersion": true,
+  "hasNewAppVersion": false,
+  "hasNewFirmVersion": true,
+  "forceUpgradeFirm": false
+}
+```
+
+### Upgrade request (get download URLs)
+
+Same body format as checkUpgrade. Requires valid `userToken` in auth header.
+
+Response contains up to 3 packages:
+
+```json
+{
+  "dependsApp": false,
+  "flightPkg": {
+    "name": "FLIGHT",
+    "version": "V024",
+    "downloadUrl": "https://...oci.customer-oci.com/.../atom2_v024.02.bin",
+    "md5": "66a6d86946e3b2cad781f6dda96eca6c",
+    "fileName": "atom2_v024.02_20251230_1767094258527.bin",
+    "fileSize": 82457205,
+    "isForce": false
+  },
+  "rcPkg": { ... },
+  "appPkg": { ... }
+}
+```
+
+Firmware binaries are hosted on Oracle Cloud Infrastructure (OCI) Object Storage in `eu-frankfurt-1`.
+
+### Product IDs
+
+| Product | Model | ID |
+|---------|-------|----|
+| ATOM 2 | DSDR23A | 179 |
+| ATOM | DSDR04C | — |
+| ATOM 2S | DSDR23B | — |
+| ATOM SE | DSDR04B | — |
+
+Manufacturer ID: `91440300319694358B` (Shenzhen Botan Intelligence)
+
+---
+
+## DEPS Firmware Container Format
+
+OTA firmware packages use a proprietary container format identified by the `DEPS` magic.
+
+### Header
+
+```
+Offset  Size  Field
+0       4     Magic: "DEPS" (0x44 0x45 0x50 0x53)
+4       4     JSON manifest length (uint32 LE)
+8       N     JSON manifest (UTF-8)
+8+N     ...   Concatenated firmware modules
+```
+
+### Manifest structure
+
+```json
+{
+  "product_type": "atom2",
+  "version": "024.02",
+  "modules": [
+    {
+      "type": "fcs",
+      "name": "fcs_atom2_gd32f470vg_v4.8.8_20251230.bin",
+      "version": "4.8.8",
+      "size": 725136,
+      "padded_size": 725136,
+      "md5": "d9ba47e76bdab975647352bdd5eff467",
+      "dev_id": [179, 186, 187],
+      "prio": 30,
+      "product_type": "atom2"
+    }
+  ]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `type` | Module type: `fcs`, `cam`, `gimbal`, `bms`, `esc`, `rc`, `itg` |
+| `size` | Actual module size in bytes |
+| `padded_size` | Size with alignment padding (next module starts at offset + padded_size) |
+| `md5` | MD5 of the **decrypted** module (not the encrypted data in the package) |
+| `dev_id` | Target device IDs on the drone's internal bus |
+| `prio` | Flash priority (lower = first) |
+
+### Module layout
+
+Modules are concatenated immediately after the JSON manifest, each occupying `padded_size` bytes:
+
+```
+[DEPS header (8B)] [JSON manifest] [module_0 (padded)] [module_1 (padded)] ... [module_N]
+```
+
+### Drone firmware V024 — 12 modules
+
+| Type | Name | Version | Size | dev_id | Target |
+|------|------|---------|------|--------|--------|
+| bms | bt02a | 1.5.5 | 24 KB | 112 | Battery variant A |
+| bms | bt02b | 1.3.4 | 24 KB | 113 | Battery variant B |
+| bms | bt02c | 2.0.6 | 35 KB | 114 | Battery variant C |
+| bms | bt02d | 3.1.0 | 35 KB | 115 | Battery variant D |
+| bms | bt02e | 4.0.6 | 36 KB | 116 | Battery variant E |
+| bms | bt02f | 5.0.6 | 25 KB | 117 | Battery variant F |
+| bms | bt02g | 6.0.4 | 36 KB | 118 | Battery variant G |
+| gimbal | bs | 2.6.8 | 104 KB | 133 | Gimbal bootloader |
+| gimbal | updata | 2.3.1 | 104 KB | 131 | Gimbal application |
+| fcs | gd32f470vg | 4.8.8 | 725 KB | 179,186,187 | Flight controller |
+| esc | lk074 | 2.0.9 | 25 KB | 36,37,38,39 | 4x ESC |
+| cam | appsw | 8.12.19 | 77 MB | 6 | Camera SoC |
+
+### RC firmware V018 — 2 modules
+
+| Type | Name | Version | Size | dev_id |
+|------|------|---------|------|--------|
+| rc | atom2rc | 2.1.5 | 36 KB | 88 |
+| itg | atom2rc | 1.0.13 | 972 KB | 226 |
+
+---
+
+## Firmware Upload Protocol (WiFi)
+
+### Upload flow
+
+1. **CamUpgradeStart** — send `(length, version)` to initiate upgrade on drone
+2. **Upload request** — send JSON metadata to drone:
+   ```json
+   {
+     "filename": "<module_name>",
+     "length": "<total_size>",
+     "MD5": "<full_file_md5>",
+     "purpose": "upgrade",
+     "channel": "big_bw"
+   }
+   ```
+3. **Chunked upload** — send firmware data in chunks
+
+### Chunk formats
+
+**Camera/FPV protocol** (command 5664):
+```
+[length (2B)] [CRC16 (2B)] [offset (4B)] [data (480B)]
+```
+
+**Drone protocol** (command 108):
+```
+[offset (4B)] [length (2B)] [data (960B)]
+```
+
+CRC16 polynomial: `0x1021`
+
+### Security
+
+- No encryption on the WiFi link — firmware chunks are sent as-is
+- No key exchange or challenge-response
+- MD5 integrity check after full transfer
+- Firmware modules remain AES-encrypted during transfer — decryption happens on-device in the bootloader
+
+---
+
+## Firmware Encryption
+
+All modules in the DEPS package are AES-encrypted. Analysis:
+
+- Entropy: ~8.0 bits/byte (indistinguishable from random)
+- No repeated 16-byte blocks (rules out AES-ECB)
+- No repeated 8-byte or 4-byte blocks
+- XOR between similar modules (BMS variants) shows 0% zero bytes — different IVs or keys per module
+- The two AES keys in the APK (`be03...` and `dadf...`) are for API auth only, not firmware decryption
+
+The decryption key is stored in the drone's bootloader on the NAND flash. The NAND contents are not encrypted (confirmed by [Neodyme's research](https://neodyme.io/en/blog/drone_hacking_part_1/)), meaning physical NAND extraction yields the key.
+
+### NAND extraction reference
+
+- Chip: Macronix MX35UF4GE4AD-241 (WSON-8, 4Gbit, **1.8V**)
+- Interface: SPI (CS#, SI, SO, SCLK, WP#, HOLD#)
+- Filesystem: UBIFS
+- ECC: BCH t=16, primitive polynomial 17475, pre/post transform: reverse bit order + invert
