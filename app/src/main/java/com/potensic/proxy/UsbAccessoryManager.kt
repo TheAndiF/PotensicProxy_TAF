@@ -112,10 +112,13 @@ class UsbAccessoryManager(private val context: Context) {
         if (!usbManager.hasPermission(target)) {
             Log.i("[USB] Requesting USB permission from user...")
             pendingConnect = true
-            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+            val intent = Intent(ACTION_USB_PERMISSION).apply { setPackage(context.packageName) }
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_ALLOW_UNSAFE_IMPLICIT_INTENT
+            else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
             else PendingIntent.FLAG_UPDATE_CURRENT
-            val pi = PendingIntent.getBroadcast(context, 0, Intent(ACTION_USB_PERMISSION), flags)
+            val pi = PendingIntent.getBroadcast(context, 0, intent, flags)
             usbManager.requestPermission(target, pi)
             return false // will connect via receiver callback
         }

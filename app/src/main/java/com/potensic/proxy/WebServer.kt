@@ -253,6 +253,15 @@ class WebServer(
                     call.respondText("""{"cmd":"record"}""", ContentType.Application.Json)
                 }
 
+                // Send raw hex packet to drone
+                post("/api/cmd/raw/{hex}") {
+                    val hex = call.parameters["hex"] ?: ""
+                    val bytes = DroneProtocol.hexToBytes(hex)
+                    Log.i("[WebServer] POST /api/cmd/raw — sending ${bytes.size} bytes: $hex")
+                    ProxyService.instance?.sendDirectAny(bytes)
+                    call.respondText("""{"sent":true,"size":${bytes.size}}""", ContentType.Application.Json)
+                }
+
                 // Request IDR frame from drone
                 post("/api/video/request-idr") {
                     Log.i("[WebServer] POST /api/video/request-idr")
