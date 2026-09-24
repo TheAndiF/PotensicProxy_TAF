@@ -8,6 +8,7 @@
           <el-radio-button value="fpv">📶 Video & RF</el-radio-button>
           <el-radio-button value="sensor">⚖️ Sensors & Calibration</el-radio-button>
           <el-radio-button value="rid">📡 Remote ID & System</el-radio-button>
+          <el-radio-button value="relay">🌐 Remote / Relay</el-radio-button>
         </el-radio-group>
       </div>
 
@@ -634,6 +635,11 @@
           </div>
         </div>
       </div>
+
+      <!-- ================= Sub-tab 5: Remote / Relay ================= -->
+      <div v-show="debugStore.activeSubTab === 'relay'" class="sub-tab-pane relay-pane">
+        <RemoteRelayPanel />
+      </div>
     </div>
   </div>
 </template>
@@ -643,6 +649,7 @@ import { ref, nextTick, watch } from 'vue'
 import { useDebugStore } from '../../stores/useDebugStore'
 import { DroneControlService } from '../../services/DroneControlService'
 import { ElMessage } from 'element-plus'
+import RemoteRelayPanel from './RemoteRelayPanel.vue'
 
 const debugStore = useDebugStore()
 

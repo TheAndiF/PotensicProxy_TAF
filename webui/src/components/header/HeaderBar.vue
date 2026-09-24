@@ -5,55 +5,33 @@
         <el-icon :size="20" color="#00ff88"><Compass /></el-icon>
         <span class="title">POTENSIC PROXY - TAF</span>
       </div>
-
-      <div class="status-tags">
-        <el-tag
-          :type="store.connection.usbConnected ? 'success' : 'danger'"
-          effect="dark"
-          size="small"
-        >
-          Controller USB: {{ store.connection.usbConnected ? 'Connected' : 'Disconnected' }}
-        </el-tag>
-
-        <el-tag
-          :type="store.connection.wsConnected ? 'success' : 'info'"
-          effect="dark"
-          size="small"
-        >
-          Passthrough Channel: {{ store.connection.wsConnected ? 'Ready' : 'Disconnected' }}
-        </el-tag>
-      </div>
     </div>
 
-    <!-- Navigation Tabs -->
-    <div class="tabs-group">
-      <el-radio-group v-model="store.activeTab" size="small">
+    <nav class="tabs-group" aria-label="Main navigation">
+      <el-radio-group v-model="store.activeTab" size="small" class="main-tabs">
         <el-radio-button value="cockpit">🎮 Flight Cockpit</el-radio-button>
-        <el-radio-button value="usb">⚡ USB Passthrough & Packet Builder</el-radio-button>
-        <el-radio-button value="debug">🛠️ Debug & Engineering Console</el-radio-button>
-        <el-radio-button value="logs">📋 Runtime Logs</el-radio-button>
+        <el-radio-button value="usb">⚡ USB Tools</el-radio-button>
+        <el-radio-button value="debug">🛠️ Engineering</el-radio-button>
+        <el-radio-button value="logs">📋 Logs</el-radio-button>
       </el-radio-group>
-    </div>
+    </nav>
 
-    <!-- Target Phone Connection & Stats -->
-    <div class="right-controls">
-      <div class="host-input-wrap">
-        <span class="host-label">Relay / Phone Address:</span>
-        <el-input
-          v-model="store.connection.targetHost"
-          size="small"
-          placeholder="47.100.253.70:19090"
-          style="width: 175px;"
-          @change="onReconnect"
-        />
-        <el-button size="small" type="primary" plain @click="onReconnect">Connect</el-button>
-      </div>
+    <div class="status-tags">
+      <el-tag
+        :type="store.connection.usbConnected ? 'success' : 'danger'"
+        effect="dark"
+        size="small"
+      >
+        USB: {{ store.connection.usbConnected ? 'Connected' : 'Disconnected' }}
+      </el-tag>
 
-      <div class="packet-counters">
-        <span>RX: {{ store.streamStats.packetsRx }} pkts ({{ ByteUtils.formatBytes(store.streamStats.bytesRx) }})</span>
-        <span class="divider">|</span>
-        <span>TX: {{ store.streamStats.packetsTx }} pkts</span>
-      </div>
+      <el-tag
+        :type="store.connection.wsConnected ? 'success' : 'info'"
+        effect="dark"
+        size="small"
+      >
+        Passthrough: {{ store.connection.wsConnected ? 'Ready' : 'Disconnected' }}
+      </el-tag>
     </div>
   </header>
 </template>
@@ -61,33 +39,27 @@
 <script setup lang="ts">
 import { Compass } from '@element-plus/icons-vue'
 import { useDroneStore } from '../../stores/useDroneStore'
-import { UsbTransportService } from '../../services/UsbTransportService'
-import { ByteUtils } from '../../utils/ByteUtils'
 
 const store = useDroneStore()
-
-function onReconnect() {
-  store.setTargetHost(store.connection.targetHost)
-  UsbTransportService.getInstance().connect()
-}
 </script>
 
 <style scoped>
 .app-header {
   background: #0d101a;
   border-bottom: 1px solid var(--border);
-  padding: 0 16px;
-  display: flex;
+  padding: 0 14px;
+  display: grid;
+  grid-template-columns: minmax(190px, auto) 1fr minmax(230px, auto);
   align-items: center;
-  justify-content: space-between;
-  height: 50px;
+  gap: 14px;
+  min-height: 50px;
   flex-shrink: 0;
 }
 
-.brand-section {
+.brand-section,
+.status-tags {
   display: flex;
   align-items: center;
-  gap: 12px;
 }
 
 .logo {
@@ -105,40 +77,50 @@ function onReconnect() {
   -webkit-text-fill-color: transparent;
 }
 
+.tabs-group {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.main-tabs :deep(.el-radio-button__inner) {
+  min-width: 118px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border-color: #30384f;
+  background: #151b2a;
+  color: var(--text);
+  font-size: 11px;
+  box-shadow: none;
+}
+
+.main-tabs :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+  border-color: var(--cyan);
+  box-shadow: -1px 0 0 0 var(--cyan);
+}
+
 .status-tags {
-  display: flex;
+  justify-content: flex-end;
   gap: 6px;
+  white-space: nowrap;
 }
 
-.right-controls {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
+@media (max-width: 1050px) {
+  .app-header {
+    grid-template-columns: auto 1fr;
+  }
 
-.host-input-wrap {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
+  .status-tags {
+    display: none;
+  }
 
-.host-label {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.packet-counters {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-muted);
-  display: flex;
-  gap: 6px;
-}
-
-.divider {
-  color: var(--border);
+  .tabs-group {
+    justify-content: flex-end;
+  }
 }
 </style>
-
-
-

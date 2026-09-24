@@ -2,18 +2,18 @@
   <div class="actions-container">
     <div class="panel-title">✈️ Flight Actions</div>
     <div class="btn-grid">
-      <button class="btn btn-green" @click="DroneControlService.takeoff()">🛫 Takeoff</button>
-      <button class="btn" @click="DroneControlService.land()">🛬 Land</button>
-      <button class="btn" @click="DroneControlService.rth()">🏠 RTH</button>
-      <button class="btn btn-red" @click="DroneControlService.emergencyStop()">⛔ Emergency Stop</button>
+      <button class="taf-btn taf-btn--success" @click="DroneControlService.takeoff()">🛫 Takeoff</button>
+      <button class="taf-btn" @click="DroneControlService.land()">🛬 Land</button>
+      <button class="taf-btn" @click="DroneControlService.rth()">🏠 RTH</button>
+      <button class="taf-btn taf-btn--danger" @click="DroneControlService.emergencyStop()">⛔ Emergency Stop</button>
     </div>
 
     <div class="panel-title" style="margin-top: 10px;">📷 Camera & Video Control</div>
     <div class="btn-grid">
-      <button class="btn" @click="DroneControlService.takePhoto()">📸 Photo</button>
-      <button class="btn" @click="DroneControlService.toggleRecord()">🎥 Record Toggle</button>
-      <button class="btn btn-cyan" @click="DroneControlService.requestIdr()">🔄 Request Keyframe (IDR)</button>
-      <button class="btn" @click="DroneControlService.initLiveView()">📡 Initialize LiveView Parameters</button>
+      <button class="taf-btn" @click="DroneControlService.takePhoto()">📸 Photo</button>
+      <button class="taf-btn" @click="DroneControlService.toggleRecord()">🎥 Record Toggle</button>
+      <button class="taf-btn taf-btn--primary" @click="DroneControlService.requestIdr()">🔄 Request Keyframe (IDR)</button>
+      <button class="taf-btn" @click="DroneControlService.initLiveView()">📡 Initialize LiveView Parameters</button>
     </div>
   </div>
 </template>
@@ -43,62 +43,4 @@ import { DroneControlService } from '../../services/DroneControlService'
   gap: 8px;
 }
 
-.btn {
-  padding: 8px 10px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  border: 1px solid var(--border);
-  background: #192033;
-  color: var(--text);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  transition: all 0.15s ease;
-  font-family: inherit;
-}
-
-.btn:hover {
-  background: #232c45;
-  border-color: #3b4872;
-}
-
-.btn:active {
-  transform: translateY(1px);
-}
-
-.btn-green {
-  background: rgba(0, 255, 136, 0.15);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.btn-green:hover {
-  background: rgba(0, 255, 136, 0.3);
-}
-
-.btn-red {
-  background: rgba(255, 42, 95, 0.2);
-  border-color: var(--danger);
-  color: var(--danger);
-  font-weight: 800;
-}
-
-.btn-red:hover {
-  background: rgba(255, 42, 95, 0.4);
-}
-
-.btn-cyan {
-  background: rgba(0, 217, 255, 0.15);
-  border-color: var(--cyan);
-  color: var(--cyan);
-}
-
-.btn-cyan:hover {
-  background: rgba(0, 217, 255, 0.3);
-}
 </style>
-
-

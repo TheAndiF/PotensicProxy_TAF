@@ -7,7 +7,7 @@ import { ref, reactive, computed } from 'vue'
 import { TelemetryData, JoystickState, ConnectionStatus, SystemLog } from '../types/drone'
 import { ParsedPacket } from '../types/packet'
 
-export const DEFAULT_TARGET_HOST = '47.100.253.70:19090'
+export const DEFAULT_TARGET_HOST = '127.0.0.1:9090'
 
 export const useDroneStore = defineStore('drone', () => {
   const getInitialHost = () => {
@@ -27,14 +27,14 @@ export const useDroneStore = defineStore('drone', () => {
   const connection = reactive<ConnectionStatus>({
     usbConnected: false,
     wsConnected: false,
-    phoneIp: '47.100.253.70',
+    phoneIp: '127.0.0.1',
     targetHost: getInitialHost()
   })
 
   const normalizedHost = computed(() => {
     let host = connection.targetHost.trim() || DEFAULT_TARGET_HOST
     if (!host.includes(':')) {
-      host = `${host}:19090`
+      host = `${host}:9090`
     }
     return host
   })
@@ -89,7 +89,7 @@ export const useDroneStore = defineStore('drone', () => {
   // Lists
   const packets = ref<ParsedPacket[]>([])
   const logs = ref<SystemLog[]>([])
-  const activeTab = ref<'cockpit' | 'usb' | 'debug' | 'logs'>('usb')
+  const activeTab = ref<'cockpit' | 'usb' | 'debug' | 'logs'>('cockpit')
   const ignoreTelemetryAtIngestion = ref(false)
 
   // Actions

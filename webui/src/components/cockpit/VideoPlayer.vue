@@ -57,16 +57,16 @@
         </div>
 
         <div class="placeholder-actions">
-          <button class="action-btn primary" @click="() => activateLiveView(true)">
+          <button class="taf-btn taf-btn--primary" @click="() => activateLiveView(true)">
             ⚡ Activate Stream (H.265)
           </button>
-          <button class="action-btn success" @click="() => activateLiveView(false)">
+          <button class="taf-btn taf-btn--success" @click="() => activateLiveView(false)">
             ⚡ Activate Stream (H.264 Compatible)
           </button>
-          <button class="action-btn" @click="requestIdr">
+          <button class="taf-btn" @click="requestIdr">
             🔄 Request Keyframe (IDR)
           </button>
-          <button class="action-btn" @click="toggleNextMode">
+          <button class="taf-btn" @click="toggleNextMode">
             🔀 Switch Mode (Current: {{ mode.toUpperCase() }})
           </button>
         </div>
@@ -478,47 +478,6 @@ onUnmounted(() => {
   justify-content: center;
 }
 
-.action-btn {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  transition: all 0.2s;
-}
-
-.action-btn:hover {
-  background: rgba(255, 255, 255, 0.16);
-  border-color: #00e5ff;
-}
-
-.action-btn.primary {
-  background: #00e5ff;
-  color: #000;
-  font-weight: 700;
-  border-color: #00e5ff;
-}
-
-.action-btn.primary:hover {
-  background: #33ebff;
-  box-shadow: 0 0 14px rgba(0, 229, 255, 0.5);
-}
-
-.action-btn.success {
-  background: #00c853;
-  color: #000;
-  font-weight: 700;
-  border-color: #00c853;
-}
-
-.action-btn.success:hover {
-  background: #00e676;
-  box-shadow: 0 0 14px rgba(0, 200, 83, 0.5);
-}
-
-/* OSD Overlay */
 .video-osd {
   position: absolute;
   top: 10px;
@@ -543,8 +502,9 @@ onUnmounted(() => {
 .osd-tag, .osd-item {
   background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(4px);
-  padding: 3px 8px;
-  border-radius: 4px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: #ddd;
 }
@@ -580,8 +540,9 @@ onUnmounted(() => {
   background: rgba(0, 0, 0, 0.7);
   border: 1px solid rgba(0, 229, 255, 0.4);
   color: #00e5ff;
-  padding: 3px 8px;
-  border-radius: 4px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 6px;
   cursor: pointer;
   font-size: 11px;
   font-family: var(--mono);

@@ -30,3 +30,53 @@ body {
   height: 100vh;
   font-size: 13px;
 }
+
+
+/* Shared TAF action button language */
+.taf-btn {
+  min-height: 32px;
+  border: 1px solid #30384f;
+  border-radius: 6px;
+  background: #192033;
+  color: var(--text);
+  padding: 7px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.taf-btn:hover {
+  background: #232c45;
+  border-color: #435176;
+}
+
+.taf-btn:active {
+  transform: translateY(1px);
+}
+
+.taf-btn--primary {
+  color: var(--cyan);
+  border-color: rgba(0, 217, 255, 0.65);
+  background: var(--cyan-dim);
+}
+
+.taf-btn--success {
+  color: var(--accent);
+  border-color: rgba(0, 255, 136, 0.65);
+  background: var(--accent-dim);
+}
+
+.taf-btn--danger {
+  color: var(--danger);
+  border-color: rgba(255, 42, 95, 0.7);
+  background: var(--danger-dim);
+}
+
+.taf-btn--compact {
+  min-height: 28px;
+  padding: 5px 7px;
+  font-size: 10px;
+}

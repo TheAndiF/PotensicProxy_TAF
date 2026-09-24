@@ -27,6 +27,7 @@
         />
       </div>
 
+      <GimbalControl />
       <FlightActions />
     </div>
   </div>
@@ -37,6 +38,7 @@ import { computed } from 'vue'
 import VideoPlayer from './VideoPlayer.vue'
 import TelemetryBar from './TelemetryBar.vue'
 import VirtualJoystick from './VirtualJoystick.vue'
+import GimbalControl from './GimbalControl.vue'
 import FlightActions from './FlightActions.vue'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { DroneControlService } from '../../services/DroneControlService'
