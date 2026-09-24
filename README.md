@@ -1,20 +1,26 @@
+﻿# PotensicProxy_TAF
+
+> **Project note:** PotensicProxy_TAF is based on [sk7n4k3d/potensic-proxy](https://github.com/sk7n4k3d/potensic-proxy). Selected changes from [liert/potensic-proxy](https://github.com/liert/potensic-proxy) are reviewed and may be incorporated. Project-specific development focuses on the BX3 control interface and PrecisionLanding. See [UPSTREAMS.md](UPSTREAMS.md) for provenance and integration notes.
+
+---
+
 # Potensic Proxy
 
 Android app that bridges a Potensic Atom 2 drone controller (USB) to a web browser, providing live video, full telemetry, and flight commands via a cyberpunk web UI.
 
 ## Features
 
-- **Live video** — 1920x1080 H265 decoded by Android hardware, streamed as MJPEG
-- **Full telemetry** — Battery, voltage, GPS, altitude, speed, heading, pitch/roll, wind, satellites
-- **Flight commands** — Takeoff, Land, RTH, Photo, Record
-- **Physical joystick feedback** — Real-time display of controller stick positions
-- **Remoter battery** — Controller voltage and battery status
-- **Web UI** — Cyberpunk-themed dashboard at `http://<phone-ip>:9090`
+- **Live video** â€” 1920x1080 H265 decoded by Android hardware, streamed as MJPEG
+- **Full telemetry** â€” Battery, voltage, GPS, altitude, speed, heading, pitch/roll, wind, satellites
+- **Flight commands** â€” Takeoff, Land, RTH, Photo, Record
+- **Physical joystick feedback** â€” Real-time display of controller stick positions
+- **Remoter battery** â€” Controller voltage and battery status
+- **Web UI** â€” Cyberpunk-themed dashboard at `http://<phone-ip>:9090`
 
 ## How it works
 
 ```
-Browser (:9090) → ProxyService → USB AOA → Controller → RF → Drone
+Browser (:9090) â†’ ProxyService â†’ USB AOA â†’ Controller â†’ RF â†’ Drone
 ```
 
 The phone connects to the Potensic controller via USB Accessory (AOA). The app acts as a transparent proxy, forwarding commands from the web UI and streaming video/telemetry back.
@@ -74,11 +80,12 @@ Tested with:
 
 ## Limitations
 
-- **No virtual joystick control** — The basic controller does not forward USB joystick data to the drone. Virtual joystick requires WiFi Direct (PTD-1 controller) or firmware modification.
-- **WiFi Direct** — Code is implemented but the basic Atom 2 controller lacks WiFi hardware. The RTL8821CS chip is present on the drone PCB but not activated.
+- **No virtual joystick control** â€” The basic controller does not forward USB joystick data to the drone. Virtual joystick requires WiFi Direct (PTD-1 controller) or firmware modification.
+- **WiFi Direct** â€” Code is implemented but the basic Atom 2 controller lacks WiFi hardware. The RTL8821CS chip is present on the drone PCB but not activated.
 
 ## Reversed from
 
 - Official APK: `com.ipotensic.atom` (Potensic Eve v2.9.6)
 - Decompiled with jadx (8072 classes)
 - Key classes: `AOAEngine.java`, `dl1.java`, `vt1.java`, `mu1.java`, `fu1.java`, `np1.java`, `mp1.java`, `zy2.java`, `l56.java`, `kc4.java`
+
