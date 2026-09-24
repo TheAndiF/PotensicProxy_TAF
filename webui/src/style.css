@@ -1,0 +1,32 @@
+:root {
+  --bg: #0a0b12;
+  --panel-bg: rgba(16, 19, 31, 0.95);
+  --card-bg: rgba(25, 30, 48, 0.6);
+  --border: #232a40;
+  --accent: #00ff88;
+  --accent-dim: rgba(0, 255, 136, 0.15);
+  --danger: #ff2a5f;
+  --danger-dim: rgba(255, 42, 95, 0.15);
+  --cyan: #00d9ff;
+  --cyan-dim: rgba(0, 217, 255, 0.15);
+  --warn: #ffb703;
+  --text: #e2e8f0;
+  --text-muted: #7c8ba1;
+  --mono: 'JetBrains Mono', Consolas, Monaco, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  overflow: hidden;
+  height: 100vh;
+  font-size: 13px;
+}

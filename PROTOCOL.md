@@ -174,6 +174,49 @@ Controller buttons and joystick values.
 | 0x1132 | 4402 | iw4 | RemoterRevCalibration |
 | 0x1133 | 4403 | kw4 | RemoterRevState |
 
+### FPV / RF Telemetry (RX)
+
+#### FE 0x16 / 0x18 / 0x31, short 0x1719 (5913) — FpvRevFreqParams (射频实时工作参数)
+
+Reported by the remote/drone when RF frequency probe is active (requested via Command 5656 / `0x1618`).
+Contains real-time frequency, MCS, SNR, and noise floor per antenna channel.
+
+| Offset | Type | Scale / Unit | Field | Description |
+|--------|------|--------------|-------|-------------|
+| +0 | uint8 | | result | Operation result code (0 = success) |
+| +1 | uint16 LE | MHz | cur_freq | Current RF frequency (e.g. 2412, 5745) |
+| +3 | int8 | -2 | cur_mcs | Modulation & Coding Scheme (raw - 2) |
+| +4 | uint16 LE | dB: `10*log10(x/36)` | cur_ap_snr | AP Signal-to-Noise Ratio |
+| +6 | uint8 | MHz | cur_bandwidth | Current channel bandwidth (10 or 20 MHz) |
+| +7 | uint8 | enum | cur_available_band | Country frequency band (1=Single, 2=Dual, 3=Tri) |
+| +8 | uint16 LE | dB: `10*log10(x/512)` | tx_2g_chan_snr | 2.4GHz TX channel SNR |
+| +10 | int8 | | tx_2g_gain_a | 2.4GHz TX gain antenna A |
+| +11 | int8 | | tx_2g_gain_b | 2.4GHz TX gain antenna B |
+| +12 | uint16 LE | dB: `10*log10(x/512)` | tx_5g_chan_snr | 5.8GHz TX channel SNR |
+| +14 | int8 | | tx_5g_gain_a | 5.8GHz TX gain antenna A |
+| +15 | int8 | | tx_5g_gain_b | 5.8GHz TX gain antenna B |
+| +16 | uint16 LE | dB: `10*log10(x/512)` | rx_2g_chan_snr | 2.4GHz RX channel SNR |
+| +18 | int8 | | rx_2g_gain_a | 2.4GHz RX gain antenna A |
+| +19 | int8 | | rx_2g_gain_b | 2.4GHz RX gain antenna B |
+| +20 | uint16 LE | dB: `10*log10(x/512)` | rx_5g_chan_snr | 5.8GHz RX channel SNR |
+| +22 | int8 | | rx_5g_gain_a | 5.8GHz RX gain antenna A |
+| +23 | int8 | | rx_5g_gain_b | 5.8GHz RX gain antenna B |
+| +24 | int8 | dBm: `* -1` | rx_2g_noise | 2.4GHz RX noise floor |
+| +25 | int8 | dBm: `* -1` | rx_5g_noise | 5.8GHz RX noise floor |
+| +26 | int8 | dBm: `* -1` | tx_2g_noise | 2.4GHz TX noise floor |
+| +27 | int8 | dBm: `* -1` | tx_5g_noise | 5.8GHz TX noise floor |
+
+### FPV dispatch table (n52.java)
+
+| Short | Decimal | Class | Description |
+|-------|---------|-------|-------------|
+| 0x1700 | 5888 | FpvRevVersion | FPV module firmware version |
+| 0x170B | 5899 | FpvRevSupportFreq | Supported frequency bands list |
+| 0x1715 | 5909 | FpvRevConnectState | RF link and pairing connection state |
+| 0x1716 | 5910 | FpvRevScanFreq | Channel scan spectrum analysis |
+| 0x1717 | 5911 | FpvRevDebug | Low-level RF debug telemetry |
+| 0x1719 | 5913 | FpvRevFreqParams | Real-time RF frequency parameters |
+
 ---
 
 ## Flight Commands (TX)

@@ -1,3 +1,26 @@
 .gradle/
 app/build/
 local.properties
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Node / Frontend
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+*.local
+
+# Android APK / Output
+*.apk
+*.aab
+
+
