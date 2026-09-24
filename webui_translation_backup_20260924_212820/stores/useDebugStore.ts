@@ -71,7 +71,7 @@ export const useDebugStore = defineStore('debug', () => {
   const remoteId = reactive<RemoteIdData>({
     countryCode: 'CN',
     uasId: 'N/A',
-    status: '未Connect'
+    status: '未连接'
   })
   const boundDroneSn = ref<string>('N/A')
 
@@ -184,4 +184,3 @@ export const useDebugStore = defineStore('debug', () => {
     updateLinkState
   }
 })
-

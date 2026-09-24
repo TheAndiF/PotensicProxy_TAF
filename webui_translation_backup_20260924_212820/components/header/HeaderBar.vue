@@ -3,7 +3,7 @@
     <div class="brand-section">
       <div class="logo">
         <el-icon :size="20" color="#00ff88"><Compass /></el-icon>
-        <span class="title">POTENSIC PROXY - TAF</span>
+        <span class="title">POTENSIC PROXY</span>
       </div>
 
       <div class="status-tags">
@@ -12,7 +12,7 @@
           effect="dark"
           size="small"
         >
-          Controller USB: {{ store.connection.usbConnected ? 'Connected' : 'Disconnected' }}
+          手柄USB: {{ store.connection.usbConnected ? '已连接' : '未连接' }}
         </el-tag>
 
         <el-tag
@@ -20,7 +20,7 @@
           effect="dark"
           size="small"
         >
-          Passthrough Channel: {{ store.connection.wsConnected ? 'Ready' : 'Disconnected' }}
+          透传通道: {{ store.connection.wsConnected ? '实时就绪' : '已断开' }}
         </el-tag>
       </div>
     </div>
@@ -28,17 +28,17 @@
     <!-- Navigation Tabs -->
     <div class="tabs-group">
       <el-radio-group v-model="store.activeTab" size="small">
-        <el-radio-button value="cockpit">🎮 Flight Cockpit</el-radio-button>
-        <el-radio-button value="usb">⚡ USB Passthrough & Packet Builder</el-radio-button>
-        <el-radio-button value="debug">🛠️ Debug & Engineering Console</el-radio-button>
-        <el-radio-button value="logs">📋 Runtime Logs</el-radio-button>
+        <el-radio-button value="cockpit">🎮 飞行驾驶舱</el-radio-button>
+        <el-radio-button value="usb">⚡ USB 透传与构造</el-radio-button>
+        <el-radio-button value="debug">🛠️ 调试与工程终端</el-radio-button>
+        <el-radio-button value="logs">📋 运行日志</el-radio-button>
       </el-radio-group>
     </div>
 
     <!-- Target Phone Connection & Stats -->
     <div class="right-controls">
       <div class="host-input-wrap">
-        <span class="host-label">Relay / Phone Address:</span>
+        <span class="host-label">中转/手机地址:</span>
         <el-input
           v-model="store.connection.targetHost"
           size="small"
@@ -46,7 +46,7 @@
           style="width: 175px;"
           @change="onReconnect"
         />
-        <el-button size="small" type="primary" plain @click="onReconnect">Connect</el-button>
+        <el-button size="small" type="primary" plain @click="onReconnect">连接</el-button>
       </div>
 
       <div class="packet-counters">
@@ -139,6 +139,3 @@ function onReconnect() {
   color: var(--border);
 }
 </style>
-
-
-

@@ -21,7 +21,7 @@ export class PacketParser {
       feType: null,
       feTypeName: 'Unknown',
       category: 'other',
-      categoryLabel: 'Other Data',
+      categoryLabel: '其它数据',
       summary: '',
       telemetry: null,
       expanded: false
@@ -44,7 +44,7 @@ export class PacketParser {
       // H.265 Video Stream (0x06)
       if (feType === 0x06) {
         res.category = 'video'
-        res.categoryLabel = 'Video Stream'
+        res.categoryLabel = '视频流'
         const nalType = bytes.length >= 21 ? (bytes[20] & 0x1F) : 0
         const isKey = [19, 20, 32, 33, 34].includes(nalType)
         res.summary = `H.265 视频帧 (NALU ${nalType}${isKey ? ' [IDR关键帧]' : ''}, ${payloadLen}B)`
@@ -178,7 +178,7 @@ export class PacketParser {
         // FE 0x21: FlightRevRcValue (fu1.java - physical stick positions)
         if (feType === 0x21 && cmdShort === 0x0211 && bytes.length >= 34) {
           res.category = 'rc_sticks'
-          res.categoryLabel = 'Joystick Feedback'
+          res.categoryLabel = '摇杆回传'
           const rcThrottle = view.getInt16(22, true)
           const rcYaw = view.getInt16(24, true)
           const rcPitch = view.getInt16(26, true)
@@ -202,7 +202,7 @@ export class PacketParser {
         // FE 0x41: Remoter Battery & State Frames
         if (feType === 0x41) {
           res.category = 'remoter'
-          res.categoryLabel = 'Controller Status'
+          res.categoryLabel = '遥控器状态'
 
           // 0x1130: 遥控器实时控制流
           if (cmdShort === 0x1130 && bytes.length >= 34) {
@@ -248,11 +248,11 @@ export class PacketParser {
             res.details = {
               '返航键 (RTH)': btnRTH ? '按下' : '松开',
               '录像按键': btnRecord ? '按下' : '松开',
-              'Photo按键': btnPhoto ? '按下' : '松开',
+              '拍照按键': btnPhoto ? '按下' : '松开',
               '左摇杆 (H, V)': `${lh}, ${lv}`,
               '右摇杆 (H, V)': `${rh}, ${rv}`
             }
-            res.summary = `手柄按键与摇杆: 左(${lh},${lv}) 右(${rh},${rv})${btnRTH ? ' [RTH]' : ''}${btnRecord ? ' [录像]' : ''}${btnPhoto ? ' [Photo]' : ''}`
+            res.summary = `手柄按键与摇杆: 左(${lh},${lv}) 右(${rh},${rv})${btnRTH ? ' [RTH]' : ''}${btnRecord ? ' [录像]' : ''}${btnPhoto ? ' [拍照]' : ''}`
             return res
           }
           res.summary = `手柄状态响应 (Short=0x${cmdShort.toString(16).padStart(4, '0')}, ${payloadLen}B)`
@@ -262,7 +262,7 @@ export class PacketParser {
         // === Camera Debug Responses (0x1200 / FE 0x05 / FE 0x15) ===
         if (cmdShort === CMD_SHORTS.CAMERA || feType === 0x15 || feType === 0x05) {
           res.category = 'camera'
-          res.categoryLabel = 'Camera & Terminal'
+          res.categoryLabel = '相机与终端'
           const cmdByte = bytes.length > 22 ? bytes[22] : null
 
           // Camera Terminal Debug Output (CamRevTestDebugInfo, 0x6F / 200)
@@ -424,7 +424,7 @@ export class PacketParser {
             } catch (_) {}
 
             res.details = {
-              '遥控手柄': remoterConnected ? '已Connect (USB就绪)' : '未Connect',
+              '遥控手柄': remoterConnected ? '已连接 (USB就绪)' : '未连接',
               '空中无线': wirelessConnected ? '已建立 (空中链路)' : '未建立',
               '飞控通信': flightConnected ? '已连通 (可操控)' : '未连通',
               '云台相机': cameraConnected ? '已连通' : '未连通',
@@ -577,7 +577,7 @@ export class PacketParser {
         // Flight Controller IMU / Calibration Responses (0x0301)
         if (cmdShort === CMD_SHORTS.FLIGHT || feType === 0x14 || feType === 0x31) {
           res.category = 'flight_cmd'
-          res.categoryLabel = 'Flight Control'
+          res.categoryLabel = '飞控指令'
           const subcmd = bytes.length > 22 ? bytes[22] : null
           if (subcmd === 23 || subcmd === 6) {
             try {
@@ -600,10 +600,10 @@ export class PacketParser {
 
         if (feType === 0x14 || feType === 0x31) {
           res.category = 'flight_cmd'
-          res.categoryLabel = 'Flight Control'
+          res.categoryLabel = '飞控指令'
         } else if (feType === 0x15 || feType === 0x05) {
           res.category = 'camera'
-          res.categoryLabel = 'Camera & Terminal'
+          res.categoryLabel = '相机与终端'
         } else if (feType === 0x16) {
           res.category = 'rf_fpv'
           res.categoryLabel = '射频图传'
@@ -612,7 +612,7 @@ export class PacketParser {
           res.categoryLabel = '飞行遥测'
         } else if (feType === 0x41 || feType === 0x17) {
           res.category = 'remoter'
-          res.categoryLabel = 'Controller Status'
+          res.categoryLabel = '遥控器状态'
         }
 
         const cmdByte = bytes.length > 22 ? bytes[22] : null
@@ -628,7 +628,7 @@ export class PacketParser {
         res.categoryLabel = '飞行遥测'
       } else if (feType === 0x41) {
         res.category = 'remoter'
-        res.categoryLabel = 'Controller Status'
+        res.categoryLabel = '遥控器状态'
       } else if (feType === 0x12) {
         res.category = 'other'
         res.categoryLabel = 'AOA握手'
@@ -671,4 +671,3 @@ export class PacketParser {
     return res
   }
 }
-

@@ -1,19 +1,19 @@
 <template>
   <div class="actions-container">
-    <div class="panel-title">✈️ Flight Actions</div>
+    <div class="panel-title">✈️ 飞行快捷动作</div>
     <div class="btn-grid">
-      <button class="btn btn-green" @click="DroneControlService.takeoff()">🛫 Takeoff</button>
-      <button class="btn" @click="DroneControlService.land()">🛬 Land</button>
-      <button class="btn" @click="DroneControlService.rth()">🏠 RTH</button>
-      <button class="btn btn-red" @click="DroneControlService.emergencyStop()">⛔ Emergency Stop</button>
+      <button class="btn btn-green" @click="DroneControlService.takeoff()">🛫 一键起飞</button>
+      <button class="btn" @click="DroneControlService.land()">🛬 自动降落</button>
+      <button class="btn" @click="DroneControlService.rth()">🏠 一键返航</button>
+      <button class="btn btn-red" @click="DroneControlService.emergencyStop()">⛔ 紧急急停</button>
     </div>
 
-    <div class="panel-title" style="margin-top: 10px;">📷 Camera & Video Control</div>
+    <div class="panel-title" style="margin-top: 10px;">📷 相机与图传控制</div>
     <div class="btn-grid">
-      <button class="btn" @click="DroneControlService.takePhoto()">📸 Photo</button>
-      <button class="btn" @click="DroneControlService.toggleRecord()">🎥 Record Toggle</button>
-      <button class="btn btn-cyan" @click="DroneControlService.requestIdr()">🔄 Request Keyframe (IDR)</button>
-      <button class="btn" @click="DroneControlService.initLiveView()">📡 Initialize LiveView Parameters</button>
+      <button class="btn" @click="DroneControlService.takePhoto()">📸 拍照</button>
+      <button class="btn" @click="DroneControlService.toggleRecord()">🎥 录像开关</button>
+      <button class="btn btn-cyan" @click="DroneControlService.requestIdr()">🔄 请求关键帧 (IDR)</button>
+      <button class="btn" @click="DroneControlService.initLiveView()">📡 图传参数初始化</button>
     </div>
   </div>
 </template>
@@ -100,5 +100,3 @@ import { DroneControlService } from '../../services/DroneControlService'
   background: rgba(0, 217, 255, 0.3);
 }
 </style>
-
-

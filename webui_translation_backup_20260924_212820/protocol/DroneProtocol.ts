@@ -6,14 +6,14 @@ export const FE_TYPES: Record<number, string> = {
   0x05: 'Camera Response (相机响应)',
   0x06: 'H.265 Video Stream (视频图传流)',
   0x12: 'AOA Handshake (AOA握手包)',
-  0x14: 'Flight / Heartbeat TX (飞行控制/Heartbeat)',
+  0x14: 'Flight / Heartbeat TX (飞行控制/心跳包)',
   0x15: 'Camera Command TX (相机控制指令)',
   0x16: 'FPV / RF Command TX (图传射频设置通道)',
   0x17: 'Remoter Command TX (遥控器配置通道)',
   0x21: 'Flight Telemetry RX (飞行遥测 FlightRevGps)',
-  0x31: 'Flight Cmd Response RX (Flight Control应答)',
+  0x31: 'Flight Cmd Response RX (飞控指令应答)',
   0x32: 'GPS Data RX (GPS数据)',
-  0x41: 'Remoter Status RX (Controller Status/按键/摇杆)'
+  0x41: 'Remoter Status RX (遥控器状态/按键/摇杆)'
 }
 
 export const PROTOCOL_HEX = {
@@ -64,7 +64,7 @@ export const CMD_SHORTS = {
 }
 
 export const CAMERA_CMDS = {
-  GET_ALL_PARAMS: 0x01,       // 1 (0x01): 获取All参数
+  GET_ALL_PARAMS: 0x01,       // 1 (0x01): 获取全部参数
   CAMERA_FUNCTION: 0x16,      // 22 (0x16): 设置相机功能开关 (Preview / H265 / Watermark)
   GET_CAMERA_FUNCTION: 0x15,  // 21 (0x15): 获取相机功能开关
   TAKE_PHOTO: 0x51,
@@ -84,5 +84,4 @@ export const CAMERA_CMDS = {
   SFR_CHECK_REGION: 0x76,     // 118: SFR 检测模式
   SFR_CHECK_RESULT: 0x77      // 119: SFR 检测结果
 }
-
 

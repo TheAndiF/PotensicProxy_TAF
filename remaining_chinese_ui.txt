@@ -1,0 +1,247 @@
+﻿C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\FlightActions.vue:3: <div class="panel-title">✈️ 飞行快捷动作</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\FlightActions.vue:11: <div class="panel-title" style="margin-top: 10px;">📷 相机与图传控制</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\FlightActions.vue:15: <button class="btn btn-cyan" @click="DroneControlService.requestIdr()">🔄 请求关键帧 (IDR)</button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\FlightActions.vue:16: <button class="btn" @click="DroneControlService.initLiveView()">📡 LiveView Parameters初始化</button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\TelemetryBar.vue:3: <div class="hud-item"><span class="lbl">电量</span><span class="val hi">{{ store.telemetry.battery }}%</span></div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\TelemetryBar.vue:4: <div class="hud-item"><span class="lbl">高度</span><span class="val">{{ store.telemetry.altitude?.toFixed(1) || 0 }}m</span></div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\TelemetryBar.vue:5: <div class="hud-item"><span class="lbl">航速</span><span class="val">{{ store.telemetry.horizontalSpeed?.toFixed(1) || 0 }}m/s</span></div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\TelemetryBar.vue:6: <div class="hud-item"><span class="lbl">垂直速度</span><span class="val">{{ store.telemetry.verticalSpeed?.toFixed(1) || 0 }}m/s</span></div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\TelemetryBar.vue:7: <div class="hud-item"><span class="lbl">水平距离</span><span class="val">{{ store.telemetry.horizontalDistance?.toFixed(1) || 0 }}m</span></div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\TelemetryBar.vue:8: <div class="hud-item"><span class="lbl">卫星数</span><span class="val">{{ store.telemetry.satellites || 0 }}</span></div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\TelemetryBar.vue:9: <div class="hud-item"><span class="lbl">航向</span><span class="val">{{ store.telemetry.heading || 0 }}°</span></div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\TelemetryBar.vue:10: <div class="hud-item"><span class="lbl">俯仰</span><span class="val">{{ store.telemetry.pitch || 0 }}°</span></div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\TelemetryBar.vue:11: <div class="hud-item"><span class="lbl">横滚</span><span class="val">{{ store.telemetry.roll || 0 }}°</span></div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\TelemetryBar.vue:12: <div class="hud-item"><span class="lbl">手柄电压</span><span class="val">{{ store.telemetry.remoterVoltage?.toFixed(1) || '--' }}V</span></div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:24: <div class="placeholder-title">等待无人机视频图传画面</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:26: 当前处于纯前端 USB 透传直连模式。
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:27: 若飞行器已开机且对频成功，请点击下方「激活推流」发送官方唤醒序列。
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:33: <span class="diag-label">USB 透传通道 (WebSocket):</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:35: {{ store.connection.wsConnected ? '✓ 实时就绪' : '✗ 未Connect' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:39: <span class="diag-label">0x06 视频帧提取 (FE/w42):</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:41: {{ videoStats.framesExtracted }} 帧 (I: {{ videoStats.iFrames }} / P: {{ videoStats.pFrames }})
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:46: <span class="diag-label">浏览器硬解支持 (WebCodecs):</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:52: <span class="diag-label">解码器实时状态:</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:54: 已解 {{ decoderStats.framesDecoded }} 帧 (丢弃: {{ decoderStats.droppedFrames }})
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:61: ⚡ 激活推流 (H.265 高清)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:64: ⚡ 激活推流 (H.264 兼容)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:67: 🔄 请求关键帧 (IDR)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:70: 🔀 切换模式 (当前: {{ mode.toUpperCase() }})
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:79: {{ hasFrame ? '● 实时画面' : '○ 等待推流' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:84: :title="'点击切换渲染模式 (当前: ' + mode.toUpperCase() + ')'"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:86: 渲染: {{ mode.toUpperCase() }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:95: {{ (decoderStats.codecType || 'h265').toUpperCase() }} 硬解
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:98: {{ decoderStats.framesDecoded }} 帧
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:103: <button class="osd-action-btn" @click="() => activateLiveView(true)" title="发送全套初始化序列激活 H.265">
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:104: ⚡ H.265推流
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:106: <button class="osd-action-btn success" @click="() => activateLiveView(false)" title="发送全套初始化序列激活 H.264 (兼容所有浏览器)">
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:107: ⚡ H.264推流
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:109: <button class="osd-action-btn" @click="requestIdr" title="请求关键帧 (IDR)">
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:110: 🔄 请求I帧
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:112: <button class="osd-action-btn" @click="toggleFullscreen" title="全屏查看图传">
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:113: ⛶ 全屏
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:116: 电量: {{ store.telemetry.battery }}% ({{ store.telemetry.flightVoltage?.toFixed(1) || '--' }}V)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:167: codec: '初始化中...',
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:174: if (!webCodecsSupported.value) return '✗ 浏览器不支持 WebCodecs'
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:177: else items.push('✗ H.265(需扩展)')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:206: store.addLog('INFO', '已切换为 HTTP 单帧轮询快照模式')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:211: store.addLog('INFO', '已切换为 MJPEG 直流模式')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:216: store.addLog('INFO', '已切换为 WebCodecs 硬件加速模式 (USB 直通)')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:221: const codecName = preferH265 ? 'H.265' : 'H.264 兼容模式'
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:222: store.addLog('INFO', `正在下发无人机相机推流激活序列 (${codecName})...`)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\cockpit\VideoPlayer.vue:227: store.addLog('INFO', '手动请求图传关键帧 (IDR)')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:7: <el-radio-button value="camera">📷 相机交互终端</el-radio-button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:8: <el-radio-button value="fpv">📶 图传与射频底层</el-radio-button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:9: <el-radio-button value="sensor">⚖️ 传感器与标定</el-radio-button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:10: <el-radio-button value="rid">📡 远程识别与系统</el-radio-button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:16: 硬件芯片遥测: {{ debugStore.temperatures.lastUpdated || '等待上报' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:23: <!-- ================= Sub-tab 1: 相机命令行终端 ================= -->
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:28: <div class="temp-title">SoC 核心温度</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:36: <div class="temp-title">Sensor 传感器温度</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:40: <div class="temp-sub">CMOS 感光芯片</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:44: <div class="temp-title">ISP 970 芯片温度</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:48: <div class="temp-sub">图像处理核心</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:52: <div class="temp-title">终端协议状态</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:54: <span class="dot-online"></span> 透传通道就绪 (0x1200 / 0x6F)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:56: <div class="temp-sub">条目数: {{ debugStore.terminalLogs.length }}</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:65: <span>相机命令行透传交互 (CamRevTestDebugInfo / 0x6F)</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:70: Clear终端
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:77: > 等待相机终端日志输出... 可在下方选择常用指令或输入自定义指令进行交互测试。
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:110: placeholder="输入相机调试指令 (例: get_version, status, sensor_info, reboot, idr_request)..."
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:116: 发送指令 (TX)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:122: <span class="presets-label">快捷调试指令:</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:138: <!-- ================= Sub-tab 2: 图传与射频底层 ================= -->
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:143: <div class="box-title">📶 射频底层调试指令</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:148: <span class="act-name">全频段强制解锁 (CMD 5658 / 0x161A)</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:149: <el-tag size="small" type="danger" effect="dark">解除锁频</el-tag>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:152: 下发内层 5658 协议帧，强制打开全频段支持（解除国内/国外频段信道屏蔽与功率限制）。
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:155: 🔓 发送全频段强制解锁 (5658)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:162: <span class="act-name">射频芯片硬件复位 (CMD 5650 / 0x1612)</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:166: 向射频基带写入 "reset\n" ASCII 控制字符，触发射频前端硬件热重启。
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:169: 🔄 射频硬件复位 (5650)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:176: <span class="act-name">工厂特权飞行模式 (CMD 5640 / 0x1608)</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:180: active-text="开启"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:181: inactive-text="关闭"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:186: 切换工厂内部测试飞行模式，绕过部分传感器准备校验与限飞逻辑。
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:193: <span class="act-name">图传信道频宽切换 (CMD 5652 / 0x1614)</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:202: 设置频宽
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:210: <span class="act-name">实时射频频谱遥测流 (CMD 5656 / 5913)</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:217: {{ debugStore.fpvSettings.rfProbeActive ? '停止频谱采集' : '开启频谱采集 (5656)' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:221: 启动基带实时信道扫描与噪声探测，上报 5913 实时工作参数。
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:228: <div class="box-title">🔧 FPV 自定义 HEX 注入 (CMD 5696 / 0x1640)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:234: placeholder="输入 FPV 自定义 16 进制报文载荷，例如: 01020304..."
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:239: 下发 HEX 指令
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:241: <el-button size="small" plain @click="fpvCustomHex = '01'">预设: 01</el-button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:242: <el-button size="small" plain @click="fpvCustomHex = '00'">预设: 00</el-button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:253: <span class="box-title">🔗 遥控器与图传链路状态 (CMD 5909 / FpvRevConnectState)</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:254: <span class="update-time">更新: {{ debugStore.linkState.lastUpdated || '无数据上报' }}</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:259: <div class="lc-label">无线图传连线</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:261: {{ debugStore.linkState.wirelessConnected ? '已Connect (ONLINE)' : '未Connect (DISCONNECTED)' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:266: <div class="lc-label">飞控通信链路</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:268: {{ debugStore.linkState.flightConnected ? '已连通' : '未建立Connect' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:273: <div class="lc-label">遥控器 USB 通道</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:275: {{ debugStore.linkState.remoterConnected ? '握手就绪' : '未就绪' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:280: <div class="lc-label">对频状态</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:282: {{ debugStore.linkState.isPairing ? '对频中 (PAIRING)' : '非对频状态' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:287: <div class="lc-label">当前信道频点</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:294: <div class="lc-label">信道干扰电平</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:296: {{ debugStore.linkState.interference !== null ? debugStore.linkState.interference + (debugStore.linkState.interference < 85 ? ' (强干扰)' : ' (良好)') : '--' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:301: <div class="lc-label">速率 / MCS</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:311: <div class="lc-label">跳频与功率自适应</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:313: 跳频: {{ debugStore.linkState.isHopSupport ? '开' : '关' }} / 自适应: {{ debugStore.linkState.powerAdaptive ? '开' : '关' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:321: <span class="box-title">📊 射频实时工作参数与信道频谱 (CMD 5913 / 0x1719)</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:322: <span class="update-time">更新: {{ debugStore.rfStats.lastUpdated || '无数据上报' }}</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:328: <div class="m-label">遥控端增益 (RC Gain)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:336: <div class="m-label">遥控端信噪比 (RC SNR)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:345: <div class="m-label">飞控端增益 (FC Gain)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:353: <div class="m-label">飞控端信噪比 (FC SNR)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:362: <div class="m-label">物理层速率 (MCS)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:369: <div class="m-label">扫描信道总数</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:371: <span class="num">{{ debugStore.rfStats.channels.length }}</span> 个信道
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:379: <span>信道实时噪声 / 干扰电平分布</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:380: <span class="legend">绿色=低干扰 / 黄色=中等 / 红色=拥堵</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:384: <span>暂未接收到 5913 射频工作参数帧。可点击左侧「开启频谱采集 (5656)」启动主动探测。</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:409: <div class="log-list-title">FPV 自定义报文交互历史 (最近 200 条)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:412: 无 FPV 指令交互记录
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:431: <!-- ================= Sub-tab 3: 传感器与标定 ================= -->
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:436: <span class="box-title">⚖️ IMU 传感器六面标定 (0x0301 / CMD 23)</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:442: 状态: {{ debugStore.imuCal.text }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:447: IMU 标定需在水平桌面或按指引依次将飞行器的 6 个面平稳放置静止。
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:457: 🚀 启动 IMU 六面校准 (Action=3)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:467: ⏹️ 终止校准 (Action=2)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:474: <div class="face-name">1. 顶面朝上 (Top)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:475: <div class="face-indicator">{{ debugStore.imuCal.faces.top ? '✓ 已完成' : '○ 待放置' }}</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:479: <div class="face-name">2. 底面朝上 (Bottom)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:480: <div class="face-indicator">{{ debugStore.imuCal.faces.bottom ? '✓ 已完成' : '○ 待放置' }}</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:484: <div class="face-name">3. 左侧朝上 (Left)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:485: <div class="face-indicator">{{ debugStore.imuCal.faces.left ? '✓ 已完成' : '○ 待放置' }}</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:489: <div class="face-name">4. 右侧朝上 (Right)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:490: <div class="face-indicator">{{ debugStore.imuCal.faces.right ? '✓ 已完成' : '○ 待放置' }}</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:494: <div class="face-name">5. 机头朝上 (Front)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:495: <div class="face-indicator">{{ debugStore.imuCal.faces.front ? '✓ 已完成' : '○ 待放置' }}</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:499: <div class="face-name">6. 机尾朝上 (Back)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:500: <div class="face-indicator">{{ debugStore.imuCal.faces.back ? '✓ 已完成' : '○ 待放置' }}</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:507: <span class="v-name">加速度计 (Acc):</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:513: <span class="v-name">陀螺仪 (Gyro):</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:525: <div class="box-title">🎥 云台姿态与标定管理 (0x0801 / 5)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:527: 向三轴无刷云台下发清除 IMU 标定数据指令，用于解决云台倾斜、偏航零点飘移问题。
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:530: title="确定要清除云台 IMU 标定数据吗？"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:531: confirm-button-text="确定清除"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:532: cancel-button-text="取消"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:537: 🧹 清除云台 IMU 标定 (0x0801)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:545: <div class="box-title">📷 相机传感器坏点与噪声校准 (0x1200)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:547: CMOS 感光元件出厂与后期坏点校正 (DPC) 及固定模式噪声 (FPN) 消除。
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:551: <el-button type="info" plain @click="onStartDpc(true, 0)">暗场 DPC 步0</el-button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:552: <el-button type="info" plain @click="onStartDpc(true, 1)">暗场 DPC 步1</el-button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:553: <el-button type="info" plain @click="onStartDpc(true, 2)">暗场 DPC 步2</el-button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:557: <el-button type="primary" plain @click="onStartDpc(false, 0)">亮场 DPC 步0</el-button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:558: <el-button type="primary" plain @click="onStartDpc(false, 1)">亮场 DPC 步1</el-button>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:562: FPN 噪声校准 (0x74)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:570: <div class="box-title">🛰️ GNSS 卫星定位系统调试 (0x0301)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:573: <span class="t-label">GPS 测试模式 (Subcmd 23):</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:577: active-text="开启"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:578: inactive-text="关闭"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:584: <span class="t-label">北斗卫星系统使能 (Subcmd 24):</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:588: active-text="开启"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:589: inactive-text="关闭"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:597: <!-- ================= Sub-tab 4: 远程识别与系统 ================= -->
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:601: <span class="box-title">📡 无人机远程识别 (Remote ID / RID) 状态</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:603: 🔍 查询 Remote ID 参数 (0x73)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:609: <div class="rid-label">国家代码 (Country Code)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:614: <div class="rid-label">无人机唯一序列识别码 (UAS ID)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:619: <div class="rid-label">RID 广播运行状态</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:626: <div class="rid-label">绑定的飞机主板 SN</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:632: <div class="raw-title">原始 0x73 协议响应 HEX:</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:656: { label: '查询固件版本', opcode: 0, cmd: 'get_version' },
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:657: { label: '查询工作状态', opcode: 0, cmd: 'status' },
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:658: { label: 'CMOS 传感器信息', opcode: 0, cmd: 'sensor_info' },
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:660: { label: '重启相机核心', opcode: 0, cmd: 'reboot' },
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:661: { label: '查询相机 SN', opcode: 0, cmd: 'get_sn' },
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:662: { label: '终端帮助命令', opcode: 0, cmd: 'help' }
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:668: ElMessage.warning('请输入调试命令')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:712: ElMessage.success('全频段解锁指令 (5658) 已发送')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:717: ElMessage.warning('射频复位指令 "reset\\n" 已发送')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:726: ElMessage.success(`频宽 ${debugStore.fpvSettings.bandwidthMhz}MHz 设置指令已发送`)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:733: ElMessage.info(next ? '已开启实时频谱遥测探测' : '已停止实时频谱探测')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:739: ElMessage.warning('请输入有效的 HEX 数据')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:743: debugStore.addFpvLog('TX', hex, '用户下发自定义指令')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:769: debugStore.updateImuCal({ isCalibrating: true, text: '六面标定已启动，请按指引平放' })
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:771: ElMessage.info('已启动 IMU 传感器标定流程')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:775: debugStore.updateImuCal({ isCalibrating: false, text: '标定流程已终止' })
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:777: ElMessage.info('已终止 IMU 标定')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:782: ElMessage.success('已下发清除云台 IMU 标定数据指令')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:787: ElMessage.info(`下发 ${isDark ? '暗场' : '亮场'} DPC 坏点检测步骤 ${step}`)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:792: ElMessage.info('下发相机 FPN 固定模式噪声消除校准指令')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\debug\DebugConsoleView.vue:806: ElMessage.info('已下发 Remote ID 查询请求')
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\header\HeaderBar.vue:15: 手柄USB: {{ store.connection.usbConnected ? '已Connect' : '未Connect' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\header\HeaderBar.vue:23: 透传通道: {{ store.connection.wsConnected ? '实时就绪' : '已断开' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\header\HeaderBar.vue:41: <span class="host-label">中转/手机地址:</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:3: <div class="panel-title">🛠️ Vue 3 数据构造器 (纯前端二进制构建)</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:5: 由 Vue 3 纯前端构造二进制报文，通过 WebSocket 透传写入手机 USB 端口。
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:10: <div class="item-label">预设协议帧快速载入:</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:28: <el-option value="0x14" label="0x14 - 飞行控制 / Heartbeat" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:29: <el-option value="0x15" label="0x15 - 相机指令通道" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:30: <el-option value="0x12" label="0x12 - AOA 握手协议" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:31: <el-option value="0x16" label="0x16 - FPV 射频设置通道" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:32: <el-option value="none" label="无 FE 封装 (纯原始数据 RAW HFD)" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:40: <el-input v-model="cmdShort" size="small" @input="rebuildFrame" placeholder="例: 0x0301" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:44: <el-input v-model="cmdByte" size="small" @input="rebuildFrame" placeholder="例: 0x01" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:52: <span class="item-label">Packet HEX Payload (可直接修改):</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:53: <span class="byte-count">字节数: {{ byteCount }}B</span>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:59: placeholder="输入或由上方预设自动生成 Hex..."
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:67: <div class="item-label">重发次数:</div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:156: store.addLog('INFO', `Vue3 构造器已载入: ${id} (${bytes.length} 字节)`)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketConstructor.vue:178: store.addLog('INFO', `已将报文 (${Math.floor(hex.length / 2)} 字节) 填入构造器`)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:20: :title="hideTelemetry ? '点击恢复显示遥测数据' : '点击过滤掉高频飞行遥测、Joystick Feedback和视频帧'"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:22: {{ hideTelemetry ? '🚫 已Hide Normal Telemetry' : '👁️ Hide Normal Telemetry' }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:26: <el-tooltip content="开启后高频遥测不录入历史列表，避免关键指令被冲刷覆盖" placement="top">
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:79: placeholder="FE 类型"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:84: <el-option value="all" label="All FE 类型" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:85: <el-option value="0x05" label="FE 0x05 (相机回传 RX)" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:86: <el-option value="0x15" label="FE 0x15 (相机指令 TX)" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:87: <el-option value="0x14" label="FE 0x14 (飞控心跳 TX)" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:88: <el-option value="0x31" label="FE 0x31 (飞控应答 RX)" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:89: <el-option value="0x16" label="FE 0x16 (射频图传 TX)" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:90: <el-option value="0x17" label="FE 0x17 (遥控配置 TX)" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:91: <el-option value="0x21" label="FE 0x21 (飞行遥测 RX)" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:92: <el-option value="0x41" label="FE 0x41 (手柄遥控 RX)" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:93: <el-option value="0x06" label="FE 0x06 (视频图传 RX)" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:94: <el-option value="0x12" label="FE 0x12 (AOA握手)" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:95: <el-option value="raw" label="非 FE 原始包 (HFD)" />
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:99: 显示 {{ filteredPackets.length }}/{{ store.packets.length }} 条
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:101: (已滤除 {{ filteredCount }} 条)
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:112: 重置过滤
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:141: 填入构造器
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:150: <strong>协议字段精细解析:</strong>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:161: <div class="hex-title"><strong>HEX 原始报文 ({{ p.len }} 字节):</strong></div>
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:166: <strong>飞行遥测映射:</strong> {{ JSON.stringify(p.telemetry) }}
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:173: :description="store.packets.length > 0 ? '当前过滤条件未匹配到数据包' : 'Waiting for USB packet stream...'"
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:178: 恢复显示All数据
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:210: { value: 'rf_fpv', label: '射频图传', icon: '📡' },
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:212: { value: 'telemetry', label: '飞行遥测', icon: '🛫' },
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:220: return found ? found.label : '未知类型'
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:224: if (val === true) return '是 (True)'
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:225: if (val === false) return '否 (False)'
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:234: if (val.includes('已') || val.includes('正常') || val.includes('就绪') || val.includes('开启') || val.includes('PASS')) {
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:237: if (val.includes('未') || val.includes('异常') || val.includes('强干扰') || val.includes('触发') || val.includes('关闭')) {
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\components\usb\PacketMonitor.vue:240: if (val.includes('对频中')) {
+C:\Users\Andreas\Documents\31_Github\PotensicProxy_TAF\webui\src\App.vue:28: store.addLog('INFO', 'Potensic Proxy Vue 3 模块化控制台已启动')

@@ -1,15 +1,15 @@
 <template>
   <div class="hud-bar">
-    <div class="hud-item"><span class="lbl">电量</span><span class="val hi">{{ store.telemetry.battery }}%</span></div>
-    <div class="hud-item"><span class="lbl">高度</span><span class="val">{{ store.telemetry.altitude?.toFixed(1) || 0 }}m</span></div>
-    <div class="hud-item"><span class="lbl">航速</span><span class="val">{{ store.telemetry.horizontalSpeed?.toFixed(1) || 0 }}m/s</span></div>
-    <div class="hud-item"><span class="lbl">垂直速度</span><span class="val">{{ store.telemetry.verticalSpeed?.toFixed(1) || 0 }}m/s</span></div>
-    <div class="hud-item"><span class="lbl">水平距离</span><span class="val">{{ store.telemetry.horizontalDistance?.toFixed(1) || 0 }}m</span></div>
-    <div class="hud-item"><span class="lbl">卫星数</span><span class="val">{{ store.telemetry.satellites || 0 }}</span></div>
-    <div class="hud-item"><span class="lbl">航向</span><span class="val">{{ store.telemetry.heading || 0 }}°</span></div>
-    <div class="hud-item"><span class="lbl">俯仰</span><span class="val">{{ store.telemetry.pitch || 0 }}°</span></div>
-    <div class="hud-item"><span class="lbl">横滚</span><span class="val">{{ store.telemetry.roll || 0 }}°</span></div>
-    <div class="hud-item"><span class="lbl">手柄电压</span><span class="val">{{ store.telemetry.remoterVoltage?.toFixed(1) || '--' }}V</span></div>
+    <div class="hud-item"><span class="lbl">Battery</span><span class="val hi">{{ store.telemetry.battery }}%</span></div>
+    <div class="hud-item"><span class="lbl">Altitude</span><span class="val">{{ store.telemetry.altitude?.toFixed(1) || 0 }}m</span></div>
+    <div class="hud-item"><span class="lbl">Horizontal Speed</span><span class="val">{{ store.telemetry.horizontalSpeed?.toFixed(1) || 0 }}m/s</span></div>
+    <div class="hud-item"><span class="lbl">Vertical Speed</span><span class="val">{{ store.telemetry.verticalSpeed?.toFixed(1) || 0 }}m/s</span></div>
+    <div class="hud-item"><span class="lbl">Horizontal Distance</span><span class="val">{{ store.telemetry.horizontalDistance?.toFixed(1) || 0 }}m</span></div>
+    <div class="hud-item"><span class="lbl">Satellites</span><span class="val">{{ store.telemetry.satellites || 0 }}</span></div>
+    <div class="hud-item"><span class="lbl">Heading</span><span class="val">{{ store.telemetry.heading || 0 }}°</span></div>
+    <div class="hud-item"><span class="lbl">Pitch</span><span class="val">{{ store.telemetry.pitch || 0 }}°</span></div>
+    <div class="hud-item"><span class="lbl">Roll</span><span class="val">{{ store.telemetry.roll || 0 }}°</span></div>
+    <div class="hud-item"><span class="lbl">Controller Voltage</span><span class="val">{{ store.telemetry.remoterVoltage?.toFixed(1) || '--' }}V</span></div>
   </div>
 </template>
 
@@ -50,3 +50,4 @@ const store = useDroneStore()
   color: var(--accent);
 }
 </style>
+

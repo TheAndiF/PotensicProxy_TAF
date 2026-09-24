@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="logs-container">
     <div class="logs-header">
       <span class="title">Live System Logs</span>

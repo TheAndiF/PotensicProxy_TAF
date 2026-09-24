@@ -5,9 +5,9 @@
       <!-- Direction & Quick Toggles -->
       <div class="toolbar-left">
         <el-radio-group v-model="filterDir" size="small">
-          <el-radio-button value="all">All</el-radio-button>
-          <el-radio-button value="rx">RX Receive</el-radio-button>
-          <el-radio-button value="tx">TX Send</el-radio-button>
+          <el-radio-button value="all">全部</el-radio-button>
+          <el-radio-button value="rx">RX 接收</el-radio-button>
+          <el-radio-button value="tx">TX 发送</el-radio-button>
         </el-radio-group>
 
         <!-- One-Click Quick Telemetry Filter -->
@@ -17,16 +17,16 @@
           size="small"
           class="quick-filter-btn"
           @click="hideTelemetry = !hideTelemetry"
-          :title="hideTelemetry ? '点击恢复显示遥测数据' : '点击过滤掉高频Flight Telemetry、Joystick Feedback和视频帧'"
+          :title="hideTelemetry ? '点击恢复显示遥测数据' : '点击过滤掉高频飞行遥测、摇杆回传和视频帧'"
         >
-          {{ hideTelemetry ? '🚫 已Hide Normal Telemetry' : '👁️ Hide Normal Telemetry' }}
+          {{ hideTelemetry ? '🚫 已隐藏常规遥测' : '👁️ 隐藏常规遥测' }}
         </el-button>
 
         <!-- Drop Telemetry at Ingestion to protect queue -->
         <el-tooltip content="开启后高频遥测不录入历史列表，避免关键指令被冲刷覆盖" placement="top">
           <el-checkbox
             v-model="store.ignoreTelemetryAtIngestion"
-            label="Queue Flood Protection"
+            label="防队列冲刷"
             size="small"
             class="ingestion-checkbox"
           />
@@ -38,26 +38,26 @@
         <el-input
           v-model="searchKeyword"
           size="small"
-          placeholder="Search category/summary/HEX..."
+          placeholder="搜索分类/摘要/HEX..."
           style="width: 175px;"
           clearable
         />
-        <el-checkbox v-model="autoScroll" label="Auto Scroll" size="small" />
-        <el-button size="small" type="danger" plain @click="store.clearPackets()">Clear</el-button>
+        <el-checkbox v-model="autoScroll" label="自动滚屏" size="small" />
+        <el-button size="small" type="danger" plain @click="store.clearPackets()">清屏</el-button>
       </div>
     </div>
 
     <!-- Category Filter Bar (Row 2) -->
     <div class="category-filter-bar">
       <div class="cat-chips">
-        <span class="cat-label">Type Filter:</span>
+        <span class="cat-label">类型过滤:</span>
         <el-tag
           :effect="selectedCategory === 'all' ? 'dark' : 'plain'"
           class="filter-chip"
           size="small"
           @click="selectCategory('all')"
         >
-          All
+          全部
         </el-tag>
         <el-tag
           v-for="cat in categoryOptions"
@@ -76,23 +76,23 @@
       <div class="filter-aux">
         <el-select
           v-model="selectedFeType"
-          placeholder="FE Type"
+          placeholder="FE 类型"
           clearable
           size="small"
           style="width: 135px;"
         >
-          <el-option value="all" label="All FE Type" />
-          <el-option value="0x05" label="FE 0x05 (Camera Response RX)" />
-          <el-option value="0x15" label="FE 0x15 (Camera Command TX)" />
-          <el-option value="0x14" label="FE 0x14 (Flight Control Heartbeat TX)" />
-          <el-option value="0x31" label="FE 0x31 (Flight Controller Response RX)" />
-          <el-option value="0x16" label="FE 0x16 (RF Video TX)" />
-          <el-option value="0x17" label="FE 0x17 (Controller Config TX)" />
-          <el-option value="0x21" label="FE 0x21 (Flight Telemetry RX)" />
-          <el-option value="0x41" label="FE 0x41 (Controller RC RX)" />
-          <el-option value="0x06" label="FE 0x06 (Video Stream RX)" />
-          <el-option value="0x12" label="FE 0x12 (AOA Handshake)" />
-          <el-option value="raw" label="Non-FE Raw Packet (HFD)" />
+          <el-option value="all" label="全部 FE 类型" />
+          <el-option value="0x05" label="FE 0x05 (相机回传 RX)" />
+          <el-option value="0x15" label="FE 0x15 (相机指令 TX)" />
+          <el-option value="0x14" label="FE 0x14 (飞控心跳 TX)" />
+          <el-option value="0x31" label="FE 0x31 (飞控应答 RX)" />
+          <el-option value="0x16" label="FE 0x16 (射频图传 TX)" />
+          <el-option value="0x17" label="FE 0x17 (遥控配置 TX)" />
+          <el-option value="0x21" label="FE 0x21 (飞行遥测 RX)" />
+          <el-option value="0x41" label="FE 0x41 (手柄遥控 RX)" />
+          <el-option value="0x06" label="FE 0x06 (视频图传 RX)" />
+          <el-option value="0x12" label="FE 0x12 (AOA握手)" />
+          <el-option value="raw" label="非 FE 原始包 (HFD)" />
         </el-select>
 
         <span class="stats-text">
@@ -109,7 +109,7 @@
           type="primary"
           @click="resetFilters"
         >
-          Reset Filters
+          重置过滤
         </el-button>
       </div>
     </div>
@@ -138,7 +138,7 @@
           <span class="pkt-summary" :title="p.summary">{{ p.summary }}</span>
 
           <el-button size="small" link type="primary" @click.stop="$emit('loadHex', p.hex)">
-            Load into Builder
+            填入构造器
           </el-button>
         </div>
 
@@ -147,7 +147,7 @@
           <div v-if="p.details && Object.keys(p.details).length > 0" class="parsed-fields-box">
             <div class="fields-header">
               <span class="fields-icon">📊</span>
-              <strong>Protocol Field Details:</strong>
+              <strong>协议字段精细解析:</strong>
             </div>
             <div class="fields-grid">
               <div v-for="(val, key) in p.details" :key="key" class="field-item">
@@ -158,24 +158,24 @@
           </div>
 
           <div class="hex-section">
-            <div class="hex-title"><strong>Raw HEX Packet ({{ p.len }} 字节):</strong></div>
+            <div class="hex-title"><strong>HEX 原始报文 ({{ p.len }} 字节):</strong></div>
             <div class="hex-dump">{{ ByteUtils.formatHex(p.hex) }}</div>
           </div>
 
           <div v-if="p.telemetry" class="telemetry-info">
-            <strong>Flight Telemetry Mapping:</strong> {{ JSON.stringify(p.telemetry) }}
+            <strong>飞行遥测映射:</strong> {{ JSON.stringify(p.telemetry) }}
           </div>
         </div>
       </div>
 
       <el-empty
         v-if="filteredPackets.length === 0"
-        :description="store.packets.length > 0 ? '当前过滤条件未匹配到数据包' : 'Waiting for USB packet stream...'"
+        :description="store.packets.length > 0 ? '当前过滤条件未匹配到数据包' : '等待 USB 报文数据流...'"
         :image-size="80"
         style="padding: 40px 0;"
       >
         <el-button v-if="hasActiveFilter" size="small" type="primary" plain @click="resetFilters">
-          Show All Data
+          恢复显示全部数据
         </el-button>
       </el-empty>
     </div>
@@ -205,24 +205,24 @@ const tableRef = ref<HTMLElement | null>(null)
 
 // Category Options for filter bar
 const categoryOptions: { value: PacketCategory; label: string; icon: string }[] = [
-  { value: 'flight_cmd', label: 'Flight Control', icon: '⚡' },
-  { value: 'camera', label: 'Camera & Terminal', icon: '📷' },
-  { value: 'rf_fpv', label: 'RF Video', icon: '📡' },
-  { value: 'remoter', label: 'Controller Status', icon: '🎮' },
-  { value: 'telemetry', label: 'Flight Telemetry', icon: '🛫' },
-  { value: 'rc_sticks', label: 'Joystick Feedback', icon: '🕹️' },
-  { value: 'video', label: 'Video Stream', icon: '📹' },
-  { value: 'other', label: 'Other Data', icon: '📦' }
+  { value: 'flight_cmd', label: '飞控指令', icon: '⚡' },
+  { value: 'camera', label: '相机与终端', icon: '📷' },
+  { value: 'rf_fpv', label: '射频图传', icon: '📡' },
+  { value: 'remoter', label: '遥控器状态', icon: '🎮' },
+  { value: 'telemetry', label: '飞行遥测', icon: '🛫' },
+  { value: 'rc_sticks', label: '摇杆回传', icon: '🕹️' },
+  { value: 'video', label: '视频流', icon: '📹' },
+  { value: 'other', label: '其它数据', icon: '📦' }
 ]
 
 function getCategoryLabel(cat?: string): string {
   const found = categoryOptions.find(c => c.value === cat)
-  return found ? found.label : 'Unknown Type'
+  return found ? found.label : '未知类型'
 }
 
 function formatDetailValue(val: any): string {
-  if (val === true) return 'Yes (True)'
-  if (val === false) return 'No (False)'
+  if (val === true) return '是 (True)'
+  if (val === false) return '否 (False)'
   if (val === null || val === undefined) return '--'
   return String(val)
 }
@@ -234,7 +234,7 @@ function getDetailValClass(val: any): string {
     if (val.includes('已') || val.includes('正常') || val.includes('就绪') || val.includes('开启') || val.includes('PASS')) {
       return 'val-success'
     }
-    if (val.includes('未') || val.includes('异常') || val.includes('High Interference') || val.includes('触发') || val.includes('关闭')) {
+    if (val.includes('未') || val.includes('异常') || val.includes('强干扰') || val.includes('触发') || val.includes('关闭')) {
       return 'val-danger'
     }
     if (val.includes('对频中')) {
@@ -628,5 +628,3 @@ watch(
   color: var(--cyan);
 }
 </style>
-
-

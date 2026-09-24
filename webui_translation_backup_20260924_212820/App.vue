@@ -25,7 +25,7 @@ const store = useDroneStore()
 
 onMounted(() => {
   UsbTransportService.getInstance().start()
-  store.addLog('INFO', 'Potensic Proxy - TAF Vue 3 modular console started')
+  store.addLog('INFO', 'Potensic Proxy Vue 3 模块化控制台已启动')
 })
 
 onUnmounted(() => {
@@ -46,5 +46,3 @@ onUnmounted(() => {
   position: relative;
 }
 </style>
-
-

@@ -54,7 +54,7 @@ export class DroneControlService {
 
   static emergencyStop() {
     const store = useDroneStore()
-    store.addLog('WARN', '发送Emergency Stop指令 (重复 30 次)')
+    store.addLog('WARN', '发送紧急急停指令 (重复 30 次)')
     const packet = PacketBuilder.buildEmergencyStop()
     this.sendPacketWithRepeats(packet, 30, 30)
   }
@@ -63,13 +63,13 @@ export class DroneControlService {
 
   static takePhoto() {
     const store = useDroneStore()
-    store.addLog('INFO', '发送Photo指令')
+    store.addLog('INFO', '发送拍照指令')
     this.transport.send(PacketBuilder.buildTakePhoto())
   }
 
   static toggleRecord() {
     const store = useDroneStore()
-    store.addLog('INFO', '切换Record Toggle')
+    store.addLog('INFO', '切换录像开关')
     this.transport.send(PacketBuilder.buildToggleRecord())
   }
 
@@ -319,5 +319,4 @@ export class DroneControlService {
     this.transport.send(packet)
   }
 }
-
 

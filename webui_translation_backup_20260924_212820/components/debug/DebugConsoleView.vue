@@ -4,16 +4,16 @@
     <div class="debug-header">
       <div class="tab-selectors">
         <el-radio-group v-model="debugStore.activeSubTab" size="small">
-          <el-radio-button value="camera">📷 Camera Console</el-radio-button>
-          <el-radio-button value="fpv">📶 Video & RF</el-radio-button>
-          <el-radio-button value="sensor">⚖️ Sensors & Calibration</el-radio-button>
-          <el-radio-button value="rid">📡 Remote ID & System</el-radio-button>
+          <el-radio-button value="camera">📷 相机交互终端</el-radio-button>
+          <el-radio-button value="fpv">📶 图传与射频底层</el-radio-button>
+          <el-radio-button value="sensor">⚖️ 传感器与标定</el-radio-button>
+          <el-radio-button value="rid">📡 远程识别与系统</el-radio-button>
         </el-radio-group>
       </div>
 
       <div class="header-right-badges">
         <el-tag size="small" effect="dark" type="info" class="badge-item">
-          Hardware Telemetry: {{ debugStore.temperatures.lastUpdated || 'Waiting for data' }}
+          硬件芯片遥测: {{ debugStore.temperatures.lastUpdated || '等待上报' }}
         </el-tag>
       </div>
     </div>
@@ -25,7 +25,7 @@
         <!-- Chip Temperatures Bar -->
         <div class="temp-cards-bar">
           <div class="temp-card">
-            <div class="temp-title">SoC Core Temperature</div>
+            <div class="temp-title">SoC 核心温度</div>
             <div class="temp-val" :class="getTempClass(debugStore.temperatures.socTemp)">
               {{ debugStore.temperatures.socTemp !== null ? debugStore.temperatures.socTemp + ' °C' : '--' }}
             </div>
@@ -33,27 +33,27 @@
           </div>
 
           <div class="temp-card">
-            <div class="temp-title">Sensor Temperature</div>
+            <div class="temp-title">Sensor 传感器温度</div>
             <div class="temp-val" :class="getTempClass(debugStore.temperatures.sensorTemp)">
               {{ debugStore.temperatures.sensorTemp !== null ? debugStore.temperatures.sensorTemp + ' °C' : '--' }}
             </div>
-            <div class="temp-sub">CMOS Sensor</div>
+            <div class="temp-sub">CMOS 感光芯片</div>
           </div>
 
           <div class="temp-card">
-            <div class="temp-title">ISP 970 Temperature</div>
+            <div class="temp-title">ISP 970 芯片温度</div>
             <div class="temp-val" :class="getTempClass(debugStore.temperatures.isp970Temp)">
               {{ debugStore.temperatures.isp970Temp !== null ? debugStore.temperatures.isp970Temp + ' °C' : '--' }}
             </div>
-            <div class="temp-sub">Image Processing Core</div>
+            <div class="temp-sub">图像处理核心</div>
           </div>
 
           <div class="temp-card status-card">
-            <div class="temp-title">Terminal Protocol Status</div>
+            <div class="temp-title">终端协议状态</div>
             <div class="temp-status-text">
-              <span class="dot-online"></span> Passthrough Channel Ready (0x1200 / 0x6F)
+              <span class="dot-online"></span> 透传通道就绪 (0x1200 / 0x6F)
             </div>
-            <div class="temp-sub">Entries: {{ debugStore.terminalLogs.length }}</div>
+            <div class="temp-sub">条目数: {{ debugStore.terminalLogs.length }}</div>
           </div>
         </div>
 
@@ -62,19 +62,19 @@
           <div class="terminal-header">
             <div class="term-title">
               <span class="term-icon">⚡</span>
-              <span>Camera Command Passthrough (CamRevTestDebugInfo / 0x6F)</span>
+              <span>相机命令行透传交互 (CamRevTestDebugInfo / 0x6F)</span>
             </div>
             <div class="term-tools">
-              <el-checkbox v-model="autoScroll" size="small" label="Auto Scroll" />
+              <el-checkbox v-model="autoScroll" size="small" label="自动滚屏" />
               <el-button size="small" type="danger" plain @click="debugStore.clearTerminalLogs">
-                Clear Terminal
+                清空终端
               </el-button>
             </div>
           </div>
 
           <div ref="terminalBodyRef" class="terminal-body">
             <div v-if="debugStore.terminalLogs.length === 0" class="terminal-empty">
-              > Waiting for camera terminal output... Select a preset command below or enter a custom command.
+              > 等待相机终端日志输出... 可在下方选择常用指令或输入自定义指令进行交互测试。
             </div>
             <div
               v-for="log in debugStore.terminalLogs"
@@ -107,19 +107,19 @@
             <el-input
               v-model="cameraCmdText"
               size="small"
-              placeholder="Enter camera debug command (e.g. get_version, status, sensor_info, reboot, idr_request)..."
+              placeholder="输入相机调试指令 (例: get_version, status, sensor_info, reboot, idr_request)..."
               class="cmd-input"
               @keydown.enter="sendCameraCmd"
             />
 
             <el-button size="small" type="primary" @click="sendCameraCmd">
-              Send Command (TX)
+              发送指令 (TX)
             </el-button>
           </div>
 
           <!-- Quick Command Preset Chips -->
           <div class="terminal-presets">
-            <span class="presets-label">Debug Presets:</span>
+            <span class="presets-label">快捷调试指令:</span>
             <el-button
               v-for="p in cameraPresets"
               :key="p.cmd"
@@ -140,45 +140,45 @@
         <!-- Left: Quick RF Actions -->
         <div class="fpv-controls-col">
           <div class="panel-box">
-            <div class="box-title">📶 RF Low-Level Commands</div>
+            <div class="box-title">📶 射频底层调试指令</div>
 
             <!-- RF All Bands Unlock -->
             <div class="action-card highlight-card">
               <div class="act-header">
-                <span class="act-name">Full-Band Unlock (CMD 5658 / 0x161A)</span>
-                <el-tag size="small" type="danger" effect="dark">Unlock Band</el-tag>
+                <span class="act-name">全频段强制解锁 (CMD 5658 / 0x161A)</span>
+                <el-tag size="small" type="danger" effect="dark">解除锁频</el-tag>
               </div>
               <p class="act-desc">
                 下发内层 5658 协议帧，强制打开全频段支持（解除国内/国外频段信道屏蔽与功率限制）。
               </p>
               <el-button type="warning" size="small" @click="onAllowAllFrequencies">
-                🔓 Send Full-Band Unlock (5658)
+                🔓 发送全频段强制解锁 (5658)
               </el-button>
             </div>
 
             <!-- RF Hardware Reset -->
             <div class="action-card">
               <div class="act-header">
-                <span class="act-name">RF Hardware Reset (CMD 5650 / 0x1612)</span>
+                <span class="act-name">射频芯片硬件复位 (CMD 5650 / 0x1612)</span>
                 <el-tag size="small" type="info" effect="dark">reset\n</el-tag>
               </div>
               <p class="act-desc">
                 向射频基带写入 "reset\n" ASCII 控制字符，触发射频前端硬件热重启。
               </p>
               <el-button type="danger" plain size="small" @click="onResetRf">
-                🔄 RF Hardware Reset (5650)
+                🔄 射频硬件复位 (5650)
               </el-button>
             </div>
 
             <!-- Factory Flight Mode -->
             <div class="action-card">
               <div class="act-header">
-                <span class="act-name">Factory Test Flight Mode (CMD 5640 / 0x1608)</span>
+                <span class="act-name">工厂特权飞行模式 (CMD 5640 / 0x1608)</span>
                 <el-switch
                   v-model="debugStore.fpvSettings.factoryFlyMode"
                   size="small"
-                  active-text="Enabled"
-                  inactive-text="Disabled"
+                  active-text="开启"
+                  inactive-text="关闭"
                   @change="onToggleFactoryFly"
                 />
               </div>
@@ -190,7 +190,7 @@
             <!-- Bandwidth Settings -->
             <div class="action-card">
               <div class="act-header">
-                <span class="act-name">Video Link Bandwidth (CMD 5652 / 0x1614)</span>
+                <span class="act-name">图传信道频宽切换 (CMD 5652 / 0x1614)</span>
               </div>
               <div class="bandwidth-row">
                 <el-radio-group v-model="debugStore.fpvSettings.bandwidthMhz" size="small">
@@ -199,7 +199,7 @@
                   <el-radio-button :value="40">40 MHz</el-radio-button>
                 </el-radio-group>
                 <el-button size="small" type="primary" plain @click="onApplyBandwidth">
-                  Set Bandwidth
+                  设置频宽
                 </el-button>
               </div>
             </div>
@@ -207,14 +207,14 @@
             <!-- RF Real-time Probe Toggle -->
             <div class="action-card">
               <div class="act-header">
-                <span class="act-name">Real-Time RF Spectrum Telemetry (CMD 5656 / 5913)</span>
+                <span class="act-name">实时射频频谱遥测流 (CMD 5656 / 5913)</span>
                 <el-button
                   size="small"
                   :type="debugStore.fpvSettings.rfProbeActive ? 'danger' : 'success'"
                   plain
                   @click="onToggleRfProbe"
                 >
-                  {{ debugStore.fpvSettings.rfProbeActive ? 'Stop Spectrum Capture' : 'Start Spectrum Capture (5656)' }}
+                  {{ debugStore.fpvSettings.rfProbeActive ? '停止频谱采集' : '开启频谱采集 (5656)' }}
                 </el-button>
               </div>
               <p class="act-desc">
@@ -225,21 +225,21 @@
 
           <!-- FPV Custom Hex Injection -->
           <div class="panel-box">
-            <div class="box-title">🔧 FPV Custom HEX Injection (CMD 5696 / 0x1640)</div>
+            <div class="box-title">🔧 FPV 自定义 HEX 注入 (CMD 5696 / 0x1640)</div>
             <div class="custom-hex-wrap">
               <el-input
                 v-model="fpvCustomHex"
                 type="textarea"
                 :rows="2"
-                placeholder="Enter custom FPV HEX payload, e.g. 01020304..."
+                placeholder="输入 FPV 自定义 16 进制报文载荷，例如: 01020304..."
                 style="font-family: var(--mono); font-size: 11px;"
               />
               <div class="hex-actions">
                 <el-button size="small" type="primary" @click="onSendFpvHex">
-                  Send HEX Command
+                  下发 HEX 指令
                 </el-button>
-                <el-button size="small" plain @click="fpvCustomHex = '01'">Preset: 01</el-button>
-                <el-button size="small" plain @click="fpvCustomHex = '00'">Preset: 00</el-button>
+                <el-button size="small" plain @click="fpvCustomHex = '01'">预设: 01</el-button>
+                <el-button size="small" plain @click="fpvCustomHex = '00'">预设: 00</el-button>
               </div>
             </div>
           </div>
@@ -250,55 +250,55 @@
           <!-- RF Link & Pairing State (CMD 5909 / FpvRevConnectState) -->
           <div class="panel-box link-state-box">
             <div class="box-title-row">
-              <span class="box-title">🔗 Controller & Video Link Status (CMD 5909 / FpvRevConnectState)</span>
-              <span class="update-time">Updated: {{ debugStore.linkState.lastUpdated || 'No Data' }}</span>
+              <span class="box-title">🔗 遥控器与图传链路状态 (CMD 5909 / FpvRevConnectState)</span>
+              <span class="update-time">更新: {{ debugStore.linkState.lastUpdated || '无数据上报' }}</span>
             </div>
 
             <div class="link-state-grid">
               <div class="link-card-item">
-                <div class="lc-label">Wireless Video Link</div>
+                <div class="lc-label">无线图传连线</div>
                 <div class="lc-val" :class="debugStore.linkState.wirelessConnected ? 'status-ok' : 'status-bad'">
-                  {{ debugStore.linkState.wirelessConnected ? 'Connected (ONLINE)' : 'Disconnected' }}
+                  {{ debugStore.linkState.wirelessConnected ? '已连接 (ONLINE)' : '未连接 (DISCONNECTED)' }}
                 </div>
               </div>
 
               <div class="link-card-item">
-                <div class="lc-label">Flight Controller Link</div>
+                <div class="lc-label">飞控通信链路</div>
                 <div class="lc-val" :class="debugStore.linkState.flightConnected ? 'status-ok' : 'status-bad'">
-                  {{ debugStore.linkState.flightConnected ? 'Connected' : 'Not Connected' }}
+                  {{ debugStore.linkState.flightConnected ? '已连通' : '未建立连接' }}
                 </div>
               </div>
 
               <div class="link-card-item">
-                <div class="lc-label">Controller USB Channel</div>
+                <div class="lc-label">遥控器 USB 通道</div>
                 <div class="lc-val" :class="debugStore.linkState.remoterConnected ? 'status-ok' : 'status-bad'">
-                  {{ debugStore.linkState.remoterConnected ? 'Handshake Ready' : 'Not Ready' }}
+                  {{ debugStore.linkState.remoterConnected ? '握手就绪' : '未就绪' }}
                 </div>
               </div>
 
               <div class="link-card-item">
-                <div class="lc-label">Pairing Status</div>
+                <div class="lc-label">对频状态</div>
                 <div class="lc-val" :class="debugStore.linkState.isPairing ? 'status-warn' : 'status-ok'">
-                  {{ debugStore.linkState.isPairing ? 'Pairing' : '非Pairing Status' }}
+                  {{ debugStore.linkState.isPairing ? '对频中 (PAIRING)' : '非对频状态' }}
                 </div>
               </div>
 
               <div class="link-card-item">
-                <div class="lc-label">Current Channel Frequency</div>
+                <div class="lc-label">当前信道频点</div>
                 <div class="lc-val highlight-cyan">
                   {{ debugStore.linkState.rfChannelMhz ? debugStore.linkState.rfChannelMhz + ' MHz' : '--' }}
                 </div>
               </div>
 
               <div class="link-card-item">
-                <div class="lc-label">Channel Interference</div>
+                <div class="lc-label">信道干扰电平</div>
                 <div class="lc-val" :class="getInterferenceClass(debugStore.linkState.interference)">
-                  {{ debugStore.linkState.interference !== null ? debugStore.linkState.interference + (debugStore.linkState.interference < 85 ? ' (High Interference)' : ' (Good)') : '--' }}
+                  {{ debugStore.linkState.interference !== null ? debugStore.linkState.interference + (debugStore.linkState.interference < 85 ? ' (强干扰)' : ' (良好)') : '--' }}
                 </div>
               </div>
 
               <div class="link-card-item">
-                <div class="lc-label">Rate / MCS</div>
+                <div class="lc-label">速率 / MCS</div>
                 <div class="lc-val highlight-blue">
                   MCS {{ debugStore.linkState.mcs !== null ? debugStore.linkState.mcs : '--' }}
                   <span v-if="debugStore.linkState.txMcs !== null" class="sub-mcs">
@@ -308,7 +308,7 @@
               </div>
 
               <div class="link-card-item">
-                <div class="lc-label">Frequency Hopping & Power Adaptation</div>
+                <div class="lc-label">跳频与功率自适应</div>
                 <div class="lc-val">
                   跳频: {{ debugStore.linkState.isHopSupport ? '开' : '关' }} / 自适应: {{ debugStore.linkState.powerAdaptive ? '开' : '关' }}
                 </div>
@@ -318,14 +318,14 @@
 
           <div class="panel-box spectrum-box">
             <div class="box-title-row">
-              <span class="box-title">📊 Real-Time RF Parameters & Channel Spectrum (CMD 5913 / 0x1719)</span>
-              <span class="update-time">Updated: {{ debugStore.rfStats.lastUpdated || 'No Data' }}</span>
+              <span class="box-title">📊 射频实时工作参数与信道频谱 (CMD 5913 / 0x1719)</span>
+              <span class="update-time">更新: {{ debugStore.rfStats.lastUpdated || '无数据上报' }}</span>
             </div>
 
             <!-- RF Metrics Grid -->
             <div class="rf-metrics-grid">
               <div class="rf-metric-item">
-                <div class="m-label">Controller Gain (RC Gain)</div>
+                <div class="m-label">遥控端增益 (RC Gain)</div>
                 <div class="m-value">
                   A: <span class="num">{{ debugStore.rfStats.rcGainA }}</span> dB /
                   B: <span class="num">{{ debugStore.rfStats.rcGainB }}</span> dB
@@ -333,7 +333,7 @@
               </div>
 
               <div class="rf-metric-item">
-                <div class="m-label">Controller SNR (RC SNR)</div>
+                <div class="m-label">遥控端信噪比 (RC SNR)</div>
                 <div class="m-value">
                   <span class="num" :class="getSnrClass(debugStore.rfStats.rcSnr)">
                     {{ debugStore.rfStats.rcSnr }}
@@ -342,7 +342,7 @@
               </div>
 
               <div class="rf-metric-item">
-                <div class="m-label">Aircraft Gain (FC Gain)</div>
+                <div class="m-label">飞控端增益 (FC Gain)</div>
                 <div class="m-value">
                   A: <span class="num">{{ debugStore.rfStats.fcGainA }}</span> dB /
                   B: <span class="num">{{ debugStore.rfStats.fcGainB }}</span> dB
@@ -350,7 +350,7 @@
               </div>
 
               <div class="rf-metric-item">
-                <div class="m-label">Aircraft SNR (FC SNR)</div>
+                <div class="m-label">飞控端信噪比 (FC SNR)</div>
                 <div class="m-value">
                   <span class="num" :class="getSnrClass(debugStore.rfStats.fcSnr)">
                     {{ debugStore.rfStats.fcSnr }}
@@ -359,16 +359,16 @@
               </div>
 
               <div class="rf-metric-item">
-                <div class="m-label">PHY Rate (MCS)</div>
+                <div class="m-label">物理层速率 (MCS)</div>
                 <div class="m-value">
                   MCS <span class="num highlight">{{ debugStore.rfStats.mcs }}</span>
                 </div>
               </div>
 
               <div class="rf-metric-item">
-                <div class="m-label">Scanned Channels</div>
+                <div class="m-label">扫描信道总数</div>
                 <div class="m-value">
-                  <span class="num">{{ debugStore.rfStats.channels.length }}</span> channels
+                  <span class="num">{{ debugStore.rfStats.channels.length }}</span> 个信道
                 </div>
               </div>
             </div>
@@ -376,12 +376,12 @@
             <!-- Spectrum Bar Chart -->
             <div class="spectrum-chart-wrap">
               <div class="chart-header">
-                <span>Real-Time Channel Noise / Interference</span>
-                <span class="legend">Green=Low / Yellow=Medium / Red=High Interference</span>
+                <span>信道实时噪声 / 干扰电平分布</span>
+                <span class="legend">绿色=低干扰 / 黄色=中等 / 红色=拥堵</span>
               </div>
 
               <div v-if="debugStore.rfStats.channels.length === 0" class="spectrum-empty">
-                <span>暂未接收到 5913 射频工作参数帧。可点击左侧「Start Spectrum Capture (5656)」启动主动探测。</span>
+                <span>暂未接收到 5913 射频工作参数帧。可点击左侧「开启频谱采集 (5656)」启动主动探测。</span>
               </div>
 
               <div v-else class="spectrum-bars">
@@ -406,10 +406,10 @@
 
             <!-- FPV Log History -->
             <div class="fpv-log-list">
-              <div class="log-list-title">FPV Custom Packet History (Last 200)</div>
+              <div class="log-list-title">FPV 自定义报文交互历史 (最近 200 条)</div>
               <div class="fpv-log-body">
                 <div v-if="debugStore.fpvLogs.length === 0" class="log-empty">
-                  No FPV command history
+                  无 FPV 指令交互记录
                 </div>
                 <div
                   v-for="fl in debugStore.fpvLogs"
@@ -433,13 +433,13 @@
         <!-- IMU 6-Axis Calibration Card -->
         <div class="panel-box">
           <div class="box-title-row">
-            <span class="box-title">⚖️ IMU Six-Side Calibration (0x0301 / CMD 23)</span>
+            <span class="box-title">⚖️ IMU 传感器六面标定 (0x0301 / CMD 23)</span>
             <el-tag
               :type="debugStore.imuCal.isCalibrating ? 'warning' : 'info'"
               effect="dark"
               size="small"
             >
-              Status: {{ debugStore.imuCal.text }}
+              状态: {{ debugStore.imuCal.text }}
             </el-tag>
           </div>
 
@@ -454,7 +454,7 @@
               :disabled="debugStore.imuCal.isCalibrating"
               @click="onStartImuCal"
             >
-              🚀 Start IMU Six-Side Calibration (Action=3)
+              🚀 启动 IMU 六面校准 (Action=3)
             </el-button>
 
             <el-button
@@ -464,53 +464,53 @@
               :disabled="!debugStore.imuCal.isCalibrating"
               @click="onStopImuCal"
             >
-              ⏹️ Stop Calibration (Action=2)
+              ⏹️ 终止校准 (Action=2)
             </el-button>
           </div>
 
           <!-- 6-Faces Status Grid -->
           <div class="faces-grid">
             <div class="face-card" :class="{ 'face-done': debugStore.imuCal.faces.top }">
-              <div class="face-name">1. Top Side Up</div>
-              <div class="face-indicator">{{ debugStore.imuCal.faces.top ? '✓ Completed' : '○ Waiting' }}</div>
+              <div class="face-name">1. 顶面朝上 (Top)</div>
+              <div class="face-indicator">{{ debugStore.imuCal.faces.top ? '✓ 已完成' : '○ 待放置' }}</div>
             </div>
 
             <div class="face-card" :class="{ 'face-done': debugStore.imuCal.faces.bottom }">
-              <div class="face-name">2. Bottom Side Up</div>
-              <div class="face-indicator">{{ debugStore.imuCal.faces.bottom ? '✓ Completed' : '○ Waiting' }}</div>
+              <div class="face-name">2. 底面朝上 (Bottom)</div>
+              <div class="face-indicator">{{ debugStore.imuCal.faces.bottom ? '✓ 已完成' : '○ 待放置' }}</div>
             </div>
 
             <div class="face-card" :class="{ 'face-done': debugStore.imuCal.faces.left }">
-              <div class="face-name">3. Left Side Up</div>
-              <div class="face-indicator">{{ debugStore.imuCal.faces.left ? '✓ Completed' : '○ Waiting' }}</div>
+              <div class="face-name">3. 左侧朝上 (Left)</div>
+              <div class="face-indicator">{{ debugStore.imuCal.faces.left ? '✓ 已完成' : '○ 待放置' }}</div>
             </div>
 
             <div class="face-card" :class="{ 'face-done': debugStore.imuCal.faces.right }">
-              <div class="face-name">4. Right Side Up</div>
-              <div class="face-indicator">{{ debugStore.imuCal.faces.right ? '✓ Completed' : '○ Waiting' }}</div>
+              <div class="face-name">4. 右侧朝上 (Right)</div>
+              <div class="face-indicator">{{ debugStore.imuCal.faces.right ? '✓ 已完成' : '○ 待放置' }}</div>
             </div>
 
             <div class="face-card" :class="{ 'face-done': debugStore.imuCal.faces.front }">
-              <div class="face-name">5. Front Side Up</div>
-              <div class="face-indicator">{{ debugStore.imuCal.faces.front ? '✓ Completed' : '○ Waiting' }}</div>
+              <div class="face-name">5. 机头朝上 (Front)</div>
+              <div class="face-indicator">{{ debugStore.imuCal.faces.front ? '✓ 已完成' : '○ 待放置' }}</div>
             </div>
 
             <div class="face-card" :class="{ 'face-done': debugStore.imuCal.faces.back }">
-              <div class="face-name">6. Rear Side Up</div>
-              <div class="face-indicator">{{ debugStore.imuCal.faces.back ? '✓ Completed' : '○ Waiting' }}</div>
+              <div class="face-name">6. 机尾朝上 (Back)</div>
+              <div class="face-indicator">{{ debugStore.imuCal.faces.back ? '✓ 已完成' : '○ 待放置' }}</div>
             </div>
           </div>
 
           <!-- Raw Vectors Display -->
           <div class="vectors-row">
             <div class="vector-item">
-              <span class="v-name">Accelerometer (Acc):</span>
+              <span class="v-name">加速度计 (Acc):</span>
               <span class="v-val">X: {{ debugStore.imuCal.acc.x.toFixed(3) }}</span>
               <span class="v-val">Y: {{ debugStore.imuCal.acc.y.toFixed(3) }}</span>
               <span class="v-val">Z: {{ debugStore.imuCal.acc.z.toFixed(3) }}</span>
             </div>
             <div class="vector-item">
-              <span class="v-name">Gyroscope (Gyro):</span>
+              <span class="v-name">陀螺仪 (Gyro):</span>
               <span class="v-val">X: {{ debugStore.imuCal.gyro.x.toFixed(3) }}</span>
               <span class="v-val">Y: {{ debugStore.imuCal.gyro.y.toFixed(3) }}</span>
               <span class="v-val">Z: {{ debugStore.imuCal.gyro.z.toFixed(3) }}</span>
@@ -522,19 +522,19 @@
         <div class="sub-row-two-col">
           <!-- Gimbal Reset -->
           <div class="panel-box">
-            <div class="box-title">🎥 Gimbal Attitude & Calibration (0x0801 / 5)</div>
+            <div class="box-title">🎥 云台姿态与标定管理 (0x0801 / 5)</div>
             <p class="cal-desc">
               向三轴无刷云台下发清除 IMU 标定数据指令，用于解决云台倾斜、偏航零点飘移问题。
             </p>
             <el-popconfirm
-              title="Clear gimbal IMU calibration data?"
-              confirm-button-text="Clear"
-              cancel-button-text="Cancel"
+              title="确定要清除云台 IMU 标定数据吗？"
+              confirm-button-text="确定清除"
+              cancel-button-text="取消"
               @confirm="onClearGimbalImu"
             >
               <template #reference>
                 <el-button type="danger" size="small">
-                  🧹 Clear Gimbal IMU Calibration (0x0801)
+                  🧹 清除云台 IMU 标定 (0x0801)
                 </el-button>
               </template>
             </el-popconfirm>
@@ -542,24 +542,24 @@
 
           <!-- Camera Optical Sensor Calibration -->
           <div class="panel-box">
-            <div class="box-title">📷 Camera Sensor DPC & Noise Calibration (0x1200)</div>
+            <div class="box-title">📷 相机传感器坏点与噪声校准 (0x1200)</div>
             <p class="cal-desc">
               CMOS 感光元件出厂与后期坏点校正 (DPC) 及固定模式噪声 (FPN) 消除。
             </p>
             <div class="cam-cal-buttons">
               <el-button-group size="small">
-                <el-button type="info" plain @click="onStartDpc(true, 0)">Dark-Frame DPC Step 0</el-button>
-                <el-button type="info" plain @click="onStartDpc(true, 1)">Dark-Frame DPC Step 1</el-button>
-                <el-button type="info" plain @click="onStartDpc(true, 2)">Dark-Frame DPC Step 2</el-button>
+                <el-button type="info" plain @click="onStartDpc(true, 0)">暗场 DPC 步0</el-button>
+                <el-button type="info" plain @click="onStartDpc(true, 1)">暗场 DPC 步1</el-button>
+                <el-button type="info" plain @click="onStartDpc(true, 2)">暗场 DPC 步2</el-button>
               </el-button-group>
 
               <el-button-group size="small">
-                <el-button type="primary" plain @click="onStartDpc(false, 0)">Bright-Frame DPC Step 0</el-button>
-                <el-button type="primary" plain @click="onStartDpc(false, 1)">Bright-Frame DPC Step 1</el-button>
+                <el-button type="primary" plain @click="onStartDpc(false, 0)">亮场 DPC 步0</el-button>
+                <el-button type="primary" plain @click="onStartDpc(false, 1)">亮场 DPC 步1</el-button>
               </el-button-group>
 
               <el-button size="small" type="warning" plain @click="onStartFpn">
-                FPN Noise Calibration (0x74)
+                FPN 噪声校准 (0x74)
               </el-button>
             </div>
           </div>
@@ -567,26 +567,26 @@
 
         <!-- GNSS & Satellite Debug -->
         <div class="panel-box">
-          <div class="box-title">🛰️ GNSS Debug (0x0301)</div>
+          <div class="box-title">🛰️ GNSS 卫星定位系统调试 (0x0301)</div>
           <div class="gnss-toggles">
             <div class="toggle-item">
-              <span class="t-label">GPS Test Mode (Subcmd 23):</span>
+              <span class="t-label">GPS 测试模式 (Subcmd 23):</span>
               <el-switch
                 v-model="gpsTestEnabled"
                 size="small"
-                active-text="Enabled"
-                inactive-text="Disabled"
+                active-text="开启"
+                inactive-text="关闭"
                 @change="onToggleGpsTest"
               />
             </div>
 
             <div class="toggle-item">
-              <span class="t-label">BeiDou Satellite System (Subcmd 24):</span>
+              <span class="t-label">北斗卫星系统使能 (Subcmd 24):</span>
               <el-switch
                 v-model="beidouEnabled"
                 size="small"
-                active-text="Enabled"
-                inactive-text="Disabled"
+                active-text="开启"
+                inactive-text="关闭"
                 @change="onToggleBeidou"
               />
             </div>
@@ -598,38 +598,38 @@
       <div v-show="debugStore.activeSubTab === 'rid'" class="sub-tab-pane rid-pane">
         <div class="panel-box">
           <div class="box-title-row">
-            <span class="box-title">📡 Drone Remote ID (RID) Status</span>
+            <span class="box-title">📡 无人机远程识别 (Remote ID / RID) 状态</span>
             <el-button size="small" type="primary" plain @click="onQueryRemoteId">
-              🔍 Query Remote ID Parameters (0x73)
+              🔍 查询 Remote ID 参数 (0x73)
             </el-button>
           </div>
 
           <div class="rid-cards-grid">
             <div class="rid-item">
-              <div class="rid-label">Country Code</div>
+              <div class="rid-label">国家代码 (Country Code)</div>
               <div class="rid-value">{{ debugStore.remoteId.countryCode }}</div>
             </div>
 
             <div class="rid-item">
-              <div class="rid-label">Aircraft Unique ID (UAS ID)</div>
+              <div class="rid-label">无人机唯一序列识别码 (UAS ID)</div>
               <div class="rid-value mono">{{ debugStore.remoteId.uasId }}</div>
             </div>
 
             <div class="rid-item">
-              <div class="rid-label">RID Broadcast Status</div>
+              <div class="rid-label">RID 广播运行状态</div>
               <div class="rid-value">
                 <el-tag size="small" type="success" effect="dark">{{ debugStore.remoteId.status }}</el-tag>
               </div>
             </div>
 
             <div class="rid-item">
-              <div class="rid-label">Bound Aircraft Mainboard SN</div>
+              <div class="rid-label">绑定的飞机主板 SN</div>
               <div class="rid-value mono">{{ debugStore.boundDroneSn }}</div>
             </div>
           </div>
 
           <div v-if="debugStore.remoteId.rawHex" class="rid-raw-hex">
-            <div class="raw-title">Raw 0x73 Protocol Response HEX:</div>
+            <div class="raw-title">原始 0x73 协议响应 HEX:</div>
             <div class="raw-box">{{ debugStore.remoteId.rawHex }}</div>
           </div>
         </div>
@@ -653,19 +653,19 @@ const cameraCmdText = ref('')
 const terminalBodyRef = ref<HTMLDivElement | null>(null)
 
 const cameraPresets = [
-  { label: 'Query Firmware Version', opcode: 0, cmd: 'get_version' },
-  { label: 'Query Status', opcode: 0, cmd: 'status' },
-  { label: 'CMOS Sensor Information', opcode: 0, cmd: 'sensor_info' },
-  { label: 'Request IDR (IDR)', opcode: 0, cmd: 'idr_request' },
-  { label: 'Restart Camera Core', opcode: 0, cmd: 'reboot' },
-  { label: 'Query Camera SN', opcode: 0, cmd: 'get_sn' },
-  { label: 'Terminal Help', opcode: 0, cmd: 'help' }
+  { label: '查询固件版本', opcode: 0, cmd: 'get_version' },
+  { label: '查询工作状态', opcode: 0, cmd: 'status' },
+  { label: 'CMOS 传感器信息', opcode: 0, cmd: 'sensor_info' },
+  { label: '关键帧请求 (IDR)', opcode: 0, cmd: 'idr_request' },
+  { label: '重启相机核心', opcode: 0, cmd: 'reboot' },
+  { label: '查询相机 SN', opcode: 0, cmd: 'get_sn' },
+  { label: '终端帮助命令', opcode: 0, cmd: 'help' }
 ]
 
 function sendCameraCmd() {
   const text = cameraCmdText.value.trim()
   if (!text) {
-    ElMessage.warning('Enter a debug command')
+    ElMessage.warning('请输入调试命令')
     return
   }
   DroneControlService.sendCameraTerminal(cameraOpcode.value, text)
@@ -736,7 +736,7 @@ function onToggleRfProbe() {
 function onSendFpvHex() {
   const hex = fpvCustomHex.value.trim()
   if (!hex) {
-    ElMessage.warning('Enter valid HEX data')
+    ElMessage.warning('请输入有效的 HEX 数据')
     return
   }
   DroneControlService.sendFpvCustomHex(hex)
@@ -1549,5 +1549,3 @@ function onQueryRemoteId() {
   word-break: break-all;
 }
 </style>
-
-

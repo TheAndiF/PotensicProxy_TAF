@@ -1,13 +1,13 @@
 <template>
   <div class="constructor-panel">
-    <div class="panel-title">🛠️ Vue 3 Packet Builder</div>
+    <div class="panel-title">🛠️ Vue 3 数据构造器 (纯前端二进制构建)</div>
     <p class="desc-text">
-      Build binary packets in Vue 3 and send them to the phone USB port via WebSocket passthrough.
+      由 Vue 3 纯前端构造二进制报文，通过 WebSocket 透传写入手机 USB 端口。
     </p>
 
     <!-- Presets Selector -->
     <div class="form-item">
-      <div class="item-label">Protocol Presets:</div>
+      <div class="item-label">预设协议帧快速载入:</div>
       <div class="preset-chips">
         <el-tag
           v-for="p in presets"
@@ -23,24 +23,24 @@
 
     <!-- FE Frame Options -->
     <div class="form-item">
-      <div class="item-label">FE Transport Type (FE Type):</div>
+      <div class="item-label">FE 传输封装 (FE Type):</div>
       <el-select v-model="feType" size="small" @change="rebuildFrame" style="width: 100%;">
-        <el-option value="0x14" label="0x14 - Flight Control / Heartbeat" />
-        <el-option value="0x15" label="0x15 - Camera Command Channel" />
-        <el-option value="0x12" label="0x12 - AOA Handshake Protocol" />
-        <el-option value="0x16" label="0x16 - FPV RF Configuration Channel" />
-        <el-option value="none" label="No FE Wrapper (Raw HFD Data)" />
+        <el-option value="0x14" label="0x14 - 飞行控制 / 心跳包" />
+        <el-option value="0x15" label="0x15 - 相机指令通道" />
+        <el-option value="0x12" label="0x12 - AOA 握手协议" />
+        <el-option value="0x16" label="0x16 - FPV 射频设置通道" />
+        <el-option value="none" label="无 FE 封装 (纯原始数据 RAW HFD)" />
       </el-select>
     </div>
 
     <div class="form-item" v-if="feType !== 'none'">
       <div class="inline-grid">
         <div>
-          <div class="item-label">Inner Short (LE):</div>
+          <div class="item-label">内层 Short (LE):</div>
           <el-input v-model="cmdShort" size="small" @input="rebuildFrame" placeholder="例: 0x0301" />
         </div>
         <div>
-          <div class="item-label">Inner Cmd Byte (Hex):</div>
+          <div class="item-label">内层 Cmd 字节 (Hex):</div>
           <el-input v-model="cmdByte" size="small" @input="rebuildFrame" placeholder="例: 0x01" />
         </div>
       </div>
@@ -49,14 +49,14 @@
     <!-- Hex Input/Edit Area -->
     <div class="form-item">
       <div class="label-row">
-        <span class="item-label">Packet HEX Payload (可直接修改):</span>
-        <span class="byte-count">Bytes: {{ byteCount }}B</span>
+        <span class="item-label">构造报文 HEX 内容 (可直接修改):</span>
+        <span class="byte-count">字节数: {{ byteCount }}B</span>
       </div>
       <el-input
         v-model="hexContent"
         type="textarea"
         :rows="3"
-        placeholder="Enter HEX or generate from preset above..."
+        placeholder="输入或由上方预设自动生成 Hex..."
         style="font-family: var(--mono); font-size: 11px;"
       />
     </div>
@@ -64,11 +64,11 @@
     <!-- Repeats & Interval -->
     <div class="inline-grid">
       <div class="form-item">
-        <div class="item-label">Repeat Count:</div>
+        <div class="item-label">重发次数:</div>
         <el-input-number v-model="repeats" :min="1" :max="50" size="small" style="width: 100%;" />
       </div>
       <div class="form-item">
-        <div class="item-label">Interval (ms):</div>
+        <div class="item-label">间隔 (ms):</div>
         <el-input-number v-model="interval" :min="10" :max="1000" :step="10" size="small" style="width: 100%;" />
       </div>
     </div>
@@ -81,7 +81,7 @@
       @click="onSend"
       :disabled="!hexContent.trim()"
     >
-      🚀 Send via Passthrough to Phone USB
+      🚀 透传发送到手机 USB
     </el-button>
   </div>
 </template>
@@ -98,19 +98,19 @@ import { useDroneStore } from '../../stores/useDroneStore'
 const store = useDroneStore()
 
 const presets = [
-  { id: 'heartbeat', name: 'Heartbeat (Heartbeat)' },
-  { id: 'handshake', name: 'AOA Handshake' },
-  { id: 'takeoff', name: 'Takeoff (Takeoff)' },
-  { id: 'land', name: 'Land (Land)' },
-  { id: 'rth', name: 'RTH (RTH)' },
-  { id: 'emergency', name: 'Emergency Stop (Stop)' },
-  { id: 'photo', name: 'Photo (Photo)' },
-  { id: 'record', name: 'Record Toggle (Record)' },
-  { id: 'idr', name: 'Request IDR (IDR)' },
-  { id: 'liveview', name: 'LiveView Parameters (LiveView)' },
-  { id: 'combined_joy', name: 'Combined RC Control (127B)' },
-  { id: 'rf_probe', name: 'RF Parameter Probe' },
-  { id: 'wifi_direct', name: 'Controller Wi-Fi Hotspot' }
+  { id: 'heartbeat', name: '心跳包 (Heartbeat)' },
+  { id: 'handshake', name: 'AOA 握手包' },
+  { id: 'takeoff', name: '一键起飞 (Takeoff)' },
+  { id: 'land', name: '自动降落 (Land)' },
+  { id: 'rth', name: '一键返航 (RTH)' },
+  { id: 'emergency', name: '紧急急停 (Stop)' },
+  { id: 'photo', name: '拍照 (Photo)' },
+  { id: 'record', name: '录像开关 (Record)' },
+  { id: 'idr', name: '关键帧请求 (IDR)' },
+  { id: 'liveview', name: '图传参数 (LiveView)' },
+  { id: 'combined_joy', name: '遥控组合控制包 (127B)' },
+  { id: 'rf_probe', name: '射频参数探测' },
+  { id: 'wifi_direct', name: '手柄WiFi热点' }
 ]
 
 const currentPreset = ref('takeoff')
@@ -175,7 +175,7 @@ function onSend() {
 
 function loadHex(hex: string) {
   hexContent.value = hex
-  store.addLog('INFO', `已将报文 (${Math.floor(hex.length / 2)} 字节) Load into Builder`)
+  store.addLog('INFO', `已将报文 (${Math.floor(hex.length / 2)} 字节) 填入构造器`)
 }
 
 defineExpose({
@@ -256,5 +256,3 @@ onMounted(() => {
   font-weight: bold;
 }
 </style>
-
-

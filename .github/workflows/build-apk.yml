@@ -1,0 +1,64 @@
+name: Build PotensicProxy TAF APK
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-apk:
+    name: Build debug APK for BL_ commit
+    if: ${{ startsWith(github.event.head_commit.message, 'BL_') }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Remove checked-in WebUI build output
+        run: rm -rf app/src/main/assets/web
+
+      - name: Build WebUI from source
+        working-directory: webui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Build Android debug APK from source
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Prepare commit-specific APK name
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          cp app/build/outputs/apk/debug/app-debug.apk "PotensicProxy_TAF-${SHORT_SHA}.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PotensicProxy_TAF-${{ github.sha }}
+          path: PotensicProxy_TAF-*.apk
+          if-no-files-found: error
+          retention-days: 30

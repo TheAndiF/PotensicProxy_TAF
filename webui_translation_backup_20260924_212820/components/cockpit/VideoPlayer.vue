@@ -21,53 +21,53 @@
       <!-- Placeholder / Waiting Screen with Diagnostics -->
       <div v-if="!hasFrame" class="video-placeholder">
         <div class="placeholder-icon">🚁</div>
-        <div class="placeholder-title">Waiting for drone video stream</div>
+        <div class="placeholder-title">等待无人机视频图传画面</div>
         <div class="placeholder-desc">
-          Currently using direct frontend USB passthrough mode.
-          If the aircraft is powered on and paired, click Activate Stream below to send the initialization sequence.
+          当前处于纯前端 USB 透传直连模式。
+          若飞行器已开机且对频成功，请点击下方「激活推流」发送官方唤醒序列。
         </div>
 
         <!-- Real-time Diagnostics Checklist -->
         <div class="diag-checklist">
           <div class="diag-item">
-            <span class="diag-label">USB Passthrough Channel (WebSocket):</span>
+            <span class="diag-label">USB 透传通道 (WebSocket):</span>
             <span :class="store.connection.wsConnected ? 'diag-ok' : 'diag-warn'">
-              {{ store.connection.wsConnected ? '✓ Ready' : '✗ Not Connected' }}
+              {{ store.connection.wsConnected ? '✓ 实时就绪' : '✗ 未连接' }}
             </span>
           </div>
           <div class="diag-item">
-            <span class="diag-label">0x06 Video Frame Extraction (FE/w42):</span>
+            <span class="diag-label">0x06 视频帧提取 (FE/w42):</span>
             <span :class="videoStats.framesExtracted > 0 ? 'diag-ok' : 'diag-muted'">
-              {{ videoStats.framesExtracted }} frames (I: {{ videoStats.iFrames }} / P: {{ videoStats.pFrames }})
+              {{ videoStats.framesExtracted }} 帧 (I: {{ videoStats.iFrames }} / P: {{ videoStats.pFrames }})
               {{ videoStats.detectedCodec !== 'unknown' ? `[${videoStats.detectedCodec.toUpperCase()}]` : '' }}
             </span>
           </div>
           <div class="diag-item">
-            <span class="diag-label">Browser Hardware Decode Support (WebCodecs):</span>
+            <span class="diag-label">浏览器硬解支持 (WebCodecs):</span>
             <span :class="codecSupportOk ? 'diag-ok' : 'diag-warn'">
               {{ codecSupportText }}
             </span>
           </div>
           <div class="diag-item" v-if="decoderStats.framesDecoded > 0 || decoderStats.droppedFrames > 0">
-            <span class="diag-label">Decoder Status:</span>
+            <span class="diag-label">解码器实时状态:</span>
             <span :class="decoderStats.framesDecoded > 0 ? 'diag-ok' : 'diag-warn'">
-              Decoded {{ decoderStats.framesDecoded }} frames (dropped: {{ decoderStats.droppedFrames }})
+              已解 {{ decoderStats.framesDecoded }} 帧 (丢弃: {{ decoderStats.droppedFrames }})
             </span>
           </div>
         </div>
 
         <div class="placeholder-actions">
           <button class="action-btn primary" @click="() => activateLiveView(true)">
-            ⚡ Activate Stream (H.265)
+            ⚡ 激活推流 (H.265 高清)
           </button>
           <button class="action-btn success" @click="() => activateLiveView(false)">
-            ⚡ Activate Stream (H.264 Compatible)
+            ⚡ 激活推流 (H.264 兼容)
           </button>
           <button class="action-btn" @click="requestIdr">
-            🔄 Request Keyframe (IDR)
+            🔄 请求关键帧 (IDR)
           </button>
           <button class="action-btn" @click="toggleNextMode">
-            🔀 Switch Mode (Current: {{ mode.toUpperCase() }})
+            🔀 切换模式 (当前: {{ mode.toUpperCase() }})
           </button>
         </div>
       </div>
@@ -76,14 +76,14 @@
       <div class="video-osd">
         <div class="osd-left">
           <span class="osd-tag" :class="hasFrame ? 'live' : 'waiting'">
-            {{ hasFrame ? '● Live Video' : '○ Waiting for Stream' }}
+            {{ hasFrame ? '● 实时画面' : '○ 等待推流' }}
           </span>
           <span
             class="osd-tag mode-tag"
             @click="toggleNextMode"
-            :title="'Click to change render mode (Current: ' + mode.toUpperCase() + ')'"
+            :title="'点击切换渲染模式 (当前: ' + mode.toUpperCase() + ')'"
           >
-            Render: {{ mode.toUpperCase() }}
+            渲染: {{ mode.toUpperCase() }}
           </span>
           <span v-if="resolution" class="osd-tag">
             {{ resolution }}
@@ -92,7 +92,7 @@
             {{ fps }} FPS
           </span>
           <span v-if="hasFrame && mode === 'webcodecs'" class="osd-tag highlight-tag">
-            {{ (decoderStats.codecType || 'h265').toUpperCase() }} HW Decode
+            {{ (decoderStats.codecType || 'h265').toUpperCase() }} 硬解
           </span>
           <span v-if="hasFrame && decoderStats.framesDecoded > 0" class="osd-tag">
             {{ decoderStats.framesDecoded }} 帧
@@ -100,20 +100,20 @@
         </div>
 
         <div class="osd-right">
-          <button class="osd-action-btn" @click="() => activateLiveView(true)" title="Send full initialization sequence for H.265">
-            ⚡ H.265 Stream
+          <button class="osd-action-btn" @click="() => activateLiveView(true)" title="发送全套初始化序列激活 H.265">
+            ⚡ H.265推流
           </button>
-          <button class="osd-action-btn success" @click="() => activateLiveView(false)" title="Send full initialization sequence for H.264 compatibility">
-            ⚡ H.264 Stream
+          <button class="osd-action-btn success" @click="() => activateLiveView(false)" title="发送全套初始化序列激活 H.264 (兼容所有浏览器)">
+            ⚡ H.264推流
           </button>
-          <button class="osd-action-btn" @click="requestIdr" title="Request Keyframe (IDR)">
-            🔄 Request I-Frame
+          <button class="osd-action-btn" @click="requestIdr" title="请求关键帧 (IDR)">
+            🔄 请求I帧
           </button>
-          <button class="osd-action-btn" @click="toggleFullscreen" title="View video fullscreen">
-            ⛶ Fullscreen
+          <button class="osd-action-btn" @click="toggleFullscreen" title="全屏查看图传">
+            ⛶ 全屏
           </button>
           <span class="osd-item">
-            Battery: {{ store.telemetry.battery }}% ({{ store.telemetry.flightVoltage?.toFixed(1) || '--' }}V)
+            电量: {{ store.telemetry.battery }}% ({{ store.telemetry.flightVoltage?.toFixed(1) || '--' }}V)
           </span>
         </div>
       </div>
@@ -164,17 +164,17 @@ const decoderStats = reactive<VideoPlayerStats>({
   droppedFrames: 0,
   width: 0,
   height: 0,
-  codec: 'Initializing...',
+  codec: '初始化中...',
   codecType: 'none',
   latencyMs: 0
 })
 
 const codecSupportOk = computed(() => h265Supported.value || h264Supported.value)
 const codecSupportText = computed(() => {
-  if (!webCodecsSupported.value) return '✗ Browser does not support WebCodecs'
+  if (!webCodecsSupported.value) return '✗ 浏览器不支持 WebCodecs'
   const items = []
   if (h265Supported.value) items.push('✓ H.265')
-  else items.push('✗ H.265 (extension required)')
+  else items.push('✗ H.265(需扩展)')
   if (h264Supported.value) items.push('✓ H.264')
   else items.push('✗ H.264')
   return items.join(' | ')
@@ -603,5 +603,3 @@ onUnmounted(() => {
   border-color: #00e676;
 }
 </style>
-
-

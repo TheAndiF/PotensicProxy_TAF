@@ -119,7 +119,7 @@ export class UsbTransportService {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const url = `${protocol}//${host}/ws/usb`
 
-    store.addLog('INFO', `正在Connect USB 透传通道 -> ${url}`)
+    store.addLog('INFO', `正在连接 USB 透传通道 -> ${url}`)
 
     try {
       this.ws = new WebSocket(url)
@@ -259,4 +259,3 @@ export class UsbTransportService {
     }
   }
 }
-
