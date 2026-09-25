@@ -494,4 +494,16 @@ object DroneProtocol {
         val inner = buildInnerCommand(0xD9.toByte())
         return wrapFE(inner)
     }
+
+    /**
+     * Build Request Frequency Parameters command (Command 5656 / 0x1618).
+     * Requests the drone/remote to start (or stop) reporting real-time RF parameters.
+     *
+     * @param enable true to start continuous RF report, false to stop
+     */
+    fun buildRequestFreqParams(enable: Boolean = true): ByteArray {
+        val data = byteArrayOf(if (enable) 1 else 0)
+        val inner = buildInnerCommandWithShort(0x1618, data)
+        return wrapFE(inner, 0x16)
+    }
 }
