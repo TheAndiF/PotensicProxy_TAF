@@ -1,0 +1,1445 @@
+﻿diff --git a/app/src/main/java/com/potensic/proxy/DroneProtocol.kt b/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+index 892a2d9..103f729 100644
+--- a/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
++++ b/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+@@ -19,6 +19,10 @@ object DroneProtocol {
+     // Heartbeat pattern (from FlightHeartbeat ÔÇö 3 zero bytes wrapped in FE transport type 0x14)
+     val HEARTBEAT_RAW = ByteArray(3)
+ 
++    // FPV RF frequency parameter commands
++    const val CMD_FPV_REQ_FREQ_PARAMS: Short = 5656 // 0x1618 (TX: Request/probe RF parameters)
++    const val CMD_FPV_REV_FREQ_PARAMS: Short = 5913 // 0x1719 (RX: Real-time RF parameters report, FpvRevFreqParams)
++
+     /**
+      * Build the exact init sequence that the official Potensic app sends.
+      * Captured via smali injection logging (POTENSIC_SPY).
+@@ -494,4 +498,16 @@ object DroneProtocol {
+         val inner = buildInnerCommand(0xD9.toByte())
+         return wrapFE(inner)
+     }
++
++    /**
++     * Build Request Frequency Parameters command (Command 5656 / 0x1618).
++     * Requests the drone/remote to start (or stop) reporting real-time RF parameters (Command 5913 / 0x1719).
++     *
++     * @param enable true to start continuous RF report, false to stop
++     */
++    fun buildRequestFreqParams(enable: Boolean = true): ByteArray {
++        val data = byteArrayOf(if (enable) 1 else 0)
++        val inner = buildInnerCommandWithShort(0x1618, data)
++        return wrapFE(inner, 0x16)
++    }
+ }
+diff --git a/app/src/main/java/com/potensic/proxy/ProxyService.kt b/app/src/main/java/com/potensic/proxy/ProxyService.kt
+index a8ab534..3e84060 100644
+--- a/app/src/main/java/com/potensic/proxy/ProxyService.kt
++++ b/app/src/main/java/com/potensic/proxy/ProxyService.kt
+@@ -33,6 +33,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
+ 
+     lateinit var usbManager: UsbAccessoryManager; private set
+     lateinit var webServer: WebServer; private set
++    lateinit var reverseTunnelClient: ReverseTunnelClient; private set
+     val videoExtractor = VideoExtractor()
+     val videoDecoder = VideoDecoder()
+ 
+@@ -64,6 +65,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
+             }
+         }
+ 
++        reverseTunnelClient = ReverseTunnelClient(applicationContext)
++
+         acquireWakeLock()
+     }
+ 
+@@ -81,13 +84,19 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
+                 startForeground(NOTIFICATION_ID, notification)
+             }
+         } catch (e: Exception) {
+-            Log.e("[Service] startForeground failed", e)
++            Log.e("[Service] startForeground failed: ${e.message}")
++            try {
++                startForeground(NOTIFICATION_ID, notification)
++            } catch (e2: Exception) {
++                Log.e("[Service] fallback startForeground failed: ${e2.message}")
++            }
+         }
+ 
+         if (!serverStarted) {
+             webServer.start(9090)
+             serverStarted = true
+             Log.i("[Service] Web server started on :9090")
++            reverseTunnelClient.start(scope)
+         } else {
+             Log.i("[Service] Web server already running, skipping")
+         }
+@@ -108,6 +117,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
+ 
+     override fun onDestroy() {
+         Log.i("[Service] onDestroy")
++        reverseTunnelClient.stop()
+         controlJob?.cancel()
+         webServer.stop()
+         usbManager.destroy()
+@@ -234,8 +244,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
+                 Log.i("[Service] Init cmd #${i+1}/${initSeq.size} (${cmd.size}B)")
+                 delay(50)
+             }
+-            usbManager.send(DroneProtocol.buildLiveViewParams())
+-            Log.i("[Service] Sent LiveViewParams")
++            activateLiveView()
+         }
+ 
+         startControlLoop()
+@@ -285,7 +294,12 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
+ 
+     override fun onDataReceived(data: ByteArray, length: Int) {
+         // Never drop USB data ÔÇö dropping causes corrupted frames
+-        rawDataQueue.offer(data.copyOf(length))
++        val copy = data.copyOf(length)
++        rawDataQueue.offer(copy)
++        reverseTunnelClient.sendUsbData(copy)
++        scope.launch {
++            webServer.broadcastUsbData(copy)
++        }
+     }
+ 
+     private fun startExtractorLoop() {
+@@ -303,9 +317,34 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
+         }
+     }
+ 
++    /**
++     * Video stream activation helper.
++     * Tells drone camera to start encoding and transmitting H.265 video packets.
++     */
++    fun activateLiveView() {
++        scope.launch {
++            try {
++                Log.i("[Service] Activating LiveView stream...")
++                // CAMERA: LIVEVIEW_START (cmd=0x73, data=0x00 0x64)
++                val liveViewStart = DroneProtocol.hexToBytes("fe000000000000150000000000000009fffd05000012730064")
++                sendDirectAny(liveViewStart)
++                delay(50)
++                // CAMERA: LIVEVIEW_PARAMS (cmd=0xD8, 1080P 5000Kbps)
++                sendDirectAny(DroneProtocol.buildLiveViewParams())
++                delay(50)
++                // CAMERA: REQUEST_IDR (cmd=0xD9)
++                sendDirectAny(DroneProtocol.buildIDRRequest())
++                Log.i("[Service] Sent LiveView activation commands")
++            } catch (e: Exception) {
++                Log.e("[Service] Error activating LiveView: ${e.message}")
++            }
++        }
++    }
++
+     /**
+      * Separate decoder thread that consumes NALs from the extractor queue.
+      * Runs independently from USB read thread to avoid blocking.
++     * Decodes all sequential NAL units (I and P frames) in stream order.
+      */
+     private fun startDecoderLoop() {
+         if (decoderJob?.isActive == true) return
+@@ -314,25 +353,46 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
+             var statsCounter = 0
+             var gotFirstIdr = false
+             while (isActive && isAnyConnected) {
+-                // Drain queue ÔÇö grab only the LATEST IDR to minimize latency
+-                var latestIdr: VideoExtractor.NalUnit? = null
+-                while (true) {
+-                    val nal = videoExtractor.nalQueue.poll() ?: break
+-                    if (nal.isIFrame) latestIdr = nal
++                // If extractor reset, reset IDR sync
++                if (videoExtractor.framesExtracted.get() == 0) {
++                    gotFirstIdr = false
+                 }
+ 
+-                if (latestIdr != null) {
+-                    // Start decoder on first frame
+-                    if (videoDecoder.framesDecoded.get() == 0 && videoExtractor.lastWidth > 0) {
++                val nal = videoExtractor.nalQueue.poll()
++                if (nal != null) {
++                    // Before the first IDR frame, discard P-frames (cannot be decoded without IDR)
++                    if (!gotFirstIdr && !nal.isIFrame) {
++                        delay(2)
++                        continue
++                    }
++                    if (nal.isIFrame) {
++                        gotFirstIdr = true
++                    }
++
++                    // Start decoder on first frame once resolution is known
++                    val w = if (nal.width > 0) nal.width else videoExtractor.lastWidth
++                    val h = if (nal.height > 0) nal.height else videoExtractor.lastHeight
++                    if (videoDecoder.framesDecoded.get() == 0 && w > 0 && h > 0) {
+                         val v = videoExtractor.vps ?: VideoExtractor.FALLBACK_VPS
+                         val s = videoExtractor.sps ?: VideoExtractor.FALLBACK_SPS
+                         val p = videoExtractor.pps ?: VideoExtractor.FALLBACK_PPS
+-                        videoDecoder.start(videoExtractor.lastWidth, videoExtractor.lastHeight, v, s, p)
++                        videoDecoder.start(w, h, v, s, p)
+                     }
+ 
+-                    gotFirstIdr = true
+                     videoDecoder.publishFrame = true
+-                    videoDecoder.decode(latestIdr.data, true)
++                    videoDecoder.decode(nal.data, nal.isIFrame)
++
++                    // Low latency backlog prevention: if queue has more than 15 frames (~0.5s),
++                    // skip non-IDR frames to catch up to real-time
++                    if (videoExtractor.nalQueue.size > 15) {
++                        while (videoExtractor.nalQueue.size > 2) {
++                            val skipped = videoExtractor.nalQueue.poll() ?: break
++                            if (skipped.isIFrame) {
++                                videoDecoder.decode(skipped.data, true)
++                                break
++                            }
++                        }
++                    }
+ 
+                     // Broadcast stats periodically
+                     if (++statsCounter % 25 == 0) {
+@@ -366,6 +426,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
+             var loopCount = 0L
+             var lastIdrRequest = 0L
+             var lastHeartbeat = 0L
++            var lastVideoWatchdog = 0L
+             val heartbeatPacket = DroneProtocol.buildHeartbeat()
+             Log.hex("[Service] Heartbeat packet", heartbeatPacket)
+ 
+@@ -392,10 +453,21 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
+                         lastHeartbeat = now
+                     }
+ 
+-                    // Request IDR every 100ms
+-                    if (now - lastIdrRequest > 100) {
++                    // Video watchdog: If no video frames received yet, or stream stalled > 5s,
++                    // automatically kickstart LiveView transmission
++                    if (now - lastVideoWatchdog > 3000) {
++                        lastVideoWatchdog = now
++                        if (videoExtractor.framesExtracted.get() == 0 ||
++                            (videoExtractor.lastFrameTime > 0 && now - videoExtractor.lastFrameTime > 5000)) {
++                            Log.i("[Service] Video watchdog: Drone online but no video, sending LiveView activation")
++                            activateLiveView()
++                        }
++                    }
++
++                    // Periodic IDR request every 2000ms to repair any packet loss artifacts
++                    if (now - lastIdrRequest > 2000) {
+                         val idrCmd = DroneProtocol.buildIDRRequest()
+-                        sendAny(idrCmd)
++                        sendDirectAny(idrCmd)
+                         lastIdrRequest = now
+                     }
+ 
+@@ -417,12 +489,21 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
+         }
+     }
+ 
++    fun restartTunnel() {
++        scope.launch {
++            reverseTunnelClient.stop()
++            kotlinx.coroutines.delay(300)
++            reverseTunnelClient.start(this)
++        }
++    }
++
+     // === Notification & WakeLock ===
+ 
+     private fun buildNotification(): Notification {
++        val host = TunnelConfig.getHost(this)
+         return Notification.Builder(this, CHANNEL_ID)
+             .setContentTitle("Potensic Proxy")
+-            .setContentText("Drone control relay active ÔÇö :9090")
++            .setContentText("Relay active ÔÇö local :9090 | public $host:19090")
+             .setSmallIcon(android.R.drawable.ic_menu_compass)
+             .setOngoing(true)
+             .build()
+diff --git a/app/src/main/java/com/potensic/proxy/Telemetry.kt b/app/src/main/java/com/potensic/proxy/Telemetry.kt
+index 9c21e34..cb6cba1 100644
+--- a/app/src/main/java/com/potensic/proxy/Telemetry.kt
++++ b/app/src/main/java/com/potensic/proxy/Telemetry.kt
+@@ -58,6 +58,28 @@ data class TelemetryData(
+     val btnRTH: Boolean = false,
+     val btnC1: Boolean = false,
+     val btnC2: Boolean = false,
++    // RF real-time parameters (5913 / 0x1719 FpvRevFreqParams)
++    val rfFreq: Int = 0,
++    val rfMcs: Int = 0,
++    val rfApSnr: Float = 0f,
++    val rfBandwidth: Int = 0,
++    val rfAvailableBand: Int = 0,
++    val rfTx2gChanSnr: Float = 0f,
++    val rfTx2gGainA: Int = 0,
++    val rfTx2gGainB: Int = 0,
++    val rfTx2gNoise: Int = 0,
++    val rfTx5gChanSnr: Float = 0f,
++    val rfTx5gGainA: Int = 0,
++    val rfTx5gGainB: Int = 0,
++    val rfTx5gNoise: Int = 0,
++    val rfRx2gChanSnr: Float = 0f,
++    val rfRx2gGainA: Int = 0,
++    val rfRx2gGainB: Int = 0,
++    val rfRx2gNoise: Int = 0,
++    val rfRx5gChanSnr: Float = 0f,
++    val rfRx5gGainA: Int = 0,
++    val rfRx5gGainB: Int = 0,
++    val rfRx5gNoise: Int = 0,
+     val timestamp: Long = System.currentTimeMillis(),
+ ) {
+     fun toJson(): JSONObject = JSONObject().apply {
+@@ -91,6 +113,27 @@ data class TelemetryData(
+         put("btnRTH", btnRTH)
+         put("btnC1", btnC1)
+         put("btnC2", btnC2)
++        put("rfFreq", rfFreq)
++        put("rfMcs", rfMcs)
++        put("rfApSnr", rfApSnr)
++        put("rfBandwidth", rfBandwidth)
++        put("rfAvailableBand", rfAvailableBand)
++        put("rfTx2gChanSnr", rfTx2gChanSnr)
++        put("rfTx2gGainA", rfTx2gGainA)
++        put("rfTx2gGainB", rfTx2gGainB)
++        put("rfTx2gNoise", rfTx2gNoise)
++        put("rfTx5gChanSnr", rfTx5gChanSnr)
++        put("rfTx5gGainA", rfTx5gGainA)
++        put("rfTx5gGainB", rfTx5gGainB)
++        put("rfTx5gNoise", rfTx5gNoise)
++        put("rfRx2gChanSnr", rfRx2gChanSnr)
++        put("rfRx2gGainA", rfRx2gGainA)
++        put("rfRx2gGainB", rfRx2gGainB)
++        put("rfRx2gNoise", rfRx2gNoise)
++        put("rfRx5gChanSnr", rfRx5gChanSnr)
++        put("rfRx5gGainA", rfRx5gGainA)
++        put("rfRx5gGainB", rfRx5gGainB)
++        put("rfRx5gNoise", rfRx5gNoise)
+         put("timestamp", timestamp)
+     }
+ }
+@@ -114,6 +157,29 @@ object TelemetryParser {
+     @Volatile private var btnC1: Boolean = false
+     @Volatile private var btnC2: Boolean = false
+ 
++    // RF real-time parameters (5913 / 0x1719 FpvRevFreqParams)
++    @Volatile private var rfFreq: Int = 0
++    @Volatile private var rfMcs: Int = 0
++    @Volatile private var rfApSnr: Float = 0f
++    @Volatile private var rfBandwidth: Int = 0
++    @Volatile private var rfAvailableBand: Int = 0
++    @Volatile private var rfTx2gChanSnr: Float = 0f
++    @Volatile private var rfTx2gGainA: Int = 0
++    @Volatile private var rfTx2gGainB: Int = 0
++    @Volatile private var rfTx2gNoise: Int = 0
++    @Volatile private var rfTx5gChanSnr: Float = 0f
++    @Volatile private var rfTx5gGainA: Int = 0
++    @Volatile private var rfTx5gGainB: Int = 0
++    @Volatile private var rfTx5gNoise: Int = 0
++    @Volatile private var rfRx2gChanSnr: Float = 0f
++    @Volatile private var rfRx2gGainA: Int = 0
++    @Volatile private var rfRx2gGainB: Int = 0
++    @Volatile private var rfRx2gNoise: Int = 0
++    @Volatile private var rfRx5gChanSnr: Float = 0f
++    @Volatile private var rfRx5gGainA: Int = 0
++    @Volatile private var rfRx5gGainB: Int = 0
++    @Volatile private var rfRx5gNoise: Int = 0
++
+     private var logCount = 0
+     private var rcLogCount = 0
+ 
+@@ -151,6 +217,12 @@ object TelemetryParser {
+                     0x1131 -> parseRemoterBattery(payload, dataStart, dataLen)
+                     0x1133 -> parseRemoterState(payload, dataStart, dataLen)
+                 }
++                0x16, 0x18, 0x31 -> when (cmdShort) {
++                    0x1719 -> parseFreqParams(payload, dataStart, dataLen)
++                }
++                else -> when (cmdShort) {
++                    0x1719 -> parseFreqParams(payload, dataStart, dataLen)
++                }
+             }
+         } catch (e: Exception) {
+             if (logCount < 30) {
+@@ -199,6 +271,27 @@ object TelemetryParser {
+             btnRTH = btnRTH,
+             btnC1 = btnC1,
+             btnC2 = btnC2,
++            rfFreq = rfFreq,
++            rfMcs = rfMcs,
++            rfApSnr = rfApSnr,
++            rfBandwidth = rfBandwidth,
++            rfAvailableBand = rfAvailableBand,
++            rfTx2gChanSnr = rfTx2gChanSnr,
++            rfTx2gGainA = rfTx2gGainA,
++            rfTx2gGainB = rfTx2gGainB,
++            rfTx2gNoise = rfTx2gNoise,
++            rfTx5gChanSnr = rfTx5gChanSnr,
++            rfTx5gGainA = rfTx5gGainA,
++            rfTx5gGainB = rfTx5gGainB,
++            rfTx5gNoise = rfTx5gNoise,
++            rfRx2gChanSnr = rfRx2gChanSnr,
++            rfRx2gGainA = rfRx2gGainA,
++            rfRx2gGainB = rfRx2gGainB,
++            rfRx2gNoise = rfRx2gNoise,
++            rfRx5gChanSnr = rfRx5gChanSnr,
++            rfRx5gGainA = rfRx5gGainA,
++            rfRx5gGainB = rfRx5gGainB,
++            rfRx5gNoise = rfRx5gNoise,
+         )
+ 
+         latest = tel
+@@ -286,6 +379,71 @@ object TelemetryParser {
+         }
+     }
+ 
++    /**
++     * FpvRevFreqParams (5913 / 0x1719) ÔÇö Õ░äÚóæÕ«×µùÂÕÀÑõ¢£ÕÅéµò░.
++     * FE type 0x16 / 0x18 / 0x31, short 0x1719.
++     */
++    private fun parseFreqParams(payload: ByteArray, i: Int, dataLen: Int) {
++        if (dataLen < 28) return
++        rfFreq = readUShortLE(payload, i + 1)
++        rfMcs = (payload[i + 3].toInt() and 0xFF) - 2
++        val rawApSnr = readUShortLE(payload, i + 4)
++        rfApSnr = if (rawApSnr > 0) Math.round(10.0 * Math.log10(rawApSnr / 36.0) * 100.0).toFloat() / 100f else 0f
++        rfBandwidth = payload[i + 6].toInt() and 0xFF
++        rfAvailableBand = payload[i + 7].toInt() and 0xFF
++
++        fun calcSnr(raw: Int): Float =
++            if (raw > 0) Math.round(10.0 * Math.log10(raw / 512.0) * 100.0).toFloat() / 100f else 0f
++
++        rfTx2gChanSnr = calcSnr(readUShortLE(payload, i + 8))
++        rfTx2gGainA = payload[i + 10].toInt()
++        rfTx2gGainB = payload[i + 11].toInt()
++        rfTx5gChanSnr = calcSnr(readUShortLE(payload, i + 12))
++        rfTx5gGainA = payload[i + 14].toInt()
++        rfTx5gGainB = payload[i + 15].toInt()
++
++        rfRx2gChanSnr = calcSnr(readUShortLE(payload, i + 16))
++        rfRx2gGainA = payload[i + 18].toInt()
++        rfRx2gGainB = payload[i + 19].toInt()
++        rfRx5gChanSnr = calcSnr(readUShortLE(payload, i + 20))
++        rfRx5gGainA = payload[i + 22].toInt()
++        rfRx5gGainB = payload[i + 23].toInt()
++
++        rfRx2gNoise = -payload[i + 24].toInt()
++        rfRx5gNoise = -payload[i + 25].toInt()
++        rfTx2gNoise = -payload[i + 26].toInt()
++        rfTx5gNoise = -payload[i + 27].toInt()
++
++        latest = latest.copy(
++            rfFreq = rfFreq,
++            rfMcs = rfMcs,
++            rfApSnr = rfApSnr,
++            rfBandwidth = rfBandwidth,
++            rfAvailableBand = rfAvailableBand,
++            rfTx2gChanSnr = rfTx2gChanSnr,
++            rfTx2gGainA = rfTx2gGainA,
++            rfTx2gGainB = rfTx2gGainB,
++            rfTx2gNoise = rfTx2gNoise,
++            rfTx5gChanSnr = rfTx5gChanSnr,
++            rfTx5gGainA = rfTx5gGainA,
++            rfTx5gGainB = rfTx5gGainB,
++            rfTx5gNoise = rfTx5gNoise,
++            rfRx2gChanSnr = rfRx2gChanSnr,
++            rfRx2gGainA = rfRx2gGainA,
++            rfRx2gGainB = rfRx2gGainB,
++            rfRx2gNoise = rfRx2gNoise,
++            rfRx5gChanSnr = rfRx5gChanSnr,
++            rfRx5gGainA = rfRx5gGainA,
++            rfRx5gGainB = rfRx5gGainB,
++            rfRx5gNoise = rfRx5gNoise,
++            timestamp = System.currentTimeMillis(),
++        )
++
++        Log.i("[Telemetry] RF params (5913): freq=${rfFreq}MHz mcs=$rfMcs bw=${rfBandwidth}MHz apSnr=${rfApSnr}dB " +
++            "tx2g=${rfTx2gChanSnr}dB/${rfTx2gNoise}dBm tx5g=${rfTx5gChanSnr}dB/${rfTx5gNoise}dBm " +
++            "rx2g=${rfRx2gChanSnr}dB/${rfRx2gNoise}dBm rx5g=${rfRx5gChanSnr}dB/${rfRx5gNoise}dBm")
++    }
++
+     // === Binary helpers ===
+ 
+     private fun readUShortLE(a: ByteArray, o: Int): Int =
+diff --git a/app/src/main/java/com/potensic/proxy/WebServer.kt b/app/src/main/java/com/potensic/proxy/WebServer.kt
+index 46aef9c..2031ee7 100644
+--- a/app/src/main/java/com/potensic/proxy/WebServer.kt
++++ b/app/src/main/java/com/potensic/proxy/WebServer.kt
+@@ -3,6 +3,7 @@ package com.potensic.proxy
+ import io.ktor.server.application.*
+ import io.ktor.server.cio.*
+ import io.ktor.server.engine.*
++import io.ktor.server.request.*
+ import io.ktor.server.response.*
+ import io.ktor.server.routing.*
+ import io.ktor.server.websocket.*
+@@ -36,6 +37,7 @@ class WebServer(
+ ) {
+     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
+     private val wsClients = CopyOnWriteArrayList<DefaultWebSocketSession>()
++    private val usbWsClients = CopyOnWriteArrayList<DefaultWebSocketSession>()
+ 
+     // Current joystick state (updated by WebSocket clients)
+     @Volatile var throttle: Short = 0
+@@ -57,11 +59,7 @@ class WebServer(
+                     if (html != null) {
+                         call.respondBytes(html, ContentType.Text.Html)
+                     } else {
+-                        call.respondText(
+-                            "Potensic Proxy - TAF ÔÇö web UI not found",
+-                            ContentType.Text.Plain,
+-                            HttpStatusCode.NotFound,
+-                        )
++                        call.respondText("Potensic Proxy v0.1 ÔÇö web UI not found", ContentType.Text.Plain)
+                     }
+                     Log.d("[WebServer] GET / served")
+                 }
+@@ -75,39 +73,114 @@ class WebServer(
+                     }
+                 }
+ 
+-                // Serve Vite production assets embedded in app/src/main/assets/web/assets/.
+-                // The generated index.html references these as absolute /assets/... URLs.
++                // Serve static assets generated by Vite (CSS, JS, SVG, Fonts, etc.)
+                 get("/assets/{fileName...}") {
+-                    val fileName = call.parameters.getAll("fileName")
+-                        ?.joinToString("/")
+-                        ?.takeIf { it.isNotBlank() && !it.contains("..") }
+-
+-                    if (fileName == null) {
+-                        call.respond(HttpStatusCode.BadRequest)
+-                        return@get
++                    val fileName = call.parameters.getAll("fileName")?.joinToString("/") ?: ""
++                    val bytes = assetLoader("web/assets/$fileName")
++                    if (bytes != null) {
++                        val contentType = when {
++                            fileName.endsWith(".js") -> ContentType.parse("application/javascript")
++                            fileName.endsWith(".css") -> ContentType.Text.CSS
++                            fileName.endsWith(".svg") -> ContentType.parse("image/svg+xml")
++                            fileName.endsWith(".png") -> ContentType.Image.PNG
++                            fileName.endsWith(".jpg") || fileName.endsWith(".jpeg") -> ContentType.Image.JPEG
++                            fileName.endsWith(".woff2") -> ContentType.parse("font/woff2")
++                            fileName.endsWith(".woff") -> ContentType.parse("font/woff")
++                            fileName.endsWith(".ttf") -> ContentType.parse("font/ttf")
++                            else -> ContentType.Application.OctetStream
++                        }
++                        call.respondBytes(bytes, contentType)
++                    } else {
++                        call.respond(HttpStatusCode.NotFound)
+                     }
++                }
+ 
+-                    val assetPath = "web/assets/$fileName"
+-                    val data = assetLoader(assetPath)
+-                    if (data == null) {
+-                        Log.w("[WebServer] Static asset not found: $assetPath")
++                // Serve offline Vue 3 runtime
++                get("/vue.global.prod.js") {
++                    val js = assetLoader("web/vue.global.prod.js")
++                    if (js != null) {
++                        call.respondBytes(js, ContentType.parse("application/javascript"))
++                    } else {
++                        call.respond(HttpStatusCode.NotFound)
++                    }
++                }
++                get("/static/vue.global.prod.js") {
++                    val js = assetLoader("web/vue.global.prod.js")
++                    if (js != null) {
++                        call.respondBytes(js, ContentType.parse("application/javascript"))
++                    } else {
+                         call.respond(HttpStatusCode.NotFound)
+-                        return@get
+                     }
+-
+-                    call.respondBytes(data, contentTypeForAsset(fileName))
+                 }
+-
+-                // Keep root-level Vite/static files addressable as well.
+                 get("/vite.svg") {
+-                    val data = assetLoader("web/vite.svg")
+-                    if (data != null) {
+-                        call.respondBytes(data, ContentType.parse("image/svg+xml"))
++                    val svg = assetLoader("web/vite.svg")
++                    if (svg != null) {
++                        call.respondBytes(svg, ContentType.parse("image/svg+xml"))
+                     } else {
+                         call.respond(HttpStatusCode.NotFound)
+                     }
+                 }
+ 
++                // USB WebSocket passthrough (bidirectional)
++                webSocket("/ws/usb") {
++                    usbWsClients.add(this)
++                    Log.i("[WebServer] USB WebSocket client connected (total: ${usbWsClients.size})")
++                    try {
++                        for (frame in incoming) {
++                            when (frame) {
++                                is Frame.Binary -> {
++                                    val bytes = frame.readBytes()
++                                    ProxyService.instance?.sendDirectAny(bytes)
++                                }
++                                is Frame.Text -> {
++                                    val text = frame.readText().trim()
++                                    try {
++                                        val bytes = if (text.startsWith("{")) {
++                                            val json = JSONObject(text)
++                                            DroneProtocol.hexToBytes(json.getString("hex"))
++                                        } else {
++                                            DroneProtocol.hexToBytes(text)
++                                        }
++                                        ProxyService.instance?.sendDirectAny(bytes)
++                                    } catch (e: Exception) {
++                                        Log.e("[WebServer] /ws/usb parse error: ${e.message}")
++                                    }
++                                }
++                                else -> {}
++                            }
++                        }
++                    } finally {
++                        usbWsClients.remove(this)
++                        Log.i("[WebServer] USB WebSocket client disconnected")
++                    }
++                }
++
++                // OPTIONS preflight for all /api endpoints
++                options("/api/{tail...}") {
++                    call.response.header("Access-Control-Allow-Origin", "*")
++                    call.response.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
++                    call.response.header("Access-Control-Allow-Headers", "*")
++                    call.respond(HttpStatusCode.OK)
++                }
++
++                // POST raw packet or hex to USB
++                post("/api/usb/send") {
++                    call.response.header("Access-Control-Allow-Origin", "*")
++                    val text = call.receiveText().trim()
++                    try {
++                        val bytes = if (text.startsWith("{")) {
++                            val json = JSONObject(text)
++                            DroneProtocol.hexToBytes(json.getString("hex"))
++                        } else {
++                            DroneProtocol.hexToBytes(text)
++                        }
++                        ProxyService.instance?.sendDirectAny(bytes)
++                        call.respondText("""{"success":true,"sentBytes":${bytes.size}}""", ContentType.Application.Json)
++                    } catch (e: Exception) {
++                        call.respondText("""{"success":false,"error":"${e.message}"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
++                    }
++                }
++
+                 // H265 Annex B stream (for ffplay or VLC)
+                 // Usage: ffplay -f hevc http://10.8.0.31:9090/api/video/h265
+                 get("/api/video/h265") {
+@@ -197,6 +270,12 @@ class WebServer(
+                 // MJPEG stream (decoded by Android MediaCodec hardware)
+                 get("/api/video/mjpeg") {
+                     Log.i("[WebServer] GET /api/video/mjpeg ÔÇö starting MJPEG stream")
++                    call.response.header("Access-Control-Allow-Origin", "*")
++                    call.response.header("Cache-Control", "no-cache, no-store, must-revalidate")
++                    // If no frame yet, auto-kickstart video activation
++                    if (videoDecoder.lastJpeg == null) {
++                        ProxyService.instance?.activateLiveView()
++                    }
+                     call.respondBytesWriter(contentType = ContentType.parse("multipart/x-mixed-replace; boundary=frame")) {
+                         val boundary = "--frame\r\n"
+                         var framesSent = 0
+@@ -226,10 +305,13 @@ class WebServer(
+ 
+                 // Single JPEG snapshot
+                 get("/api/video/snapshot") {
++                    call.response.header("Access-Control-Allow-Origin", "*")
++                    call.response.header("Cache-Control", "no-cache, no-store, must-revalidate")
+                     val jpeg = videoDecoder.lastJpeg
+                     if (jpeg != null) {
+                         call.respondBytes(jpeg, ContentType.Image.JPEG)
+                     } else {
++                        ProxyService.instance?.activateLiveView()
+                         call.respondText("No frame available", status = HttpStatusCode.ServiceUnavailable)
+                     }
+                 }
+@@ -298,6 +380,33 @@ class WebServer(
+                     ProxyService.instance?.sendAny(DroneProtocol.buildToggleRecord())
+                     call.respondText("""{"cmd":"record"}""", ContentType.Application.Json)
+                 }
++                // RF probe control (CMD 5656 / 0x1618 FpvReqFreqParams)
++                post("/api/cmd/rf_probe") {
++                    val enable = call.request.queryParameters["enable"]?.toBooleanStrictOrNull() ?: true
++                    Log.i("[WebServer] POST /api/cmd/rf_probe (enable=$enable)")
++                    val packet = DroneProtocol.buildRequestFreqParams(enable)
++                    ProxyService.instance?.sendDirectAny(packet)
++                    val json = JSONObject().apply {
++                        put("cmd", "rf_probe")
++                        put("enable", enable)
++                        put("sent", true)
++                        put("size", packet.size)
++                    }
++                    call.respondText(json.toString(), ContentType.Application.Json)
++                }
++                post("/api/rf/probe") {
++                    val enable = call.request.queryParameters["enable"]?.toBooleanStrictOrNull() ?: true
++                    Log.i("[WebServer] POST /api/rf/probe (enable=$enable)")
++                    val packet = DroneProtocol.buildRequestFreqParams(enable)
++                    ProxyService.instance?.sendDirectAny(packet)
++                    val json = JSONObject().apply {
++                        put("cmd", "rf_probe")
++                        put("enable", enable)
++                        put("sent", true)
++                        put("size", packet.size)
++                    }
++                    call.respondText(json.toString(), ContentType.Application.Json)
++                }
+ 
+                 // Send raw hex packet to drone
+                 post("/api/cmd/raw/{hex}") {
+@@ -308,8 +417,17 @@ class WebServer(
+                     call.respondText("""{"sent":true,"size":${bytes.size}}""", ContentType.Application.Json)
+                 }
+ 
++                // Activate LiveView transmission
++                post("/api/video/activate") {
++                    call.response.header("Access-Control-Allow-Origin", "*")
++                    Log.i("[WebServer] POST /api/video/activate")
++                    ProxyService.instance?.activateLiveView()
++                    call.respondText("""{"success":true,"activated":true}""", ContentType.Application.Json)
++                }
++
+                 // Request IDR frame from drone
+                 post("/api/video/request-idr") {
++                    call.response.header("Access-Control-Allow-Origin", "*")
+                     Log.i("[WebServer] POST /api/video/request-idr")
+                     val idrCmd = DroneProtocol.buildIDRRequest()
+                     ProxyService.instance?.sendDirectAny(idrCmd)
+@@ -318,10 +436,14 @@ class WebServer(
+ 
+                 // Video stats
+                 get("/api/video/stats") {
++                    call.response.header("Access-Control-Allow-Origin", "*")
+                     val json = JSONObject().apply {
+                         put("framesExtracted", videoExtractor.framesExtracted.get())
+                         put("iFrames", videoExtractor.iFrames.get())
+                         put("pFrames", videoExtractor.pFrames.get())
++                        put("decodedFrames", videoDecoder.framesDecoded.get())
++                        put("hasJpeg", videoDecoder.lastJpeg != null)
++                        put("lastJpegMs", videoDecoder.lastJpegTime)
+                         put("width", videoExtractor.lastWidth)
+                         put("height", videoExtractor.lastHeight)
+                         put("queueSize", videoExtractor.nalQueue.size)
+@@ -332,6 +454,7 @@ class WebServer(
+ 
+                 // Status
+                 get("/api/status") {
++                    call.response.header("Access-Control-Allow-Origin", "*")
+                     val json = JSONObject().apply {
+                         put("connected", usbManager.isConnected || (ProxyService.instance?.wifiTransport?.isConnected == true))
+                         put("mode", if (ProxyService.instance?.wifiTransport?.isConnected == true) "wifi" else if (usbManager.isConnected) "usb" else "none")
+@@ -342,6 +465,17 @@ class WebServer(
+                         put("lastSendMs", usbManager.lastSendTime)
+                         put("lastRecvMs", usbManager.lastRecvTime)
+                         put("wsClients", wsClients.size)
++                        put("usbWsClients", usbWsClients.size)
++                        put("tunnel", JSONObject().apply {
++                            put("status", ProxyService.instance?.reverseTunnelClient?.status ?: "not_initialized")
++                            put("usbStatus", ProxyService.instance?.reverseTunnelClient?.usbStatus ?: "not_initialized")
++                            put("usbPacketsSent", ProxyService.instance?.reverseTunnelClient?.usbPacketsSentToServer ?: 0)
++                            put("usbBytesSent", ProxyService.instance?.reverseTunnelClient?.usbBytesSentToServer ?: 0)
++                            put("usbPacketsRecv", ProxyService.instance?.reverseTunnelClient?.usbPacketsRecvFromServer ?: 0)
++                            put("usbBytesRecv", ProxyService.instance?.reverseTunnelClient?.usbBytesRecvFromServer ?: 0)
++                            put("server", "${TunnelConfig.DEFAULT_HOST}:${TunnelConfig.DEFAULT_TUNNEL_PORT}")
++                            put("publicWeb", "http://${TunnelConfig.DEFAULT_HOST}:19090")
++                        })
+                         put("joystick", JSONObject().apply {
+                             put("throttle", throttle.toInt())
+                             put("yaw", yaw.toInt())
+@@ -512,6 +646,19 @@ class WebServer(
+         }
+     }
+ 
++    /**
++     * Broadcast raw USB data to all connected USB WebSocket clients.
++     */
++    suspend fun broadcastUsbData(data: ByteArray) {
++        if (usbWsClients.isEmpty()) return
++        val frame = Frame.Binary(true, data)
++        usbWsClients.forEach { session ->
++            try {
++                session.send(frame)
++            } catch (_: Exception) {}
++        }
++    }
++
+     /**
+      * Check if a byte array contains a H265 NAL unit of a specific type.
+      */
+@@ -524,25 +671,11 @@ class WebServer(
+         return false
+     }
+ 
+-    private fun contentTypeForAsset(path: String): ContentType = when {
+-        path.endsWith(".js", ignoreCase = true) -> ContentType.parse("application/javascript")
+-        path.endsWith(".css", ignoreCase = true) -> ContentType.Text.CSS
+-        path.endsWith(".json", ignoreCase = true) -> ContentType.Application.Json
+-        path.endsWith(".svg", ignoreCase = true) -> ContentType.parse("image/svg+xml")
+-        path.endsWith(".png", ignoreCase = true) -> ContentType.Image.PNG
+-        path.endsWith(".jpg", ignoreCase = true) || path.endsWith(".jpeg", ignoreCase = true) -> ContentType.Image.JPEG
+-        path.endsWith(".webp", ignoreCase = true) -> ContentType.parse("image/webp")
+-        path.endsWith(".woff", ignoreCase = true) -> ContentType.parse("font/woff")
+-        path.endsWith(".woff2", ignoreCase = true) -> ContentType.parse("font/woff2")
+-        path.endsWith(".ttf", ignoreCase = true) -> ContentType.parse("font/ttf")
+-        path.endsWith(".map", ignoreCase = true) -> ContentType.Application.Json
+-        else -> ContentType.Application.OctetStream
+-    }
+-
+     fun stop() {
+         server?.stop(500, 1000)
+         server = null
+         wsClients.clear()
++        usbWsClients.clear()
+         Log.i("[WebServer] Stopped")
+     }
+ }
+diff --git a/webui/src/components/cockpit/VideoPlayer.vue b/webui/src/components/cockpit/VideoPlayer.vue
+index aeaa205..c3f274a 100644
+--- a/webui/src/components/cockpit/VideoPlayer.vue
++++ b/webui/src/components/cockpit/VideoPlayer.vue
+@@ -21,53 +21,53 @@
+       <!-- Placeholder / Waiting Screen with Diagnostics -->
+       <div v-if="!hasFrame" class="video-placeholder">
+         <div class="placeholder-icon">­ƒÜü</div>
+-        <div class="placeholder-title">Waiting for drone video stream</div>
++        <div class="placeholder-title">þ¡ëÕ¥àµùáõ║║µ£║ÞºåÚóæÕø¥õ╝áþö╗ÚØó</div>
+         <div class="placeholder-desc">
+-          Currently using direct frontend USB passthrough mode.
+-          If the aircraft is powered on and paired, click Activate Stream below to send the initialization sequence.
++          Õ¢ôÕëìÕñäõ║Äþ║»Õëìþ½» USB ÚÇÅõ╝áþø┤Þ┐×µ¿íÕ╝ÅÒÇé
++          ÞïÑÚú×ÞíîÕÖ¿ÕÀ▓Õ╝Çµ£║õ©öÕ»╣ÚóæµêÉÕèƒ´╝îÞ»Àþé╣Õç╗õ©ïµû╣ÒÇîµ┐Çµ┤╗µÄ¿µÁüÒÇìÕÅæÚÇüÕ«ÿµû╣ÕöñÚåÆÕ║ÅÕêùÒÇé
+         </div>
+ 
+         <!-- Real-time Diagnostics Checklist -->
+         <div class="diag-checklist">
+           <div class="diag-item">
+-            <span class="diag-label">USB Passthrough Channel (WebSocket):</span>
++            <span class="diag-label">USB ÚÇÅõ╝áÚÇÜÚüô (WebSocket):</span>
+             <span :class="store.connection.wsConnected ? 'diag-ok' : 'diag-warn'">
+-              {{ store.connection.wsConnected ? 'Ô£ô Ready' : 'Ô£ù Not Connected' }}
++              {{ store.connection.wsConnected ? 'Ô£ô Õ«×µùÂÕ░▒þ╗¬' : 'Ô£ù µ£¬Þ┐×µÄÑ' }}
+             </span>
+           </div>
+           <div class="diag-item">
+-            <span class="diag-label">0x06 Video Frame Extraction (FE/w42):</span>
++            <span class="diag-label">0x06 ÞºåÚóæÕ©ºµÅÉÕÅû (FE/w42):</span>
+             <span :class="videoStats.framesExtracted > 0 ? 'diag-ok' : 'diag-muted'">
+-              {{ videoStats.framesExtracted }} frames (I: {{ videoStats.iFrames }} / P: {{ videoStats.pFrames }})
++              {{ videoStats.framesExtracted }} Õ©º (I: {{ videoStats.iFrames }} / P: {{ videoStats.pFrames }})
+               {{ videoStats.detectedCodec !== 'unknown' ? `[${videoStats.detectedCodec.toUpperCase()}]` : '' }}
+             </span>
+           </div>
+           <div class="diag-item">
+-            <span class="diag-label">Browser Hardware Decode Support (WebCodecs):</span>
++            <span class="diag-label">µÁÅÞºêÕÖ¿þí¼Þºúµö»µîü (WebCodecs):</span>
+             <span :class="codecSupportOk ? 'diag-ok' : 'diag-warn'">
+               {{ codecSupportText }}
+             </span>
+           </div>
+           <div class="diag-item" v-if="decoderStats.framesDecoded > 0 || decoderStats.droppedFrames > 0">
+-            <span class="diag-label">Decoder Status:</span>
++            <span class="diag-label">ÞºúþáüÕÖ¿Õ«×µùÂþèÂµÇü:</span>
+             <span :class="decoderStats.framesDecoded > 0 ? 'diag-ok' : 'diag-warn'">
+-              Decoded {{ decoderStats.framesDecoded }} frames (dropped: {{ decoderStats.droppedFrames }})
++              ÕÀ▓Þºú {{ decoderStats.framesDecoded }} Õ©º (õ©óÕ╝â: {{ decoderStats.droppedFrames }})
+             </span>
+           </div>
+         </div>
+ 
+         <div class="placeholder-actions">
+-          <button class="taf-btn taf-btn--primary" @click="() => activateLiveView(true)">
+-            ÔÜí Activate Stream (H.265)
++          <button class="action-btn primary" @click="() => activateLiveView(true)">
++            ÔÜí µ┐Çµ┤╗µÄ¿µÁü (H.265 Ú½ÿµ©à)
+           </button>
+-          <button class="taf-btn taf-btn--success" @click="() => activateLiveView(false)">
+-            ÔÜí Activate Stream (H.264 Compatible)
++          <button class="action-btn success" @click="() => activateLiveView(false)">
++            ÔÜí µ┐Çµ┤╗µÄ¿µÁü (H.264 Õà╝Õ«╣)
+           </button>
+-          <button class="taf-btn" @click="requestIdr">
+-            ­ƒöä Request Keyframe (IDR)
++          <button class="action-btn" @click="requestIdr">
++            ­ƒöä Þ»Àµ▒éÕà│Úö«Õ©º (IDR)
+           </button>
+-          <button class="taf-btn" @click="toggleNextMode">
+-            ­ƒöÇ Switch Mode (Current: {{ mode.toUpperCase() }})
++          <button class="action-btn" @click="toggleNextMode">
++            ­ƒöÇ Õêçµìóµ¿íÕ╝Å (Õ¢ôÕëì: {{ mode.toUpperCase() }})
+           </button>
+         </div>
+       </div>
+@@ -76,14 +76,14 @@
+       <div class="video-osd">
+         <div class="osd-left">
+           <span class="osd-tag" :class="hasFrame ? 'live' : 'waiting'">
+-            {{ hasFrame ? 'ÔùÅ Live Video' : 'Ôùï Waiting for Stream' }}
++            {{ hasFrame ? 'ÔùÅ Õ«×µùÂþö╗ÚØó' : 'Ôùï þ¡ëÕ¥àµÄ¿µÁü' }}
+           </span>
+           <span
+             class="osd-tag mode-tag"
+             @click="toggleNextMode"
+-            :title="'Click to change render mode (Current: ' + mode.toUpperCase() + ')'"
++            :title="'þé╣Õç╗Õêçµìóµ©▓µƒôµ¿íÕ╝Å (Õ¢ôÕëì: ' + mode.toUpperCase() + ')'"
+           >
+-            Render: {{ mode.toUpperCase() }}
++            µ©▓µƒô: {{ mode.toUpperCase() }}
+           </span>
+           <span v-if="resolution" class="osd-tag">
+             {{ resolution }}
+@@ -92,7 +92,7 @@
+             {{ fps }} FPS
+           </span>
+           <span v-if="hasFrame && mode === 'webcodecs'" class="osd-tag highlight-tag">
+-            {{ (decoderStats.codecType || 'h265').toUpperCase() }} HW Decode
++            {{ (decoderStats.codecType || 'h265').toUpperCase() }} þí¼Þºú
+           </span>
+           <span v-if="hasFrame && decoderStats.framesDecoded > 0" class="osd-tag">
+             {{ decoderStats.framesDecoded }} Õ©º
+@@ -100,20 +100,20 @@
+         </div>
+ 
+         <div class="osd-right">
+-          <button class="osd-action-btn" @click="() => activateLiveView(true)" title="Send full initialization sequence for H.265">
+-            ÔÜí H.265 Stream
++          <button class="osd-action-btn" @click="() => activateLiveView(true)" title="ÕÅæÚÇüÕà¿ÕÑùÕêØÕºïÕîûÕ║ÅÕêùµ┐Çµ┤╗ H.265">
++            ÔÜí H.265µÄ¿µÁü
+           </button>
+-          <button class="osd-action-btn success" @click="() => activateLiveView(false)" title="Send full initialization sequence for H.264 compatibility">
+-            ÔÜí H.264 Stream
++          <button class="osd-action-btn success" @click="() => activateLiveView(false)" title="ÕÅæÚÇüÕà¿ÕÑùÕêØÕºïÕîûÕ║ÅÕêùµ┐Çµ┤╗ H.264 (Õà╝Õ«╣µëÇµ£ëµÁÅÞºêÕÖ¿)">
++            ÔÜí H.264µÄ¿µÁü
+           </button>
+-          <button class="osd-action-btn" @click="requestIdr" title="Request Keyframe (IDR)">
+-            ­ƒöä Request I-Frame
++          <button class="osd-action-btn" @click="requestIdr" title="Þ»Àµ▒éÕà│Úö«Õ©º (IDR)">
++            ­ƒöä Þ»Àµ▒éIÕ©º
+           </button>
+-          <button class="osd-action-btn" @click="toggleFullscreen" title="View video fullscreen">
+-            ÔøÂ Fullscreen
++          <button class="osd-action-btn" @click="toggleFullscreen" title="Õà¿Õ▒ÅµƒÑþ£ïÕø¥õ╝á">
++            ÔøÂ Õà¿Õ▒Å
+           </button>
+           <span class="osd-item">
+-            Battery: {{ store.telemetry.battery }}% ({{ store.telemetry.flightVoltage?.toFixed(1) || '--' }}V)
++            þöÁÚçÅ: {{ store.telemetry.battery }}% ({{ store.telemetry.flightVoltage?.toFixed(1) || '--' }}V)
+           </span>
+         </div>
+       </div>
+@@ -164,17 +164,17 @@ const decoderStats = reactive<VideoPlayerStats>({
+   droppedFrames: 0,
+   width: 0,
+   height: 0,
+-  codec: 'Initializing...',
++  codec: 'ÕêØÕºïÕîûõ©¡...',
+   codecType: 'none',
+   latencyMs: 0
+ })
+ 
+ const codecSupportOk = computed(() => h265Supported.value || h264Supported.value)
+ const codecSupportText = computed(() => {
+-  if (!webCodecsSupported.value) return 'Ô£ù Browser does not support WebCodecs'
++  if (!webCodecsSupported.value) return 'Ô£ù µÁÅÞºêÕÖ¿õ©ìµö»µîü WebCodecs'
+   const items = []
+   if (h265Supported.value) items.push('Ô£ô H.265')
+-  else items.push('Ô£ù H.265 (extension required)')
++  else items.push('Ô£ù H.265(Ú£Çµë®Õ▒ò)')
+   if (h264Supported.value) items.push('Ô£ô H.264')
+   else items.push('Ô£ù H.264')
+   return items.join(' | ')
+@@ -478,6 +478,47 @@ onUnmounted(() => {
+   justify-content: center;
+ }
+ 
++.action-btn {
++  background: rgba(255, 255, 255, 0.08);
++  border: 1px solid rgba(255, 255, 255, 0.2);
++  color: #fff;
++  padding: 8px 16px;
++  border-radius: 6px;
++  cursor: pointer;
++  font-size: 12px;
++  transition: all 0.2s;
++}
++
++.action-btn:hover {
++  background: rgba(255, 255, 255, 0.16);
++  border-color: #00e5ff;
++}
++
++.action-btn.primary {
++  background: #00e5ff;
++  color: #000;
++  font-weight: 700;
++  border-color: #00e5ff;
++}
++
++.action-btn.primary:hover {
++  background: #33ebff;
++  box-shadow: 0 0 14px rgba(0, 229, 255, 0.5);
++}
++
++.action-btn.success {
++  background: #00c853;
++  color: #000;
++  font-weight: 700;
++  border-color: #00c853;
++}
++
++.action-btn.success:hover {
++  background: #00e676;
++  box-shadow: 0 0 14px rgba(0, 200, 83, 0.5);
++}
++
++/* OSD Overlay */
+ .video-osd {
+   position: absolute;
+   top: 10px;
+@@ -502,9 +543,8 @@ onUnmounted(() => {
+ .osd-tag, .osd-item {
+   background: rgba(0, 0, 0, 0.7);
+   backdrop-filter: blur(4px);
+-  min-height: 28px;
+-  padding: 4px 8px;
+-  border-radius: 6px;
++  padding: 3px 8px;
++  border-radius: 4px;
+   border: 1px solid rgba(255, 255, 255, 0.12);
+   color: #ddd;
+ }
+@@ -540,9 +580,8 @@ onUnmounted(() => {
+   background: rgba(0, 0, 0, 0.7);
+   border: 1px solid rgba(0, 229, 255, 0.4);
+   color: #00e5ff;
+-  min-height: 28px;
+-  padding: 4px 8px;
+-  border-radius: 6px;
++  padding: 3px 8px;
++  border-radius: 4px;
+   cursor: pointer;
+   font-size: 11px;
+   font-family: var(--mono);
+@@ -564,5 +603,3 @@ onUnmounted(() => {
+   border-color: #00e676;
+ }
+ </style>
+-
+-
+diff --git a/webui/src/components/usb/PacketMonitor.vue b/webui/src/components/usb/PacketMonitor.vue
+index 67d0273..3d17ea3 100644
+--- a/webui/src/components/usb/PacketMonitor.vue
++++ b/webui/src/components/usb/PacketMonitor.vue
+@@ -5,9 +5,9 @@
+       <!-- Direction & Quick Toggles -->
+       <div class="toolbar-left">
+         <el-radio-group v-model="filterDir" size="small">
+-          <el-radio-button value="all">All</el-radio-button>
+-          <el-radio-button value="rx">RX Receive</el-radio-button>
+-          <el-radio-button value="tx">TX Send</el-radio-button>
++          <el-radio-button value="all">Õà¿Úâ¿</el-radio-button>
++          <el-radio-button value="rx">RX µÄÑµöÂ</el-radio-button>
++          <el-radio-button value="tx">TX ÕÅæÚÇü</el-radio-button>
+         </el-radio-group>
+ 
+         <!-- One-Click Quick Telemetry Filter -->
+@@ -17,16 +17,16 @@
+           size="small"
+           class="quick-filter-btn"
+           @click="hideTelemetry = !hideTelemetry"
+-          :title="hideTelemetry ? 'þé╣Õç╗µüóÕñìµÿ¥þñ║ÚüÑµÁïµò░µì«' : 'þé╣Õç╗Þ┐çµ╗ñµÄëÚ½ÿÚóæFlight TelemetryÒÇüJoystick FeedbackÕÆîÞºåÚóæÕ©º'"
++          :title="hideTelemetry ? 'þé╣Õç╗µüóÕñìµÿ¥þñ║ÚüÑµÁïµò░µì«' : 'þé╣Õç╗Þ┐çµ╗ñµÄëÚ½ÿÚóæÚú×ÞíîÚüÑµÁïÒÇüµæçµØåÕø×õ╝áÕÆîÞºåÚóæÕ©º'"
+         >
+-          {{ hideTelemetry ? '­ƒÜ½ ÕÀ▓Hide Normal Telemetry' : '­ƒæü´©Å Hide Normal Telemetry' }}
++          {{ hideTelemetry ? '­ƒÜ½ ÕÀ▓ÚÜÉÞùÅÕ©©ÞºäÚüÑµÁï' : '­ƒæü´©Å ÚÜÉÞùÅÕ©©ÞºäÚüÑµÁï' }}
+         </el-button>
+ 
+         <!-- Drop Telemetry at Ingestion to protect queue -->
+         <el-tooltip content="Õ╝ÇÕÉ»ÕÉÄÚ½ÿÚóæÚüÑµÁïõ©ìÕ¢òÕàÑÕÄåÕÅ▓ÕêùÞí¿´╝îÚü┐ÕàìÕà│Úö«µîçõ╗ñÞó½Õå▓ÕêÀÞªåþøû" placement="top">
+           <el-checkbox
+             v-model="store.ignoreTelemetryAtIngestion"
+-            label="Queue Flood Protection"
++            label="Úÿ▓ÚÿƒÕêùÕå▓ÕêÀ"
+             size="small"
+             class="ingestion-checkbox"
+           />
+@@ -38,26 +38,26 @@
+         <el-input
+           v-model="searchKeyword"
+           size="small"
+-          placeholder="Search category/summary/HEX..."
++          placeholder="µÉ£þ┤óÕêåþ▒╗/µæÿÞªü/HEX..."
+           style="width: 175px;"
+           clearable
+         />
+-        <el-checkbox v-model="autoScroll" label="Auto Scroll" size="small" />
+-        <el-button size="small" type="danger" plain @click="store.clearPackets()">Clear</el-button>
++        <el-checkbox v-model="autoScroll" label="Þç¬Õè¿µ╗ÜÕ▒Å" size="small" />
++        <el-button size="small" type="danger" plain @click="store.clearPackets()">µ©àÕ▒Å</el-button>
+       </div>
+     </div>
+ 
+     <!-- Category Filter Bar (Row 2) -->
+     <div class="category-filter-bar">
+       <div class="cat-chips">
+-        <span class="cat-label">Type Filter:</span>
++        <span class="cat-label">þ▒╗Õ×ïÞ┐çµ╗ñ:</span>
+         <el-tag
+           :effect="selectedCategory === 'all' ? 'dark' : 'plain'"
+           class="filter-chip"
+           size="small"
+           @click="selectCategory('all')"
+         >
+-          All
++          Õà¿Úâ¿
+         </el-tag>
+         <el-tag
+           v-for="cat in categoryOptions"
+@@ -76,23 +76,23 @@
+       <div class="filter-aux">
+         <el-select
+           v-model="selectedFeType"
+-          placeholder="FE Type"
++          placeholder="FE þ▒╗Õ×ï"
+           clearable
+           size="small"
+           style="width: 135px;"
+         >
+-          <el-option value="all" label="All FE Type" />
+-          <el-option value="0x05" label="FE 0x05 (Camera Response RX)" />
+-          <el-option value="0x15" label="FE 0x15 (Camera Command TX)" />
+-          <el-option value="0x14" label="FE 0x14 (Flight Control Heartbeat TX)" />
+-          <el-option value="0x31" label="FE 0x31 (Flight Controller Response RX)" />
+-          <el-option value="0x16" label="FE 0x16 (RF Video TX)" />
+-          <el-option value="0x17" label="FE 0x17 (Controller Config TX)" />
+-          <el-option value="0x21" label="FE 0x21 (Flight Telemetry RX)" />
+-          <el-option value="0x41" label="FE 0x41 (Controller RC RX)" />
+-          <el-option value="0x06" label="FE 0x06 (Video Stream RX)" />
+-          <el-option value="0x12" label="FE 0x12 (AOA Handshake)" />
+-          <el-option value="raw" label="Non-FE Raw Packet (HFD)" />
++          <el-option value="all" label="Õà¿Úâ¿ FE þ▒╗Õ×ï" />
++          <el-option value="0x05" label="FE 0x05 (þø©µ£║Õø×õ╝á RX)" />
++          <el-option value="0x15" label="FE 0x15 (þø©µ£║µîçõ╗ñ TX)" />
++          <el-option value="0x14" label="FE 0x14 (Úú×µÄºÕ┐âÞÀ│ TX)" />
++          <el-option value="0x31" label="FE 0x31 (Úú×µÄºÕ║öþ¡ö RX)" />
++          <el-option value="0x16" label="FE 0x16 (Õ░äÚóæÕø¥õ╝á TX)" />
++          <el-option value="0x17" label="FE 0x17 (ÚüÑµÄºÚàìþ¢« TX)" />
++          <el-option value="0x21" label="FE 0x21 (Úú×ÞíîÚüÑµÁï RX)" />
++          <el-option value="0x41" label="FE 0x41 (µëïµƒäÚüÑµÄº RX)" />
++          <el-option value="0x06" label="FE 0x06 (ÞºåÚóæÕø¥õ╝á RX)" />
++          <el-option value="0x12" label="FE 0x12 (AOAµÅíµëï)" />
++          <el-option value="raw" label="ÚØ× FE ÕÄƒÕºïÕîà (HFD)" />
+         </el-select>
+ 
+         <span class="stats-text">
+@@ -109,7 +109,7 @@
+           type="primary"
+           @click="resetFilters"
+         >
+-          Reset Filters
++          Úçìþ¢«Þ┐çµ╗ñ
+         </el-button>
+       </div>
+     </div>
+@@ -138,7 +138,7 @@
+           <span class="pkt-summary" :title="p.summary">{{ p.summary }}</span>
+ 
+           <el-button size="small" link type="primary" @click.stop="$emit('loadHex', p.hex)">
+-            Load into Builder
++            Õí½ÕàÑµ×äÚÇáÕÖ¿
+           </el-button>
+         </div>
+ 
+@@ -147,7 +147,7 @@
+           <div v-if="p.details && Object.keys(p.details).length > 0" class="parsed-fields-box">
+             <div class="fields-header">
+               <span class="fields-icon">­ƒôè</span>
+-              <strong>Protocol Field Details:</strong>
++              <strong>ÕìÅÞ««Õ¡ùµ«Áþ▓¥þ╗åÞºúµ×É:</strong>
+             </div>
+             <div class="fields-grid">
+               <div v-for="(val, key) in p.details" :key="key" class="field-item">
+@@ -158,24 +158,24 @@
+           </div>
+ 
+           <div class="hex-section">
+-            <div class="hex-title"><strong>Raw HEX Packet ({{ p.len }} Õ¡ùÞèé):</strong></div>
++            <div class="hex-title"><strong>HEX ÕÄƒÕºïµèÑµûç ({{ p.len }} Õ¡ùÞèé):</strong></div>
+             <div class="hex-dump">{{ ByteUtils.formatHex(p.hex) }}</div>
+           </div>
+ 
+           <div v-if="p.telemetry" class="telemetry-info">
+-            <strong>Flight Telemetry Mapping:</strong> {{ JSON.stringify(p.telemetry) }}
++            <strong>Úú×ÞíîÚüÑµÁïµÿáÕ░ä:</strong> {{ JSON.stringify(p.telemetry) }}
+           </div>
+         </div>
+       </div>
+ 
+       <el-empty
+         v-if="filteredPackets.length === 0"
+-        :description="store.packets.length > 0 ? 'Õ¢ôÕëìÞ┐çµ╗ñµØíõ╗Âµ£¬Õî╣ÚàìÕê░µò░µì«Õîà' : 'Waiting for USB packet stream...'"
++        :description="store.packets.length > 0 ? 'Õ¢ôÕëìÞ┐çµ╗ñµØíõ╗Âµ£¬Õî╣ÚàìÕê░µò░µì«Õîà' : 'þ¡ëÕ¥à USB µèÑµûçµò░µì«µÁü...'"
+         :image-size="80"
+         style="padding: 40px 0;"
+       >
+         <el-button v-if="hasActiveFilter" size="small" type="primary" plain @click="resetFilters">
+-          Show All Data
++          µüóÕñìµÿ¥þñ║Õà¿Úâ¿µò░µì«
+         </el-button>
+       </el-empty>
+     </div>
+@@ -205,24 +205,24 @@ const tableRef = ref<HTMLElement | null>(null)
+ 
+ // Category Options for filter bar
+ const categoryOptions: { value: PacketCategory; label: string; icon: string }[] = [
+-  { value: 'flight_cmd', label: 'Flight Control', icon: 'ÔÜí' },
+-  { value: 'camera', label: 'Camera & Terminal', icon: '­ƒôÀ' },
+-  { value: 'rf_fpv', label: 'RF Video', icon: '­ƒôí' },
+-  { value: 'remoter', label: 'Controller Status', icon: '­ƒÄ«' },
+-  { value: 'telemetry', label: 'Flight Telemetry', icon: '­ƒø½' },
+-  { value: 'rc_sticks', label: 'Joystick Feedback', icon: '­ƒò╣´©Å' },
+-  { value: 'video', label: 'Video Stream', icon: '­ƒô╣' },
+-  { value: 'other', label: 'Other Data', icon: '­ƒôª' }
++  { value: 'flight_cmd', label: 'Úú×µÄºµîçõ╗ñ', icon: 'ÔÜí' },
++  { value: 'camera', label: 'þø©µ£║õ©Äþ╗êþ½»', icon: '­ƒôÀ' },
++  { value: 'rf_fpv', label: 'Õ░äÚóæÕø¥õ╝á', icon: '­ƒôí' },
++  { value: 'remoter', label: 'ÚüÑµÄºÕÖ¿þèÂµÇü', icon: '­ƒÄ«' },
++  { value: 'telemetry', label: 'Úú×ÞíîÚüÑµÁï', icon: '­ƒø½' },
++  { value: 'rc_sticks', label: 'µæçµØåÕø×õ╝á', icon: '­ƒò╣´©Å' },
++  { value: 'video', label: 'ÞºåÚóæµÁü', icon: '­ƒô╣' },
++  { value: 'other', label: 'ÕàÂÕ«âµò░µì«', icon: '­ƒôª' }
+ ]
+ 
+ function getCategoryLabel(cat?: string): string {
+   const found = categoryOptions.find(c => c.value === cat)
+-  return found ? found.label : 'Unknown Type'
++  return found ? found.label : 'µ£¬þƒÑþ▒╗Õ×ï'
+ }
+ 
+ function formatDetailValue(val: any): string {
+-  if (val === true) return 'Yes (True)'
+-  if (val === false) return 'No (False)'
++  if (val === true) return 'µÿ» (True)'
++  if (val === false) return 'ÕÉª (False)'
+   if (val === null || val === undefined) return '--'
+   return String(val)
+ }
+@@ -234,7 +234,7 @@ function getDetailValClass(val: any): string {
+     if (val.includes('ÕÀ▓') || val.includes('µ¡úÕ©©') || val.includes('Õ░▒þ╗¬') || val.includes('Õ╝ÇÕÉ»') || val.includes('PASS')) {
+       return 'val-success'
+     }
+-    if (val.includes('µ£¬') || val.includes('Õ╝éÕ©©') || val.includes('High Interference') || val.includes('ÞºªÕÅæ') || val.includes('Õà│Úù¡')) {
++    if (val.includes('µ£¬') || val.includes('Õ╝éÕ©©') || val.includes('Õ╝║Õ╣▓µë░') || val.includes('ÞºªÕÅæ') || val.includes('Õà│Úù¡')) {
+       return 'val-danger'
+     }
+     if (val.includes('Õ»╣Úóæõ©¡')) {
+@@ -628,5 +628,3 @@ watch(
+   color: var(--cyan);
+ }
+ </style>
+-
+-
+diff --git a/webui/src/protocol/DroneProtocol.ts b/webui/src/protocol/DroneProtocol.ts
+index 6f9c831..f32b791 100644
+--- a/webui/src/protocol/DroneProtocol.ts
++++ b/webui/src/protocol/DroneProtocol.ts
+@@ -6,14 +6,14 @@ export const FE_TYPES: Record<number, string> = {
+   0x05: 'Camera Response (þø©µ£║ÕôìÕ║ö)',
+   0x06: 'H.265 Video Stream (ÞºåÚóæÕø¥õ╝áµÁü)',
+   0x12: 'AOA Handshake (AOAµÅíµëïÕîà)',
+-  0x14: 'Flight / Heartbeat TX (Úú×ÞíîµÄºÕêÂ/Heartbeat)',
++  0x14: 'Flight / Heartbeat TX (Úú×ÞíîµÄºÕêÂ/Õ┐âÞÀ│Õîà)',
+   0x15: 'Camera Command TX (þø©µ£║µÄºÕêÂµîçõ╗ñ)',
+   0x16: 'FPV / RF Command TX (Õø¥õ╝áÕ░äÚóæÞ«¥þ¢«ÚÇÜÚüô)',
+   0x17: 'Remoter Command TX (ÚüÑµÄºÕÖ¿Úàìþ¢«ÚÇÜÚüô)',
+   0x21: 'Flight Telemetry RX (Úú×ÞíîÚüÑµÁï FlightRevGps)',
+-  0x31: 'Flight Cmd Response RX (Flight ControlÕ║öþ¡ö)',
++  0x31: 'Flight Cmd Response RX (Úú×µÄºµîçõ╗ñÕ║öþ¡ö)',
+   0x32: 'GPS Data RX (GPSµò░µì«)',
+-  0x41: 'Remoter Status RX (Controller Status/µîëÚö«/µæçµØå)'
++  0x41: 'Remoter Status RX (ÚüÑµÄºÕÖ¿þèÂµÇü/µîëÚö«/µæçµØå)'
+ }
+ 
+ export const PROTOCOL_HEX = {
+@@ -64,7 +64,7 @@ export const CMD_SHORTS = {
+ }
+ 
+ export const CAMERA_CMDS = {
+-  GET_ALL_PARAMS: 0x01,       // 1 (0x01): ÞÄÀÕÅûAllÕÅéµò░
++  GET_ALL_PARAMS: 0x01,       // 1 (0x01): ÞÄÀÕÅûÕà¿Úâ¿ÕÅéµò░
+   CAMERA_FUNCTION: 0x16,      // 22 (0x16): Þ«¥þ¢«þø©µ£║ÕèƒÞâ¢Õ╝ÇÕà│ (Preview / H265 / Watermark)
+   GET_CAMERA_FUNCTION: 0x15,  // 21 (0x15): ÞÄÀÕÅûþø©µ£║ÕèƒÞâ¢Õ╝ÇÕà│
+   TAKE_PHOTO: 0x51,
+@@ -85,4 +85,3 @@ export const CAMERA_CMDS = {
+   SFR_CHECK_RESULT: 0x77      // 119: SFR µúÇµÁïþ╗ôµ×£
+ }
+ 
+-
+diff --git a/webui/src/protocol/PacketParser.ts b/webui/src/protocol/PacketParser.ts
+index 75ac0e0..6fba3c0 100644
+--- a/webui/src/protocol/PacketParser.ts
++++ b/webui/src/protocol/PacketParser.ts
+@@ -21,7 +21,7 @@ export class PacketParser {
+       feType: null,
+       feTypeName: 'Unknown',
+       category: 'other',
+-      categoryLabel: 'Other Data',
++      categoryLabel: 'ÕàÂÕ«âµò░µì«',
+       summary: '',
+       telemetry: null,
+       expanded: false
+@@ -44,7 +44,7 @@ export class PacketParser {
+       // H.265 Video Stream (0x06)
+       if (feType === 0x06) {
+         res.category = 'video'
+-        res.categoryLabel = 'Video Stream'
++        res.categoryLabel = 'ÞºåÚóæµÁü'
+         const nalType = bytes.length >= 21 ? (bytes[20] & 0x1F) : 0
+         const isKey = [19, 20, 32, 33, 34].includes(nalType)
+         res.summary = `H.265 ÞºåÚóæÕ©º (NALU ${nalType}${isKey ? ' [IDRÕà│Úö«Õ©º]' : ''}, ${payloadLen}B)`
+@@ -178,7 +178,7 @@ export class PacketParser {
+         // FE 0x21: FlightRevRcValue (fu1.java - physical stick positions)
+         if (feType === 0x21 && cmdShort === 0x0211 && bytes.length >= 34) {
+           res.category = 'rc_sticks'
+-          res.categoryLabel = 'Joystick Feedback'
++          res.categoryLabel = 'µæçµØåÕø×õ╝á'
+           const rcThrottle = view.getInt16(22, true)
+           const rcYaw = view.getInt16(24, true)
+           const rcPitch = view.getInt16(26, true)
+@@ -202,7 +202,7 @@ export class PacketParser {
+         // FE 0x41: Remoter Battery & State Frames
+         if (feType === 0x41) {
+           res.category = 'remoter'
+-          res.categoryLabel = 'Controller Status'
++          res.categoryLabel = 'ÚüÑµÄºÕÖ¿þèÂµÇü'
+ 
+           // 0x1130: ÚüÑµÄºÕÖ¿Õ«×µùÂµÄºÕêÂµÁü
+           if (cmdShort === 0x1130 && bytes.length >= 34) {
+@@ -248,11 +248,11 @@ export class PacketParser {
+             res.details = {
+               'Þ┐öÞê¬Úö« (RTH)': btnRTH ? 'µîëõ©ï' : 'µØ¥Õ╝Ç',
+               'Õ¢òÕâÅµîëÚö«': btnRecord ? 'µîëõ©ï' : 'µØ¥Õ╝Ç',
+-              'PhotoµîëÚö«': btnPhoto ? 'µîëõ©ï' : 'µØ¥Õ╝Ç',
++              'µïìþàºµîëÚö«': btnPhoto ? 'µîëõ©ï' : 'µØ¥Õ╝Ç',
+               'ÕÀªµæçµØå (H, V)': `${lh}, ${lv}`,
+               'ÕÅ│µæçµØå (H, V)': `${rh}, ${rv}`
+             }
+-            res.summary = `µëïµƒäµîëÚö«õ©ÄµæçµØå: ÕÀª(${lh},${lv}) ÕÅ│(${rh},${rv})${btnRTH ? ' [RTH]' : ''}${btnRecord ? ' [Õ¢òÕâÅ]' : ''}${btnPhoto ? ' [Photo]' : ''}`
++            res.summary = `µëïµƒäµîëÚö«õ©ÄµæçµØå: ÕÀª(${lh},${lv}) ÕÅ│(${rh},${rv})${btnRTH ? ' [RTH]' : ''}${btnRecord ? ' [Õ¢òÕâÅ]' : ''}${btnPhoto ? ' [µïìþàº]' : ''}`
+             return res
+           }
+           res.summary = `µëïµƒäþèÂµÇüÕôìÕ║ö (Short=0x${cmdShort.toString(16).padStart(4, '0')}, ${payloadLen}B)`
+@@ -262,7 +262,7 @@ export class PacketParser {
+         // === Camera Debug Responses (0x1200 / FE 0x05 / FE 0x15) ===
+         if (cmdShort === CMD_SHORTS.CAMERA || feType === 0x15 || feType === 0x05) {
+           res.category = 'camera'
+-          res.categoryLabel = 'Camera & Terminal'
++          res.categoryLabel = 'þø©µ£║õ©Äþ╗êþ½»'
+           const cmdByte = bytes.length > 22 ? bytes[22] : null
+ 
+           // Camera Terminal Debug Output (CamRevTestDebugInfo, 0x6F / 200)
+@@ -424,7 +424,7 @@ export class PacketParser {
+             } catch (_) {}
+ 
+             res.details = {
+-              'ÚüÑµÄºµëïµƒä': remoterConnected ? 'ÕÀ▓Connect (USBÕ░▒þ╗¬)' : 'µ£¬Connect',
++              'ÚüÑµÄºµëïµƒä': remoterConnected ? 'ÕÀ▓Þ┐×µÄÑ (USBÕ░▒þ╗¬)' : 'µ£¬Þ┐×µÄÑ',
+               'þ®║õ©¡µùáþ║┐': wirelessConnected ? 'ÕÀ▓Õ╗║þ½ï (þ®║õ©¡Úô¥ÞÀ»)' : 'µ£¬Õ╗║þ½ï',
+               'Úú×µÄºÚÇÜõ┐í': flightConnected ? 'ÕÀ▓Þ┐×ÚÇÜ (ÕÅ»µôìµÄº)' : 'µ£¬Þ┐×ÚÇÜ',
+               'õ║æÕÅ░þø©µ£║': cameraConnected ? 'ÕÀ▓Þ┐×ÚÇÜ' : 'µ£¬Þ┐×ÚÇÜ',
+@@ -577,7 +577,7 @@ export class PacketParser {
+         // Flight Controller IMU / Calibration Responses (0x0301)
+         if (cmdShort === CMD_SHORTS.FLIGHT || feType === 0x14 || feType === 0x31) {
+           res.category = 'flight_cmd'
+-          res.categoryLabel = 'Flight Control'
++          res.categoryLabel = 'Úú×µÄºµîçõ╗ñ'
+           const subcmd = bytes.length > 22 ? bytes[22] : null
+           if (subcmd === 23 || subcmd === 6) {
+             try {
+@@ -600,10 +600,10 @@ export class PacketParser {
+ 
+         if (feType === 0x14 || feType === 0x31) {
+           res.category = 'flight_cmd'
+-          res.categoryLabel = 'Flight Control'
++          res.categoryLabel = 'Úú×µÄºµîçõ╗ñ'
+         } else if (feType === 0x15 || feType === 0x05) {
+           res.category = 'camera'
+-          res.categoryLabel = 'Camera & Terminal'
++          res.categoryLabel = 'þø©µ£║õ©Äþ╗êþ½»'
+         } else if (feType === 0x16) {
+           res.category = 'rf_fpv'
+           res.categoryLabel = 'Õ░äÚóæÕø¥õ╝á'
+@@ -612,7 +612,7 @@ export class PacketParser {
+           res.categoryLabel = 'Úú×ÞíîÚüÑµÁï'
+         } else if (feType === 0x41 || feType === 0x17) {
+           res.category = 'remoter'
+-          res.categoryLabel = 'Controller Status'
++          res.categoryLabel = 'ÚüÑµÄºÕÖ¿þèÂµÇü'
+         }
+ 
+         const cmdByte = bytes.length > 22 ? bytes[22] : null
+@@ -628,7 +628,7 @@ export class PacketParser {
+         res.categoryLabel = 'Úú×ÞíîÚüÑµÁï'
+       } else if (feType === 0x41) {
+         res.category = 'remoter'
+-        res.categoryLabel = 'Controller Status'
++        res.categoryLabel = 'ÚüÑµÄºÕÖ¿þèÂµÇü'
+       } else if (feType === 0x12) {
+         res.category = 'other'
+         res.categoryLabel = 'AOAµÅíµëï'
+@@ -671,4 +671,3 @@ export class PacketParser {
+     return res
+   }
+ }
+-
+diff --git a/webui/src/services/DroneControlService.ts b/webui/src/services/DroneControlService.ts
+index b281785..75eabb3 100644
+--- a/webui/src/services/DroneControlService.ts
++++ b/webui/src/services/DroneControlService.ts
+@@ -54,7 +54,7 @@ export class DroneControlService {
+ 
+   static emergencyStop() {
+     const store = useDroneStore()
+-    store.addLog('WARN', 'ÕÅæÚÇüEmergency Stopµîçõ╗ñ (ÚçìÕñì 30 µ¼í)')
++    store.addLog('WARN', 'ÕÅæÚÇüþ┤ºµÇÑµÇÑÕü£µîçõ╗ñ (ÚçìÕñì 30 µ¼í)')
+     const packet = PacketBuilder.buildEmergencyStop()
+     this.sendPacketWithRepeats(packet, 30, 30)
+   }
+@@ -63,13 +63,13 @@ export class DroneControlService {
+ 
+   static takePhoto() {
+     const store = useDroneStore()
+-    store.addLog('INFO', 'ÕÅæÚÇüPhotoµîçõ╗ñ')
++    store.addLog('INFO', 'ÕÅæÚÇüµïìþàºµîçõ╗ñ')
+     this.transport.send(PacketBuilder.buildTakePhoto())
+   }
+ 
+   static toggleRecord() {
+     const store = useDroneStore()
+-    store.addLog('INFO', 'ÕêçµìóRecord Toggle')
++    store.addLog('INFO', 'ÕêçµìóÕ¢òÕâÅÕ╝ÇÕà│')
+     this.transport.send(PacketBuilder.buildToggleRecord())
+   }
+ 
+@@ -320,4 +320,3 @@ export class DroneControlService {
+   }
+ }
+ 
+-
+diff --git a/webui/src/services/UsbTransportService.ts b/webui/src/services/UsbTransportService.ts
+index b11831b..70ae1d7 100644
+--- a/webui/src/services/UsbTransportService.ts
++++ b/webui/src/services/UsbTransportService.ts
+@@ -119,7 +119,7 @@ export class UsbTransportService {
+     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+     const url = `${protocol}//${host}/ws/usb`
+ 
+-    store.addLog('INFO', `µ¡úÕ£¿Connect USB ÚÇÅõ╝áÚÇÜÚüô -> ${url}`)
++    store.addLog('INFO', `µ¡úÕ£¿Þ┐×µÄÑ USB ÚÇÅõ╝áÚÇÜÚüô -> ${url}`)
+ 
+     try {
+       this.ws = new WebSocket(url)
+@@ -259,4 +259,3 @@ export class UsbTransportService {
+     }
+   }
+ }
+-

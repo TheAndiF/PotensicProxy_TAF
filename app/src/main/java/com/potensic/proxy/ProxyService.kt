@@ -1,4 +1,4 @@
-package com.potensic.proxy
+﻿package com.potensic.proxy
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -13,7 +13,7 @@ import org.json.JSONObject
 
 /**
  * Foreground service that bridges:
- *   USB Accessory (drone controller) ↔ WebSocket (remote client)
+ *   USB Accessory (drone controller) Ôåö WebSocket (remote client)
  *
  * Control loop runs at ~50Hz (20ms):
  * 1. Read joystick state from WebServer
@@ -81,7 +81,12 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
-            Log.e("[Service] startForeground failed", e)
+            Log.e("[Service] startForeground failed: ${e.message}")
+            try {
+                startForeground(NOTIFICATION_ID, notification)
+            } catch (e2: Exception) {
+                Log.e("[Service] fallback startForeground failed: ${e2.message}")
+            }
         }
 
         if (!serverStarted) {
@@ -223,7 +228,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     // === UsbAccessoryManager.Listener ===
 
     override fun onConnected() {
-        Log.i("[Service] USB Connected — resetting and starting loops")
+        Log.i("[Service] USB Connected ÔÇö resetting and starting loops")
         videoExtractor.reset()
 
         // Send the EXACT init sequence captured from the official app
@@ -234,8 +239,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                 Log.i("[Service] Init cmd #${i+1}/${initSeq.size} (${cmd.size}B)")
                 delay(50)
             }
-            usbManager.send(DroneProtocol.buildLiveViewParams())
-            Log.i("[Service] Sent LiveViewParams")
+            activateLiveView()
         }
 
         startControlLoop()
@@ -257,7 +261,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     }
 
     override fun onDisconnected() {
-        Log.w("[Service] USB Disconnected — stopping loops")
+        Log.w("[Service] USB Disconnected ÔÇö stopping loops")
         controlJob?.cancel(); controlJob = null
         decoderJob?.cancel(); decoderJob = null
         extractorJob?.cancel(); extractorJob = null
@@ -284,8 +288,12 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     }
 
     override fun onDataReceived(data: ByteArray, length: Int) {
-        // Never drop USB data — dropping causes corrupted frames
-        rawDataQueue.offer(data.copyOf(length))
+        // Never drop USB data ÔÇö dropping causes corrupted frames
+        val copy = data.copyOf(length)
+        rawDataQueue.offer(copy)
+        scope.launch {
+            webServer.broadcastUsbData(copy)
+        }
     }
 
     private fun startExtractorLoop() {
@@ -304,8 +312,33 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     }
 
     /**
+     * Video stream activation helper.
+     * Tells drone camera to start encoding and transmitting H.265 video packets.
+     */
+    fun activateLiveView() {
+        scope.launch {
+            try {
+                Log.i("[Service] Activating LiveView stream...")
+                // CAMERA: LIVEVIEW_START (cmd=0x73, data=0x00 0x64)
+                val liveViewStart = DroneProtocol.hexToBytes("fe000000000000150000000000000009fffd05000012730064")
+                sendDirectAny(liveViewStart)
+                delay(50)
+                // CAMERA: LIVEVIEW_PARAMS (cmd=0xD8, 1080P 5000Kbps)
+                sendDirectAny(DroneProtocol.buildLiveViewParams())
+                delay(50)
+                // CAMERA: REQUEST_IDR (cmd=0xD9)
+                sendDirectAny(DroneProtocol.buildIDRRequest())
+                Log.i("[Service] Sent LiveView activation commands")
+            } catch (e: Exception) {
+                Log.e("[Service] Error activating LiveView: ${e.message}")
+            }
+        }
+    }
+
+    /**
      * Separate decoder thread that consumes NALs from the extractor queue.
      * Runs independently from USB read thread to avoid blocking.
+     * Decodes all sequential NAL units (I and P frames) in stream order.
      */
     private fun startDecoderLoop() {
         if (decoderJob?.isActive == true) return
@@ -314,25 +347,46 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             var statsCounter = 0
             var gotFirstIdr = false
             while (isActive && isAnyConnected) {
-                // Drain queue — grab only the LATEST IDR to minimize latency
-                var latestIdr: VideoExtractor.NalUnit? = null
-                while (true) {
-                    val nal = videoExtractor.nalQueue.poll() ?: break
-                    if (nal.isIFrame) latestIdr = nal
+                // If extractor reset, reset IDR sync
+                if (videoExtractor.framesExtracted.get() == 0) {
+                    gotFirstIdr = false
                 }
 
-                if (latestIdr != null) {
-                    // Start decoder on first frame
-                    if (videoDecoder.framesDecoded.get() == 0 && videoExtractor.lastWidth > 0) {
+                val nal = videoExtractor.nalQueue.poll()
+                if (nal != null) {
+                    // Before the first IDR frame, discard P-frames (cannot be decoded without IDR)
+                    if (!gotFirstIdr && !nal.isIFrame) {
+                        delay(2)
+                        continue
+                    }
+                    if (nal.isIFrame) {
+                        gotFirstIdr = true
+                    }
+
+                    // Start decoder on first frame once resolution is known
+                    val w = if (nal.width > 0) nal.width else videoExtractor.lastWidth
+                    val h = if (nal.height > 0) nal.height else videoExtractor.lastHeight
+                    if (videoDecoder.framesDecoded.get() == 0 && w > 0 && h > 0) {
                         val v = videoExtractor.vps ?: VideoExtractor.FALLBACK_VPS
                         val s = videoExtractor.sps ?: VideoExtractor.FALLBACK_SPS
                         val p = videoExtractor.pps ?: VideoExtractor.FALLBACK_PPS
-                        videoDecoder.start(videoExtractor.lastWidth, videoExtractor.lastHeight, v, s, p)
+                        videoDecoder.start(w, h, v, s, p)
                     }
 
-                    gotFirstIdr = true
                     videoDecoder.publishFrame = true
-                    videoDecoder.decode(latestIdr.data, true)
+                    videoDecoder.decode(nal.data, nal.isIFrame)
+
+                    // Low latency backlog prevention: if queue has more than 15 frames (~0.5s),
+                    // skip non-IDR frames to catch up to real-time
+                    if (videoExtractor.nalQueue.size > 15) {
+                        while (videoExtractor.nalQueue.size > 2) {
+                            val skipped = videoExtractor.nalQueue.poll() ?: break
+                            if (skipped.isIFrame) {
+                                videoDecoder.decode(skipped.data, true)
+                                break
+                            }
+                        }
+                    }
 
                     // Broadcast stats periodically
                     if (++statsCounter % 25 == 0) {
@@ -366,6 +420,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             var loopCount = 0L
             var lastIdrRequest = 0L
             var lastHeartbeat = 0L
+            var lastVideoWatchdog = 0L
             val heartbeatPacket = DroneProtocol.buildHeartbeat()
             Log.hex("[Service] Heartbeat packet", heartbeatPacket)
 
@@ -392,10 +447,21 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                         lastHeartbeat = now
                     }
 
-                    // Request IDR every 100ms
-                    if (now - lastIdrRequest > 100) {
+                    // Video watchdog: If no video frames received yet, or stream stalled > 5s,
+                    // automatically kickstart LiveView transmission
+                    if (now - lastVideoWatchdog > 3000) {
+                        lastVideoWatchdog = now
+                        if (videoExtractor.framesExtracted.get() == 0 ||
+                            (videoExtractor.lastFrameTime > 0 && now - videoExtractor.lastFrameTime > 5000)) {
+                            Log.i("[Service] Video watchdog: Drone online but no video, sending LiveView activation")
+                            activateLiveView()
+                        }
+                    }
+
+                    // Periodic IDR request every 2000ms to repair any packet loss artifacts
+                    if (now - lastIdrRequest > 2000) {
                         val idrCmd = DroneProtocol.buildIDRRequest()
-                        sendAny(idrCmd)
+                        sendDirectAny(idrCmd)
                         lastIdrRequest = now
                     }
 
@@ -416,7 +482,6 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             Log.i("[Service] Control loop ended after $loopCount iterations")
         }
     }
-
     // === Notification & WakeLock ===
 
     private fun buildNotification(): Notification {
@@ -453,3 +518,6 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         Log.i("[Service] WakeLock released")
     }
 }
+
+
+
