@@ -57,7 +57,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
         webServer = WebServer(usbManager, videoExtractor, videoDecoder) { path ->
             try {
-                assets.open(path).bufferedReader().readText()
+                assets.open(path).use { it.readBytes() }
             } catch (e: Exception) {
                 Log.e("[Service] Asset load failed: $path", e)
                 null

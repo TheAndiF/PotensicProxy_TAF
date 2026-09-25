@@ -32,7 +32,7 @@ class WebServer(
     private val usbManager: UsbAccessoryManager,
     private val videoExtractor: VideoExtractor,
     private val videoDecoder: VideoDecoder,
-    private val assetLoader: (String) -> String?,
+    private val assetLoader: (String) -> ByteArray?,
 ) {
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
     private val wsClients = CopyOnWriteArrayList<DefaultWebSocketSession>()
@@ -55,11 +55,57 @@ class WebServer(
                 get("/") {
                     val html = assetLoader("web/index.html")
                     if (html != null) {
-                        call.respondText(html, ContentType.Text.Html)
+                        call.respondBytes(html, ContentType.Text.Html)
                     } else {
-                        call.respondText("Potensic Proxy v0.1 — web UI not found", ContentType.Text.Plain)
+                        call.respondText(
+                            "Potensic Proxy - TAF — web UI not found",
+                            ContentType.Text.Plain,
+                            HttpStatusCode.NotFound,
+                        )
                     }
                     Log.d("[WebServer] GET / served")
+                }
+
+                get("/index.html") {
+                    val html = assetLoader("web/index.html")
+                    if (html != null) {
+                        call.respondBytes(html, ContentType.Text.Html)
+                    } else {
+                        call.respond(HttpStatusCode.NotFound)
+                    }
+                }
+
+                // Serve Vite production assets embedded in app/src/main/assets/web/assets/.
+                // The generated index.html references these as absolute /assets/... URLs.
+                get("/assets/{fileName...}") {
+                    val fileName = call.parameters.getAll("fileName")
+                        ?.joinToString("/")
+                        ?.takeIf { it.isNotBlank() && !it.contains("..") }
+
+                    if (fileName == null) {
+                        call.respond(HttpStatusCode.BadRequest)
+                        return@get
+                    }
+
+                    val assetPath = "web/assets/$fileName"
+                    val data = assetLoader(assetPath)
+                    if (data == null) {
+                        Log.w("[WebServer] Static asset not found: $assetPath")
+                        call.respond(HttpStatusCode.NotFound)
+                        return@get
+                    }
+
+                    call.respondBytes(data, contentTypeForAsset(fileName))
+                }
+
+                // Keep root-level Vite/static files addressable as well.
+                get("/vite.svg") {
+                    val data = assetLoader("web/vite.svg")
+                    if (data != null) {
+                        call.respondBytes(data, ContentType.parse("image/svg+xml"))
+                    } else {
+                        call.respond(HttpStatusCode.NotFound)
+                    }
                 }
 
                 // H265 Annex B stream (for ffplay or VLC)
@@ -476,6 +522,21 @@ class WebServer(
             }
         }
         return false
+    }
+
+    private fun contentTypeForAsset(path: String): ContentType = when {
+        path.endsWith(".js", ignoreCase = true) -> ContentType.parse("application/javascript")
+        path.endsWith(".css", ignoreCase = true) -> ContentType.Text.CSS
+        path.endsWith(".json", ignoreCase = true) -> ContentType.Application.Json
+        path.endsWith(".svg", ignoreCase = true) -> ContentType.parse("image/svg+xml")
+        path.endsWith(".png", ignoreCase = true) -> ContentType.Image.PNG
+        path.endsWith(".jpg", ignoreCase = true) || path.endsWith(".jpeg", ignoreCase = true) -> ContentType.Image.JPEG
+        path.endsWith(".webp", ignoreCase = true) -> ContentType.parse("image/webp")
+        path.endsWith(".woff", ignoreCase = true) -> ContentType.parse("font/woff")
+        path.endsWith(".woff2", ignoreCase = true) -> ContentType.parse("font/woff2")
+        path.endsWith(".ttf", ignoreCase = true) -> ContentType.parse("font/ttf")
+        path.endsWith(".map", ignoreCase = true) -> ContentType.Application.Json
+        else -> ContentType.Application.OctetStream
     }
 
     fun stop() {
