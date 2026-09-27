@@ -36,6 +36,12 @@
             </span>
           </div>
           <div class="diag-item">
+            <span class="diag-label">Controller / Drone USB transport:</span>
+            <span :class="store.connection.usbConnected ? 'diag-ok' : 'diag-warn'">
+              {{ store.connection.usbConnected ? '✓ Connected' : '✗ Not Connected' }}
+            </span>
+          </div>
+          <div class="diag-item">
             <span class="diag-label">0x06 Video Frame Extraction (FE/w42):</span>
             <span :class="videoStats.framesExtracted > 0 ? 'diag-ok' : 'diag-muted'">
               {{ videoStats.framesExtracted }} frames (I: {{ videoStats.iFrames }} / P: {{ videoStats.pFrames }})
@@ -122,7 +128,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { DroneControlService } from '../../services/DroneControlService'
 import { VideoExtractor, ExtractedVideoFrame } from '../../protocol/VideoExtractor'
@@ -147,6 +153,7 @@ const videoExtractor = VideoExtractor.getInstance()
 let webCodecsPlayer: WebCodecsPlayer | null = null
 let unsubscribeExtractor: (() => void) | null = null
 let autoIdrTimer: any = null
+let autoActivationSent = false
 let isDestroyed = false
 
 const videoStats = reactive({
@@ -342,15 +349,23 @@ onMounted(async () => {
   // 1. Initialize WebCodecs
   await initWebCodecs()
 
-  // 2. Auto-kickstart LiveView camera stream (prefers H.265 if supported, otherwise H.264)
-  setTimeout(() => {
-    const preferH265 = h265Supported.value
-    activateLiveView(preferH265)
-  }, 400)
+  // 2. Start LiveView only after the Android backend confirms a real USB transport.
+  //    WebSocket OPEN by itself only means browser <-> phone is reachable.
+  watch(
+    () => store.connection.usbConnected,
+    (connected) => {
+      if (connected && !autoActivationSent) {
+        autoActivationSent = true
+        setTimeout(() => activateLiveView(h265Supported.value), 300)
+      }
+      if (!connected) autoActivationSent = false
+    },
+    { immediate: true }
+  )
 
-  // 3. Auto-retry IDR keyframe if no frames decoded after 5s
+  // 3. Auto-retry IDR only while the controller/drone transport is actually connected.
   autoIdrTimer = setInterval(() => {
-    if (!hasFrame.value && store.connection.wsConnected) {
+    if (!hasFrame.value && store.connection.usbConnected) {
       DroneControlService.requestIdr()
     }
   }, 5000)

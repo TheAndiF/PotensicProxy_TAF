@@ -36,7 +36,8 @@ class UsbAccessoryManager(private val context: Context) {
 
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
     private var accessory: UsbAccessory? = null
-    private var pendingConnect = false
+    @Volatile private var pendingConnect = false
+    private val writeLock = Any()
 
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
@@ -45,8 +46,11 @@ class UsbAccessoryManager(private val context: Context) {
                 Log.i("[USB] Permission result: granted=$granted")
                 if (granted && pendingConnect) {
                     pendingConnect = false
-                    openAccessory()
+                    if (!openAccessory()) {
+                        Log.e("[USB] Permission granted but accessory open failed")
+                    }
                 } else {
+                    pendingConnect = false
                     Log.e("[USB] Permission denied by user")
                 }
             }
@@ -75,6 +79,8 @@ class UsbAccessoryManager(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     val isConnected: Boolean get() = connected.get()
+    val isPermissionPending: Boolean get() = pendingConnect
+    val hasAttachedAccessory: Boolean get() = !usbManager.accessoryList.isNullOrEmpty()
 
     // Stats
     var bytesSent: Long = 0; private set
@@ -88,7 +94,17 @@ class UsbAccessoryManager(private val context: Context) {
      * Try to connect to an attached USB accessory.
      * If permission is needed, requests it and returns false (will auto-connect on grant).
      */
+    @Synchronized
     fun connect(): Boolean {
+        if (connected.get()) {
+            Log.d("[USB] connect(): already connected")
+            return true
+        }
+        if (pendingConnect) {
+            Log.d("[USB] connect(): waiting for USB permission result")
+            return false
+        }
+
         Log.i("[USB] Attempting connection...")
 
         val accessories = usbManager.accessoryList
@@ -153,8 +169,10 @@ class UsbAccessoryManager(private val context: Context) {
         try {
             val handshake = DroneProtocol.HANDSHAKE
             Log.hex("[USB] Handshake TX", handshake)
-            outputStream!!.write(handshake)
-            outputStream!!.flush()
+            synchronized(writeLock) {
+                outputStream!!.write(handshake)
+                outputStream!!.flush()
+            }
             Log.i("[USB] Handshake sent (${handshake.size} bytes)")
         } catch (e: Exception) {
             Log.e("[USB] Handshake failed", e)
@@ -195,6 +213,7 @@ class UsbAccessoryManager(private val context: Context) {
         Log.i("[USB] Disconnecting...")
         running.set(false)
         connected.set(false)
+        pendingConnect = false
 
         readJob?.cancel()
         writeJob?.cancel()
@@ -234,12 +253,14 @@ class UsbAccessoryManager(private val context: Context) {
     fun sendDirect(data: ByteArray) {
         if (!connected.get()) return
         try {
-            outputStream?.let { os ->
-                os.write(data, 0, data.size)
-                os.flush()
-                bytesSent += data.size
-                packetsSent++
-                lastSendTime = System.currentTimeMillis()
+            synchronized(writeLock) {
+                outputStream?.let { os ->
+                    os.write(data, 0, data.size)
+                    os.flush()
+                    bytesSent += data.size
+                    packetsSent++
+                    lastSendTime = System.currentTimeMillis()
+                }
             }
         } catch (e: Exception) {
             Log.e("[USB] Direct send failed", e)
@@ -290,15 +311,17 @@ class UsbAccessoryManager(private val context: Context) {
             try {
                 val data = sendQueue.poll()
                 if (data != null) {
-                    outputStream?.let { os ->
-                        os.write(data, 0, data.size)
-                        os.flush()
-                        bytesSent += data.size
-                        packetsSent++
-                        lastSendTime = System.currentTimeMillis()
+                    synchronized(writeLock) {
+                        outputStream?.let { os ->
+                            os.write(data, 0, data.size)
+                            os.flush()
+                            bytesSent += data.size
+                            packetsSent++
+                            lastSendTime = System.currentTimeMillis()
 
-                        if (packetsSent % 500 == 0L) {
-                            Log.d("[USB] TX: ${data.size} bytes (total: $bytesSent bytes, $packetsSent pkts)")
+                            if (packetsSent % 500 == 0L) {
+                                Log.d("[USB] TX: ${data.size} bytes (total: $bytesSent bytes, $packetsSent pkts)")
+                            }
                         }
                     }
                 }

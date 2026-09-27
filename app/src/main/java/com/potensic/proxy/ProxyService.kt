@@ -1,4 +1,4 @@
-﻿package com.potensic.proxy
+package com.potensic.proxy
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -43,6 +43,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var controlJob: Job? = null
+    private var connectionSupervisorJob: Job? = null
+    @Volatile private var liveViewActivationInProgress = false
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun onCreate() {
@@ -97,22 +99,15 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             Log.i("[Service] Web server already running, skipping")
         }
 
-        // Auto-connect if accessory is already attached and not connected
-        if (!usbManager.isConnected) {
-            val connected = usbManager.connect()
-            Log.i("[Service] Auto-connect result: $connected")
-            if (connected) {
-                startControlLoop()
-            }
-        } else {
-            Log.i("[Service] USB already connected, skipping")
-        }
+        ensureUsbConnection()
+        startConnectionSupervisor()
 
         return START_STICKY
     }
 
     override fun onDestroy() {
         Log.i("[Service] onDestroy")
+        connectionSupervisorJob?.cancel()
         controlJob?.cancel()
         webServer.stop()
         usbManager.destroy()
@@ -122,6 +117,37 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         instance = null
         scope.cancel()
         super.onDestroy()
+    }
+
+
+    /**
+     * Ensure that the Android process is actually connected to the Potensic USB accessory.
+     * A browser WebSocket connection is not considered a drone/controller connection.
+     */
+    fun ensureUsbConnection(): Boolean {
+        if (usbManager.isConnected) return true
+        val connectedNow = usbManager.connect()
+        Log.i("[Service] ensureUsbConnection: connected=$connectedNow attached=${usbManager.hasAttachedAccessory} permissionPending=${usbManager.isPermissionPending}")
+        return connectedNow
+    }
+
+    /**
+     * Keep the AOA link alive across cable re-plugs and service/UI timing differences.
+     */
+    private fun startConnectionSupervisor() {
+        if (connectionSupervisorJob?.isActive == true) return
+        connectionSupervisorJob = scope.launch {
+            while (isActive) {
+                if (!usbManager.isConnected && usbManager.hasAttachedAccessory && !usbManager.isPermissionPending) {
+                    try {
+                        ensureUsbConnection()
+                    } catch (e: Exception) {
+                        Log.e("[Service] USB reconnect attempt failed: ${e.message}")
+                    }
+                }
+                delay(2000)
+            }
+        }
     }
 
     // === WiFi Direct ===
@@ -228,23 +254,19 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     // === UsbAccessoryManager.Listener ===
 
     override fun onConnected() {
-        Log.i("[Service] USB Connected ÔÇö resetting and starting loops")
+        Log.i("[Service] USB Connected - resetting and starting loops")
         videoExtractor.reset()
-
-        // Send the EXACT init sequence captured from the official app
-        scope.launch {
-            val initSeq = DroneProtocol.buildInitSequence()
-            for ((i, cmd) in initSeq.withIndex()) {
-                usbManager.send(cmd)
-                Log.i("[Service] Init cmd #${i+1}/${initSeq.size} (${cmd.size}B)")
-                delay(50)
-            }
-            activateLiveView()
-        }
 
         startControlLoop()
         startExtractorLoop()
         startDecoderLoop()
+
+        // Give usb_link/data_link a short settling interval after the AOA handshake,
+        // then perform one authoritative backend-side camera initialization.
+        scope.launch {
+            delay(250)
+            activateLiveView()
+        }
 
         // Broadcast telemetry to WebSocket every 200ms
         scope.launch {
@@ -261,7 +283,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     }
 
     override fun onDisconnected() {
-        Log.w("[Service] USB Disconnected ÔÇö stopping loops")
+        Log.w("[Service] USB Disconnected - stopping loops; supervisor will reconnect when accessory is present")
+        liveViewActivationInProgress = false
         controlJob?.cancel(); controlJob = null
         decoderJob?.cancel(); decoderJob = null
         extractorJob?.cancel(); extractorJob = null
@@ -315,24 +338,40 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
      * Video stream activation helper.
      * Tells drone camera to start encoding and transmitting H.265 video packets.
      */
-    fun activateLiveView() {
+    fun activateLiveView(): Boolean {
+        if (!isAnyConnected) {
+            Log.w("[Service] LiveView activation requested without an active drone transport")
+            ensureUsbConnection()
+            return false
+        }
+        if (liveViewActivationInProgress) {
+            Log.d("[Service] LiveView activation already in progress")
+            return true
+        }
+
+        liveViewActivationInProgress = true
         scope.launch {
             try {
-                Log.i("[Service] Activating LiveView stream...")
-                // CAMERA: LIVEVIEW_START (cmd=0x73, data=0x00 0x64)
-                val liveViewStart = DroneProtocol.hexToBytes("fe000000000000150000000000000009fffd05000012730064")
-                sendDirectAny(liveViewStart)
-                delay(50)
-                // CAMERA: LIVEVIEW_PARAMS (cmd=0xD8, 1080P 5000Kbps)
+                Log.i("[Service] Activating LiveView stream using backend transport...")
+                val initSeq = DroneProtocol.buildInitSequence()
+                for ((i, cmd) in initSeq.withIndex()) {
+                    sendDirectAny(cmd)
+                    Log.i("[Service] LiveView init #${i + 1}/${initSeq.size} (${cmd.size}B)")
+                    delay(60)
+                }
                 sendDirectAny(DroneProtocol.buildLiveViewParams())
-                delay(50)
-                // CAMERA: REQUEST_IDR (cmd=0xD9)
+                delay(100)
                 sendDirectAny(DroneProtocol.buildIDRRequest())
-                Log.i("[Service] Sent LiveView activation commands")
+                delay(250)
+                sendDirectAny(DroneProtocol.buildIDRRequest())
+                Log.i("[Service] LiveView activation sequence completed")
             } catch (e: Exception) {
                 Log.e("[Service] Error activating LiveView: ${e.message}")
+            } finally {
+                liveViewActivationInProgress = false
             }
         }
+        return true
     }
 
     /**

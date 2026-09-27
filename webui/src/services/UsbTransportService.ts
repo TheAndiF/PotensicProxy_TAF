@@ -88,6 +88,7 @@ export class UsbTransportService {
   private reconnectTimer: any = null
   private pollTimer: any = null
   private heartbeatTimer: any = null
+  private connectRequestInFlight = false
   private demuxer = new UsbStreamDemuxer()
 
   static getInstance(): UsbTransportService {
@@ -119,7 +120,7 @@ export class UsbTransportService {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const url = `${protocol}//${host}/ws/usb`
 
-    store.addLog('INFO', `正在Connect USB 透传通道 -> ${url}`)
+    store.addLog('INFO', `Connecting browser passthrough channel -> ${url}`)
 
     try {
       this.ws = new WebSocket(url)
@@ -127,11 +128,11 @@ export class UsbTransportService {
 
       this.ws.onopen = () => {
         store.connection.wsConnected = true
-        store.addLog('INFO', 'USB 透传通道已就绪 (WebSocket OPEN)')
+        store.addLog('INFO', 'Browser passthrough channel ready (WebSocket OPEN)')
 
-        // Periodic heartbeat to keep flight controller link alive (1000ms)
+        // Heartbeat is meaningful only after Android has an actual controller/drone transport.
         this.heartbeatTimer = setInterval(() => {
-          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          if (store.connection.usbConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(PacketBuilder.buildHeartbeat())
           }
         }, 1000)
@@ -143,7 +144,7 @@ export class UsbTransportService {
           clearInterval(this.heartbeatTimer)
           this.heartbeatTimer = null
         }
-        store.addLog('WARN', 'USB 透传通道断开，2秒后重连...')
+        store.addLog('WARN', 'Browser passthrough channel closed; reconnecting in 2 seconds...')
         this.scheduleReconnect()
       }
 
@@ -184,7 +185,7 @@ export class UsbTransportService {
         }
       }
     } catch (e: any) {
-      store.addLog('ERROR', `WebSocket 创建异常: ${e.message}`)
+      store.addLog('ERROR', `WebSocket connection error: ${e.message}`)
       this.scheduleReconnect()
     }
   }
@@ -209,7 +210,7 @@ export class UsbTransportService {
         method: 'POST',
         body: ByteUtils.bytesToHex(bytes)
       }).catch((e) => {
-        store.addLog('ERROR', `HTTP 发送失败: ${e.message}`)
+        store.addLog('ERROR', `HTTP send failed: ${e.message}`)
       })
     }
 
@@ -220,34 +221,44 @@ export class UsbTransportService {
 
   private startStatusPolling() {
     if (this.pollTimer) clearInterval(this.pollTimer)
-    this.pollTimer = setInterval(() => {
+
+    const poll = () => {
       const store = useDroneStore()
       const host = store.normalizedHost
       const httpProto = window.location.protocol === 'https:' ? 'https:' : 'http:'
 
-      // If we received an RX packet recently (within 4 seconds), USB is active — no need to poll HTTP!
-      const timeSinceLastRx = Date.now() - (store.connection.lastRxTimestamp || 0)
-      if (store.connection.lastRxTimestamp && timeSinceLastRx < 4000) {
-        store.connection.usbConnected = true
-        return // Skip HTTP request entirely to avoid spawning unnecessary tunnel connections
-      }
-
-      // Only query /api/status if no recent USB packets arrived
       fetch(`${httpProto}//${host}/api/status`, { signal: AbortSignal.timeout(2500) })
         .then(r => r.json())
         .then(d => {
-          if (d.connected) {
-            store.connection.usbConnected = true
-          } else if (timeSinceLastRx >= 4000) {
-            store.connection.usbConnected = false
+          const wasConnected = store.connection.usbConnected
+          store.connection.usbConnected = Boolean(d.usbConnected ?? d.connected)
+
+          if (store.connection.usbConnected && !wasConnected) {
+            store.addLog('INFO', 'Controller/drone USB transport connected')
+          } else if (!store.connection.usbConnected && wasConnected) {
+            store.addLog('WARN', 'Controller/drone USB transport disconnected')
+          }
+
+          // The backend is authoritative for USB/AOA. If the browser is reachable but
+          // Android is not connected, explicitly ask the service to open/re-open the accessory.
+          if (!store.connection.usbConnected && !d.permissionPending && !this.connectRequestInFlight) {
+            this.connectRequestInFlight = true
+            fetch(`${httpProto}//${host}/api/connect`, { method: 'POST', signal: AbortSignal.timeout(3000) })
+              .then(r => r.json().catch(() => ({})))
+              .then(result => {
+                if (result.connected) store.connection.usbConnected = true
+              })
+              .catch(() => {})
+              .finally(() => { this.connectRequestInFlight = false })
           }
         })
         .catch(() => {
-          if (timeSinceLastRx >= 4000) {
-            store.connection.usbConnected = false
-          }
+          store.connection.usbConnected = false
         })
-    }, 5000)
+    }
+
+    poll()
+    this.pollTimer = setInterval(poll, 2000)
   }
 
   stop() {

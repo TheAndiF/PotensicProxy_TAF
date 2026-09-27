@@ -75,11 +75,18 @@ export class DroneControlService {
 
   static requestIdr() {
     const store = useDroneStore()
-    store.addLog('INFO', '请求关键帧 (IDR)')
-    this.transport.send(PacketBuilder.buildIdrRequest())
+    if (!store.connection.usbConnected) {
+      store.addLog('WARN', 'IDR request skipped: controller/drone transport is not connected')
+      return
+    }
     const host = store.normalizedHost
     const httpProto = window.location.protocol === 'https:' ? 'https:' : 'http:'
-    fetch(`${httpProto}//${host}/api/video/request-idr`, { method: 'POST' }).catch(() => {})
+    fetch(`${httpProto}//${host}/api/video/request-idr`, { method: 'POST' })
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        store.addLog('INFO', 'Requested video keyframe (IDR)')
+      })
+      .catch((e) => store.addLog('WARN', `IDR request failed: ${e.message}`))
   }
 
   static initLiveView() {
@@ -90,41 +97,25 @@ export class DroneControlService {
 
   static activateLiveView(preferH265 = true) {
     const store = useDroneStore()
-    const codecName = preferH265 ? 'H.265 (HEVC)' : 'H.264 (AVC 兼容)'
-    store.addLog('INFO', `正在执行无人机相机唤醒与推流激活序列 [${codecName}] (InitSequence + 1080P Params + IDR)...`)
+    if (!store.connection.usbConnected) {
+      store.addLog('WARN', 'LiveView activation deferred: controller/drone transport is not connected')
+      return
+    }
 
-    // 1. Send official full initialization sequence
-    const initSeq = PacketBuilder.buildInitSequence(preferH265)
-    initSeq.forEach((pkt, idx) => {
-      setTimeout(() => {
-        this.transport.send(pkt)
-      }, idx * 40)
-    })
+    const host = store.normalizedHost
+    const httpProto = window.location.protocol === 'https:' ? 'https:' : 'http:'
+    const codecName = preferH265 ? 'H.265 preferred' : 'compatibility decode'
+    store.addLog('INFO', `Requesting backend LiveView activation (${codecName})...`)
 
-    const baseDelay = initSeq.length * 40 + 60
-
-    // 2. Send 1080P 10240Kbps LiveView parameters
-    setTimeout(() => {
-      this.transport.send(PacketBuilder.buildLiveViewParams(preferH265, 10240))
-    }, baseDelay)
-
-    // 3. Request initial keyframe (IDR) multiple times
-    setTimeout(() => {
-      this.transport.send(PacketBuilder.buildIdrRequest())
-    }, baseDelay + 80)
-
-    setTimeout(() => {
-      this.transport.send(PacketBuilder.buildIdrRequest())
-    }, baseDelay + 250)
-
-    setTimeout(() => {
-      this.transport.send(PacketBuilder.buildIdrRequest())
-    }, baseDelay + 500)
-
-    // 4. Send heartbeat to ensure link stays active
-    setTimeout(() => {
-      this.transport.send(PacketBuilder.buildHeartbeat())
-    }, baseDelay + 700)
+    // The Android backend owns the initialization sequence. Sending the same camera
+    // commands simultaneously from browser and backend can interleave USB writes.
+    fetch(`${httpProto}//${host}/api/video/activate`, { method: 'POST' })
+      .then(async r => {
+        const body = await r.json().catch(() => ({}))
+        if (!r.ok || !body.activated) throw new Error(body.error || `HTTP ${r.status}`)
+        store.addLog('INFO', 'Backend LiveView activation sequence started')
+      })
+      .catch((e) => store.addLog('WARN', `LiveView activation failed: ${e.message}`))
   }
 
   static sendHeartbeat() {

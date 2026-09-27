@@ -55,11 +55,11 @@ class MapBackend(private val rootDir: File) {
     } catch (_: Exception) { defaultConfig() }
 
     fun versionInfo(): JSONObject = JSONObject().apply {
-        put("projectVersion", "v0.6")
-        put("appVersion", "0.6.0")
-        put("backendVersion", "0.6.0")
-        put("webUiVersion", "0.6.0")
-        put("mapModuleVersion", "0.6.0")
+        put("projectVersion", "v0.7")
+        put("appVersion", "0.7.0")
+        put("backendVersion", "0.7.0")
+        put("webUiVersion", "0.7.0")
+        put("mapModuleVersion", "0.7.0")
         put("mapApiVersion", 2)
         put("buildDate", "2026-09-27")
     }

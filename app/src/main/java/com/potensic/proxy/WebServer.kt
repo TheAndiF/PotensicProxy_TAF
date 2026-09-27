@@ -474,17 +474,35 @@ class WebServer(
                 post("/api/video/activate") {
                     call.response.header("Access-Control-Allow-Origin", "*")
                     Log.i("[WebServer] POST /api/video/activate")
-                    ProxyService.instance?.activateLiveView()
-                    call.respondText("""{"success":true,"activated":true}""", ContentType.Application.Json)
+                    val activated = ProxyService.instance?.activateLiveView() == true
+                    val json = JSONObject().apply {
+                        put("success", activated)
+                        put("activated", activated)
+                        put("connected", usbManager.isConnected || (ProxyService.instance?.wifiTransport?.isConnected == true))
+                    }
+                    call.respondText(
+                        json.toString(),
+                        ContentType.Application.Json,
+                        if (activated) HttpStatusCode.OK else HttpStatusCode.Conflict
+                    )
                 }
 
                 // Request IDR frame from drone
                 post("/api/video/request-idr") {
                     call.response.header("Access-Control-Allow-Origin", "*")
                     Log.i("[WebServer] POST /api/video/request-idr")
-                    val idrCmd = DroneProtocol.buildIDRRequest()
-                    ProxyService.instance?.sendDirectAny(idrCmd)
-                    call.respondText(JSONObject().put("sent", true).put("size", idrCmd.size).toString(), ContentType.Application.Json)
+                    val connected = usbManager.isConnected || (ProxyService.instance?.wifiTransport?.isConnected == true)
+                    if (!connected) {
+                        call.respondText(
+                            JSONObject().put("sent", false).put("error", "drone transport not connected").toString(),
+                            ContentType.Application.Json,
+                            HttpStatusCode.Conflict
+                        )
+                    } else {
+                        val idrCmd = DroneProtocol.buildIDRRequest()
+                        ProxyService.instance?.sendDirectAny(idrCmd)
+                        call.respondText(JSONObject().put("sent", true).put("size", idrCmd.size).toString(), ContentType.Application.Json)
+                    }
                 }
 
                 // Video stats
@@ -510,6 +528,9 @@ class WebServer(
                     call.response.header("Access-Control-Allow-Origin", "*")
                     val json = JSONObject().apply {
                         put("connected", usbManager.isConnected || (ProxyService.instance?.wifiTransport?.isConnected == true))
+                        put("usbConnected", usbManager.isConnected)
+                        put("accessoryAttached", usbManager.hasAttachedAccessory)
+                        put("permissionPending", usbManager.isPermissionPending)
                         put("mode", if (ProxyService.instance?.wifiTransport?.isConnected == true) "wifi" else if (usbManager.isConnected) "usb" else "none")
                         put("bytesSent", usbManager.bytesSent)
                         put("bytesReceived", usbManager.bytesReceived)
@@ -548,9 +569,15 @@ class WebServer(
 
                 // Connect USB
                 post("/api/connect") {
-                    Log.i("[WebServer] POST /api/connect ÔÇö attempting USB connection")
-                    val ok = usbManager.connect()
-                    val json = JSONObject().put("success", ok)
+                    Log.i("[WebServer] POST /api/connect - attempting USB connection")
+                    val service = ProxyService.instance
+                    val ok = service?.ensureUsbConnection() ?: usbManager.connect()
+                    val json = JSONObject().apply {
+                        put("success", ok || usbManager.isConnected)
+                        put("connected", usbManager.isConnected)
+                        put("accessoryAttached", usbManager.hasAttachedAccessory)
+                        put("permissionPending", usbManager.isPermissionPending)
+                    }
                     call.respondText(json.toString(), ContentType.Application.Json)
                 }
 
