@@ -45,6 +45,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     private var controlJob: Job? = null
     private var connectionSupervisorJob: Job? = null
     @Volatile private var liveViewActivationInProgress = false
+    @Volatile private var officialInitSentForConnection = false
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun onCreate() {
@@ -233,16 +234,11 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                 Log.i("[Service] WiFi Connected!")
                 videoExtractor.reset()
 
-                // Send init sequence (same as USB)
+                // Use the same captured initialization/LiveView path as USB.
+                officialInitSentForConnection = false
                 scope.launch {
-                    val initSeq = DroneProtocol.buildInitSequence()
-                    for ((i, cmd) in initSeq.withIndex()) {
-                        wt.send(cmd)
-                        Log.i("[Service] WiFi init cmd #${i+1}/${initSeq.size}")
-                        delay(50)
-                    }
-                    wt.send(DroneProtocol.buildLiveViewParams())
-                    Log.i("[Service] WiFi LiveViewParams sent")
+                    delay(250)
+                    activateLiveView(true)
                 }
 
                 startControlLoop()
@@ -285,6 +281,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
     override fun onConnected() {
         Log.i("[Service] USB accessory opened - waiting for controller RX")
+        officialInitSentForConnection = false
         videoExtractor.reset()
 
         startControlLoop()
@@ -315,6 +312,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     override fun onDisconnected() {
         Log.w("[Service] USB Disconnected - stopping loops; supervisor will reconnect when accessory is present")
         liveViewActivationInProgress = false
+        officialInitSentForConnection = false
         controlJob?.cancel(); controlJob = null
         decoderJob?.cancel(); decoderJob = null
         extractorJob?.cancel(); extractorJob = null
@@ -368,7 +366,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
      * Video stream activation helper.
      * Tells drone camera to start encoding and transmitting H.265 video packets.
      */
-    fun activateLiveView(): Boolean {
+    fun activateLiveView(enableH265: Boolean = true): Boolean {
         if (!isAnyConnected) {
             Log.w("[Service] LiveView activation requested without an active drone transport")
             ensureUsbConnection()
@@ -382,19 +380,28 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         liveViewActivationInProgress = true
         scope.launch {
             try {
-                Log.i("[Service] Activating LiveView stream using backend transport...")
-                val initSeq = DroneProtocol.buildInitSequence()
-                for ((i, cmd) in initSeq.withIndex()) {
-                    sendDirectAny(cmd)
-                    Log.i("[Service] LiveView init #${i + 1}/${initSeq.size} (${cmd.size}B)")
-                    delay(60)
+                // On the first activation for each USB connection, reproduce the exact
+                // archived official-app initialization sequence before touching LiveView.
+                if (!officialInitSentForConnection) {
+                    Log.i("[Service] Sending captured official initialization sequence...")
+                    val initSeq = DroneProtocol.buildInitSequence(enableH265)
+                    for ((i, cmd) in initSeq.withIndex()) {
+                        sendDirectAny(cmd)
+                        Log.i("[Service] Official init #${i + 1}/${initSeq.size} (${cmd.size}B)")
+                        delay(50)
+                    }
+                    officialInitSentForConnection = true
                 }
-                sendDirectAny(DroneProtocol.buildLiveViewParams())
-                delay(100)
+
+                // Match the archived Android backend: repeat LIVEVIEW_START, then send
+                // captured 1080p/5000 parameters, then request one IDR key frame.
+                Log.i("[Service] Activating LiveView using captured Android sequence...")
+                sendDirectAny(DroneProtocol.buildLiveViewStart())
+                delay(50)
+                sendDirectAny(DroneProtocol.buildLiveViewParams(enableH265 = enableH265, bitrateKbps = 5000))
+                delay(50)
                 sendDirectAny(DroneProtocol.buildIDRRequest())
-                delay(250)
-                sendDirectAny(DroneProtocol.buildIDRRequest())
-                Log.i("[Service] LiveView activation sequence completed")
+                Log.i("[Service] Captured LiveView activation sent (1080p/5000 + IDR)")
             } catch (e: Exception) {
                 Log.e("[Service] Error activating LiveView: ${e.message}")
             } finally {

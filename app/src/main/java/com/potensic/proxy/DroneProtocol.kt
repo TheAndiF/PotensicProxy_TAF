@@ -20,10 +20,16 @@ object DroneProtocol {
     val HEARTBEAT_RAW = ByteArray(3)
 
     /**
-     * Build the exact init sequence that the official Potensic app sends.
-     * Captured via smali injection logging (POTENSIC_SPY).
+     * Build the exact initialization sequence captured from the official Potensic app.
+     *
+     * Keep this byte sequence conservative: it mirrors the Android reference archive
+     * instead of the newer frontend-only experiment. The final packet already contains
+     * LIVEVIEW_START; activateLiveView() intentionally sends LIVEVIEW_START once more
+     * before parameters and IDR, matching the archived backend behavior.
      */
-    fun buildInitSequence(): List<ByteArray> {
+    fun buildInitSequence(enableH265: Boolean = true): List<ByteArray> {
+        @Suppress("UNUSED_VARIABLE")
+        val capturedSequenceDoesNotSelectCodec = enableH265
         return listOf(
             // #1 FPV: GET_FPV_INFO
             hexPkt("fe000000000000160000000000000007 fffd030000161500"),
@@ -33,17 +39,16 @@ object DroneProtocol {
             hexPkt("fe000000000000160000000000000007 fffd030035162000"),
             // #5 CAMERA: GET_MODE
             hexPkt("fe000000000000150000000000000008 fffd040000122036"),
-            // #6 FPV: GET_FPV_INFO
+            // #6 FPV: GET_FPV_INFO (repeat)
             hexPkt("fe000000000000160000000000000007 fffd030000161500"),
             // #8 FLIGHT: INIT
-            hexPkt("fe0000000000001400000000000000 0a fffd0600010300 7e 00 7a"),
-            // #9 FLIGHT: SET_MODE — REMOVED: overwrites user's controller config (left/right hand mode)
+            hexPkt("fe00000000000014000000000000000a fffd06000103007e007a"),
             // #11 CAMERA: GET_MODE (repeat)
             hexPkt("fe000000000000150000000000000008 fffd040000122036"),
             // #16 CAMERA: GET_STATUS
             hexPkt("fe000000000000150000000000000008 fffd040000120117"),
             // #20 CAMERA: LIVEVIEW_START (cmd=0x73, data=0x00 0x64)
-            hexPkt("fe000000000000150000000000000009 fffd050000127300 64"),
+            hexPkt("fe000000000000150000000000000009 fffd05000012730064"),
         )
     }
 
@@ -475,24 +480,61 @@ object DroneProtocol {
         return wrapFE(inner, 0x15)
     }
 
-    fun buildLiveViewParams(): ByteArray {
-        // h264Level/h265Level: 0=1080P, 1=720P, 2=480P
-        // h264Rate/h265Rate: bitrate in Kbps (big-endian)
-        val liveViewData = byteArrayOf(
-            0x00,                   // h264Level = 0 (1080P)
-            0x13, 0x88.toByte(),   // h264Rate = 5000 Kbps
-            0x00,                   // h265Level = 0 (1080P)
-            0x13, 0x88.toByte(),   // h265Rate = 5000 Kbps
+    /** Camera: request all parameters (0x1200 / 0x01). */
+    fun buildCameraGetAllParams(): ByteArray {
+        return wrapFE(buildInnerCommand(0x01))
+    }
+
+    /** FPV: synchronize FPV firmware/protocol version (0x1600). */
+    fun buildFpvSyncVersion(): ByteArray {
+        return wrapFE(buildInnerCommandWithShort(0x1600, ByteArray(0)), 0x16)
+    }
+
+    /**
+     * Camera function switch (0x1200 / 0x16).
+     * 0x04 = preview, 0x10 = H.265, 0x20 = H.265 preview.
+     * For H.265 LiveView the official app sends mask/value 0x34/0x34.
+     */
+    fun buildCameraFunction(enablePreview: Boolean = true, enableH265: Boolean = true): ByteArray {
+        val preview = if (enablePreview) 0x04 else 0x00
+        val h265 = if (enableH265) 0x30 else 0x00
+        val mask = preview or h265
+        val values = preview or h265
+        val data = byteArrayOf(mask.toByte(), values.toByte(), 0x00, 0x00)
+        return wrapFE(buildInnerCommand(0x16, data))
+    }
+
+    /** Camera LiveView start (0x1200 / 0x73, data 00 64). */
+    fun buildLiveViewStart(): ByteArray {
+        return wrapFE(buildInnerCommand(0x73, byteArrayOf(0x00, 0x64)))
+    }
+
+    /**
+     * Camera LiveView parameters (0x1200 / 0xD8) from the archived Android reference.
+     *
+     * Captured/reference payload: 1080p, 5000 kbit/s for H.264 and H.265:
+     *   00 13 88 00 13 88
+     *
+     * The archived backend treats the bitrate bytes as high-byte/low-byte here.
+     * Keep this exact representation for v0.910 instead of the v0.9 experiment
+     * that changed the payload to 10240 kbit/s and little-endian words.
+     */
+    fun buildLiveViewParams(enableH265: Boolean = true, bitrateKbps: Int = 5000): ByteArray {
+        @Suppress("UNUSED_VARIABLE")
+        val capturedSequenceDoesNotSelectCodec = enableH265
+        @Suppress("UNUSED_VARIABLE")
+        val requestedBitrateIgnoredForCapturedCompatibility = bitrateKbps
+        val data = byteArrayOf(
+            0x00, 0x13, 0x88.toByte(),
+            0x00, 0x13, 0x88.toByte(),
         )
-        val inner = buildInnerCommand(0xD8.toByte(), liveViewData)
-        val packet = wrapFE(inner)
-        Log.i("[Protocol] LiveViewParams: ${packet.joinToString(" ") { "%02x".format(it) }}")
+        val packet = wrapFE(buildInnerCommand(0xD8.toByte(), data))
+        Log.i("[Protocol] LiveViewParams captured 1080p/5000: ${packet.joinToString(" ") { "%02x".format(it) }}")
         return packet
     }
 
     fun buildIDRRequest(): ByteArray {
-        val inner = buildInnerCommand(0xD9.toByte())
-        return wrapFE(inner)
+        return wrapFE(buildInnerCommand(0xD9.toByte()))
     }
 
     /**
