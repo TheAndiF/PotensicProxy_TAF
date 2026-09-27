@@ -1,77 +1,108 @@
 <template>
   <div class="cockpit-layout">
-    <!-- Left: Video & Telemetry -->
     <div class="left-section">
-      <VideoPlayer />
+      <div class="flight-stage">
+        <div id="main-stage-slot" class="main-stage-slot"></div>
+        <div id="hidden-view-slot" class="hidden-view-slot" aria-hidden="true"></div>
+        <div
+          v-show="pipVisible && pipPosition === 'overlay'"
+          id="pip-overlay-slot"
+          class="pip-slot pip-overlay-slot"
+          title="Swap Liveview and map"
+          @click="swapViews"
+        ></div>
+
+        <div class="view-toolbar">
+          <button :class="{ active: mainView === 'video' }" @click="mainView = 'video'">LIVE</button>
+          <button :class="{ active: mainView === 'map' }" @click="mainView = 'map'">MAP</button>
+          <button :class="{ active: pipVisible }" @click="pipVisible = !pipVisible">PIP</button>
+        </div>
+      </div>
       <TelemetryBar />
     </div>
 
-    <!-- Right: Virtual Joysticks & Actions Panel -->
     <div class="right-panel">
       <div class="panel-title">🕹️ Virtual Joystick Control</div>
       <div class="joysticks-container">
-        <!-- Left Stick: Throttle (Y) / Yaw (X) -->
-        <VirtualJoystick
-          label="Throttle / Yaw"
-          v-model="leftStickModel"
-          :rc-echo="{ x: store.rcHardwareJoysticks.yaw, y: store.rcHardwareJoysticks.throttle }"
-          @change="onJoystickChange"
-        />
-
-        <!-- Right Stick: Pitch (Y) / Roll (X) -->
-        <VirtualJoystick
-          label="Pitch / Roll"
-          v-model="rightStickModel"
-          :rc-echo="{ x: store.rcHardwareJoysticks.roll, y: store.rcHardwareJoysticks.pitch }"
-          @change="onRightStickChange"
-        />
+        <VirtualJoystick label="Throttle / Yaw" v-model="leftStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.yaw, y: store.rcHardwareJoysticks.throttle }" @change="onJoystickChange"/>
+        <VirtualJoystick label="Pitch / Roll" v-model="rightStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.roll, y: store.rcHardwareJoysticks.pitch }" @change="onRightStickChange"/>
       </div>
+      <GimbalControl/>
+      <FlightActions/>
 
-      <GimbalControl />
-      <FlightActions />
+      <div
+        v-show="pipVisible && pipPosition === 'controls'"
+        class="controls-pip-section"
+      >
+        <div class="panel-title">{{ secondaryLabel }} preview</div>
+        <div
+          id="pip-controls-slot"
+          class="pip-slot pip-controls-slot"
+          title="Swap Liveview and map"
+          @click="swapViews"
+        ></div>
+      </div>
     </div>
+
+    <Teleport v-if="teleportsReady" :to="videoTarget">
+      <div :class="['teleported-view', { 'small-view': mainView !== 'video' }]">
+        <VideoPlayer/>
+        <span v-if="mainView !== 'video'" class="small-view-label">VIDEO</span>
+      </div>
+    </Teleport>
+
+    <Teleport v-if="teleportsReady" :to="mapTarget">
+      <div :class="['teleported-view', { 'small-view': mainView !== 'map' }]">
+        <MapView/>
+        <span v-if="mainView !== 'map'" class="small-view-label">MAP</span>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import VideoPlayer from './VideoPlayer.vue'
+import MapView from './MapView.vue'
 import TelemetryBar from './TelemetryBar.vue'
 import VirtualJoystick from './VirtualJoystick.vue'
 import GimbalControl from './GimbalControl.vue'
 import FlightActions from './FlightActions.vue'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { DroneControlService } from '../../services/DroneControlService'
+import { useCockpitViewSettings } from '../../composables/useCockpitViewSettings'
 
 const store = useDroneStore()
+const { mainView, pipVisible, pipPosition, swapViews } = useCockpitViewSettings()
+const teleportsReady = ref(false)
+
+const secondaryTarget = computed(() => pipPosition.value === 'controls' ? '#pip-controls-slot' : '#pip-overlay-slot')
+const hiddenTarget = '#hidden-view-slot'
+const videoTarget = computed(() => mainView.value === 'video' ? '#main-stage-slot' : (pipVisible.value ? secondaryTarget.value : hiddenTarget))
+const mapTarget = computed(() => mainView.value === 'map' ? '#main-stage-slot' : (pipVisible.value ? secondaryTarget.value : hiddenTarget))
+const secondaryLabel = computed(() => mainView.value === 'video' ? 'Map' : 'Liveview')
+
+onMounted(async () => {
+  await nextTick()
+  teleportsReady.value = true
+})
 
 const leftStickModel = computed({
   get: () => ({ x: store.userJoysticks.yaw, y: store.userJoysticks.throttle }),
-  set: (val) => {
-    store.userJoysticks.yaw = val.x
-    store.userJoysticks.throttle = val.y
-  }
+  set: v => { store.userJoysticks.yaw = v.x; store.userJoysticks.throttle = v.y },
 })
-
 const rightStickModel = computed({
   get: () => ({ x: store.userJoysticks.roll, y: store.userJoysticks.pitch }),
-  set: (val) => {
-    store.userJoysticks.roll = val.x
-    store.userJoysticks.pitch = val.y
-  }
+  set: v => { store.userJoysticks.roll = v.x; store.userJoysticks.pitch = v.y },
 })
 
 let lastSend = 0
-function onJoystickChange() {
+function onJoystickChange() { throttleSend() }
+function onRightStickChange(v: { x: number; y: number }) {
+  store.userJoysticks.roll = v.x
+  store.userJoysticks.pitch = v.y
   throttleSend()
 }
-
-function onRightStickChange(val: { x: number; y: number }) {
-  store.userJoysticks.roll = val.x
-  store.userJoysticks.pitch = val.y
-  throttleSend()
-}
-
 function throttleSend() {
   const now = Date.now()
   if (now - lastSend >= 20) {
@@ -82,47 +113,23 @@ function throttleSend() {
 </script>
 
 <style scoped>
-.cockpit-layout {
-  display: grid;
-  grid-template-columns: 1fr 340px;
-  height: 100%;
-}
-
-.left-section {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: #000;
-  position: relative;
-  overflow: hidden;
-}
-
-.right-panel {
-  background: var(--panel-bg);
-  border-left: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  padding: 14px;
-  gap: 12px;
-}
-
-.panel-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--cyan);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.joysticks-container {
-  display: flex;
-  justify-content: space-around;
-  align-items: center;
-  padding: 10px 0;
-  background: var(--card-bg);
-  border-radius: 8px;
-  border: 1px solid var(--border);
-}
+.cockpit-layout{display:grid;grid-template-columns:1fr 340px;height:100%}
+.left-section{display:flex;flex-direction:column;height:100%;background:#000;position:relative;overflow:hidden}
+.flight-stage{position:relative;flex:1;min-height:0;background:#000}
+.main-stage-slot{position:absolute;inset:0;z-index:1;overflow:hidden}
+.hidden-view-slot{display:none}
+.pip-slot{overflow:hidden;border:2px solid #60708d;border-radius:8px;background:#000;box-shadow:0 4px 18px #000a;cursor:pointer}
+.pip-overlay-slot{position:absolute;right:16px;bottom:16px;width:230px;height:150px;z-index:20}
+.teleported-view{position:relative;width:100%;height:100%;overflow:hidden}
+.teleported-view>*:first-child{width:100%;height:100%}
+.small-view>*:first-child{pointer-events:none}
+.small-view-label{position:absolute;left:7px;bottom:6px;z-index:30;background:#0d101add;color:#fff;font-size:10px;font-weight:700;padding:3px 6px;border-radius:3px;pointer-events:none}
+.view-toolbar{position:absolute;left:10px;top:10px;z-index:35;display:flex;gap:5px;background:#0d101acc;border:1px solid #30384f;border-radius:6px;padding:4px}
+.view-toolbar button{border:1px solid #3b455f;background:#151b2a;color:#cbd5e1;border-radius:4px;font-size:10px;font-weight:700;padding:5px 8px;cursor:pointer}
+.view-toolbar button.active{color:#fff;border-color:var(--cyan);box-shadow:inset 0 0 0 1px var(--cyan)}
+.right-panel{background:var(--panel-bg);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;padding:14px;gap:12px}
+.panel-title{font-size:11px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px}
+.joysticks-container{display:flex;justify-content:space-around;align-items:center;padding:10px 0;background:var(--card-bg);border-radius:8px;border:1px solid var(--border)}
+.controls-pip-section{display:flex;flex-direction:column;gap:7px;margin-top:2px}
+.pip-controls-slot{position:relative;width:100%;height:190px;flex:0 0 190px}
 </style>
-
