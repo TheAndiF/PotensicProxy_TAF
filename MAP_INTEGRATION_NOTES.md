@@ -1,6 +1,6 @@
 # PotensicProxy TAF - Map integration notes
 
-Version: v0.4  
+Version: v0.5  
 Date: 2026-09-27
 
 ## Architecture
@@ -16,7 +16,7 @@ The map implementation keeps the existing frontend/backend boundary:
 
 The backend provides `GET /api/version`. The Settings view displays the project package, Android app, backend, WebUI, map module, map API and build-date versions.
 
-Current project package: `v0.4` / application version `0.4.0`.
+Current project package: `v0.5` / application version `0.5.0`.
 
 ## Map API
 
@@ -99,3 +99,17 @@ Map API v0.4 / API index 2 adds:
 - `POST /api/map/test`
 
 Existing map and BX3/USB/telemetry interfaces remain unchanged.
+
+
+## v0.5 - CI/package repair after GitHub Actions log review
+
+The uploaded GitHub Actions log stopped during `npm run build` with TypeScript error `TS2307` because `webui/src/components/cockpit/CockpitView.vue` imported `./MapView.vue`, but `MapView.vue` was not present in the checked-out commit. The complete v0.4 delivery contained the file, so the failure was an incremental-package/commit completeness problem rather than a Vue import-path defect.
+
+Version v0.5 repairs this by delivering the map integration cumulatively and by explicitly including `webui/src/components/cockpit/MapView.vue` in the repair set. The GitHub Actions workflow now checks the required map frontend source files before dependency installation/build and reports a direct file-specific error if a required source is missing.
+
+The same log also showed two non-fatal toolchain warnings. v0.5 addresses them as follows:
+
+- `actions/setup-java@v4` is updated to `actions/setup-java@v5` because v4 is deprecated.
+- npm 11 reported that the `esbuild` install script was not covered by the project `allowScripts` policy. `webui/package.json` now explicitly allows the reviewed `esbuild` dependency to run its install script so Vite can obtain its platform binary during clean CI installs.
+
+No BX3, USB, telemetry, video, flight-control or map HTTP interface was changed by this repair. Map API remains v2. Project/application/backend/WebUI/map-module versions are updated to v0.5 / 0.5.0.

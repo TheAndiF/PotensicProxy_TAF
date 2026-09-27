@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -33,6 +33,25 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: webui/package-lock.json
+
+      - name: Verify required map WebUI sources
+        shell: bash
+        run: |
+          required=(
+            webui/src/components/cockpit/MapView.vue
+            webui/src/components/settings/MapSettingsView.vue
+            webui/src/composables/useCockpitViewSettings.ts
+            webui/src/services/MapService.ts
+            webui/src/types/map.ts
+          )
+          missing=0
+          for file in "${required[@]}"; do
+            if [[ ! -f "$file" ]]; then
+              echo "::error file=$file::Required map integration source file is missing from the commit/package."
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Remove checked-in WebUI build output
         run: rm -rf app/src/main/assets/web
