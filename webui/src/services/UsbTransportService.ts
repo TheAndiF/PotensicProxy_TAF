@@ -231,21 +231,27 @@ export class UsbTransportService {
         .then(r => r.json())
         .then(d => {
           const wasConnected = store.connection.usbConnected
+          const wasOpen = store.connection.usbTransportOpen
+          store.connection.usbTransportOpen = Boolean(d.usbOpen ?? d.usbConnected ?? d.connected)
           store.connection.usbConnected = Boolean(d.usbConnected ?? d.connected)
 
           if (store.connection.usbConnected && !wasConnected) {
-            store.addLog('INFO', 'Controller/drone USB transport connected')
+            store.addLog('INFO', 'Controller/drone link confirmed by RX data')
           } else if (!store.connection.usbConnected && wasConnected) {
-            store.addLog('WARN', 'Controller/drone USB transport disconnected')
+            store.addLog('WARN', 'Controller/drone RX link lost')
+          } else if (store.connection.usbTransportOpen && !wasOpen && !store.connection.usbConnected) {
+            store.addLog('INFO', 'USB accessory opened; waiting for controller response...')
           }
 
-          // The backend is authoritative for USB/AOA. If the browser is reachable but
-          // Android is not connected, explicitly ask the service to open/re-open the accessory.
-          if (!store.connection.usbConnected && !d.permissionPending && !this.connectRequestInFlight) {
+          // Ask Android to open the accessory only when it is actually closed. If it is
+          // already open but silent, the backend connection supervisor performs handshake
+          // probes and controlled reopen attempts without browser-side reconnect spam.
+          if (!store.connection.usbTransportOpen && !d.permissionPending && !this.connectRequestInFlight) {
             this.connectRequestInFlight = true
             fetch(`${httpProto}//${host}/api/connect`, { method: 'POST', signal: AbortSignal.timeout(3000) })
               .then(r => r.json().catch(() => ({})))
               .then(result => {
+                store.connection.usbTransportOpen = Boolean(result.usbOpen ?? result.connected)
                 if (result.connected) store.connection.usbConnected = true
               })
               .catch(() => {})
@@ -254,6 +260,7 @@ export class UsbTransportService {
         })
         .catch(() => {
           store.connection.usbConnected = false
+          store.connection.usbTransportOpen = false
         })
     }
 

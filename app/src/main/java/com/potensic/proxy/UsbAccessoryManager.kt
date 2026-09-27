@@ -37,6 +37,8 @@ class UsbAccessoryManager(private val context: Context) {
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
     private var accessory: UsbAccessory? = null
     @Volatile private var pendingConnect = false
+    @Volatile private var openedAtMs: Long = 0
+    @Volatile private var firstRxLogged = false
     private val writeLock = Any()
 
     private val permissionReceiver = object : BroadcastReceiver() {
@@ -78,9 +80,24 @@ class UsbAccessoryManager(private val context: Context) {
     private var writeJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    /** True when the Android USB accessory file descriptor is open. */
     val isConnected: Boolean get() = connected.get()
     val isPermissionPending: Boolean get() = pendingConnect
     val hasAttachedAccessory: Boolean get() = !usbManager.accessoryList.isNullOrEmpty()
+    val openedAt: Long get() = openedAtMs
+
+    /**
+     * AOA open alone is not enough to claim that the controller/drone link is alive.
+     * Require actual RX traffic from usb_link/data_link and keep it fresh.
+     */
+    val isLinkReady: Boolean
+        get() = connected.get() && lastRecvTime > 0L && (System.currentTimeMillis() - lastRecvTime) < 6000L
+
+    val linkSilenceMs: Long
+        get() {
+            val base = if (lastRecvTime > 0L) lastRecvTime else openedAtMs
+            return if (base > 0L) (System.currentTimeMillis() - base).coerceAtLeast(0L) else Long.MAX_VALUE
+        }
 
     // Stats
     var bytesSent: Long = 0; private set
@@ -182,6 +199,8 @@ class UsbAccessoryManager(private val context: Context) {
 
         connected.set(true)
         running.set(true)
+        openedAtMs = System.currentTimeMillis()
+        firstRxLogged = false
         bytesSent = 0
         bytesReceived = 0
         packetsSent = 0
@@ -214,6 +233,8 @@ class UsbAccessoryManager(private val context: Context) {
         running.set(false)
         connected.set(false)
         pendingConnect = false
+        openedAtMs = 0L
+        firstRxLogged = false
 
         readJob?.cancel()
         writeJob?.cancel()
@@ -230,6 +251,30 @@ class UsbAccessoryManager(private val context: Context) {
 
         Log.i("[USB] Disconnected. Stats: sent=$bytesSent bytes ($packetsSent pkts), recv=$bytesReceived bytes ($packetsReceived pkts)")
         listener?.onDisconnected()
+    }
+
+    /**
+     * Re-send the AOA application handshake on an already-open accessory.
+     * This is used by the connection supervisor when the file descriptor opened
+     * successfully but no controller RX traffic has appeared yet.
+     */
+    fun sendHandshakeProbe(): Boolean {
+        if (!connected.get()) return false
+        return try {
+            synchronized(writeLock) {
+                val os = outputStream ?: return false
+                os.write(DroneProtocol.HANDSHAKE)
+                os.flush()
+                bytesSent += DroneProtocol.HANDSHAKE.size
+                packetsSent++
+                lastSendTime = System.currentTimeMillis()
+            }
+            Log.i("[USB] AOA handshake probe sent")
+            true
+        } catch (e: Exception) {
+            Log.e("[USB] AOA handshake probe failed", e)
+            false
+        }
     }
 
     /**
@@ -279,6 +324,10 @@ class UsbAccessoryManager(private val context: Context) {
                     bytesReceived += bytesRead
                     packetsReceived++
                     lastRecvTime = System.currentTimeMillis()
+                    if (!firstRxLogged) {
+                        firstRxLogged = true
+                        Log.i("[USB] Controller link confirmed by first RX packet (${bytesRead} bytes)")
+                    }
 
                     // Minimal logging to avoid blocking the read thread
                     if (packetsReceived <= 3) {

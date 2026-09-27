@@ -527,8 +527,9 @@ class WebServer(
                 get("/api/status") {
                     call.response.header("Access-Control-Allow-Origin", "*")
                     val json = JSONObject().apply {
-                        put("connected", usbManager.isConnected || (ProxyService.instance?.wifiTransport?.isConnected == true))
-                        put("usbConnected", usbManager.isConnected)
+                        put("connected", usbManager.isLinkReady || (ProxyService.instance?.wifiTransport?.isConnected == true))
+                        put("usbConnected", usbManager.isLinkReady)
+                        put("usbOpen", usbManager.isConnected)
                         put("accessoryAttached", usbManager.hasAttachedAccessory)
                         put("permissionPending", usbManager.isPermissionPending)
                         put("mode", if (ProxyService.instance?.wifiTransport?.isConnected == true) "wifi" else if (usbManager.isConnected) "usb" else "none")
@@ -538,6 +539,7 @@ class WebServer(
                         put("packetsReceived", usbManager.packetsReceived)
                         put("lastSendMs", usbManager.lastSendTime)
                         put("lastRecvMs", usbManager.lastRecvTime)
+                        put("linkSilenceMs", if (usbManager.isConnected) usbManager.linkSilenceMs else -1L)
                         put("wsClients", wsClients.size)
                         put("usbWsClients", usbWsClients.size)
                         put("joystick", JSONObject().apply {
@@ -549,7 +551,7 @@ class WebServer(
                         })
                     }
                     call.respondText(json.toString(), ContentType.Application.Json)
-                    Log.d("[WebServer] GET /api/status ÔåÆ connected=${usbManager.isConnected}")
+                    Log.d("[WebServer] GET /api/status -> open=${usbManager.isConnected} linkReady=${usbManager.isLinkReady}")
                 }
 
                 // Logs
@@ -574,7 +576,8 @@ class WebServer(
                     val ok = service?.ensureUsbConnection() ?: usbManager.connect()
                     val json = JSONObject().apply {
                         put("success", ok || usbManager.isConnected)
-                        put("connected", usbManager.isConnected)
+                        put("connected", usbManager.isLinkReady)
+                        put("usbOpen", usbManager.isConnected)
                         put("accessoryAttached", usbManager.hasAttachedAccessory)
                         put("permissionPending", usbManager.isPermissionPending)
                     }

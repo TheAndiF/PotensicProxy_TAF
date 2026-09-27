@@ -36,9 +36,15 @@
             </span>
           </div>
           <div class="diag-item">
-            <span class="diag-label">Controller / Drone USB transport:</span>
+            <span class="diag-label">Android USB accessory:</span>
+            <span :class="store.connection.usbTransportOpen ? 'diag-ok' : 'diag-warn'">
+              {{ store.connection.usbTransportOpen ? '✓ Open' : '✗ Closed' }}
+            </span>
+          </div>
+          <div class="diag-item">
+            <span class="diag-label">Controller / Drone RX link:</span>
             <span :class="store.connection.usbConnected ? 'diag-ok' : 'diag-warn'">
-              {{ store.connection.usbConnected ? '✓ Connected' : '✗ Not Connected' }}
+              {{ store.connection.usbConnected ? '✓ Connected (RX confirmed)' : (store.connection.usbTransportOpen ? '… Waiting for RX' : '✗ Not Connected') }}
             </span>
           </div>
           <div class="diag-item">
@@ -349,16 +355,16 @@ onMounted(async () => {
   // 1. Initialize WebCodecs
   await initWebCodecs()
 
-  // 2. Start LiveView only after the Android backend confirms a real USB transport.
-  //    WebSocket OPEN by itself only means browser <-> phone is reachable.
+  // 2. Start LiveView once Android has opened the AOA accessory. The backend then
+  //    performs handshake/recovery until real RX traffic confirms the controller link.
   watch(
-    () => store.connection.usbConnected,
-    (connected) => {
-      if (connected && !autoActivationSent) {
+    () => store.connection.usbTransportOpen,
+    (open) => {
+      if (open && !autoActivationSent) {
         autoActivationSent = true
         setTimeout(() => activateLiveView(h265Supported.value), 300)
       }
-      if (!connected) autoActivationSent = false
+      if (!open) autoActivationSent = false
     },
     { immediate: true }
   )

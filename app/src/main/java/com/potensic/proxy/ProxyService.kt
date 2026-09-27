@@ -137,15 +137,45 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     private fun startConnectionSupervisor() {
         if (connectionSupervisorJob?.isActive == true) return
         connectionSupervisorJob = scope.launch {
+            var lastProbeMs = 0L
+            var lastReopenMs = 0L
             while (isActive) {
-                if (!usbManager.isConnected && usbManager.hasAttachedAccessory && !usbManager.isPermissionPending) {
-                    try {
-                        ensureUsbConnection()
-                    } catch (e: Exception) {
-                        Log.e("[Service] USB reconnect attempt failed: ${e.message}")
+                try {
+                    if (!usbManager.isConnected) {
+                        if (usbManager.hasAttachedAccessory && !usbManager.isPermissionPending) {
+                            ensureUsbConnection()
+                        }
+                    } else if (!usbManager.isLinkReady) {
+                        val silence = usbManager.linkSilenceMs
+                        val now = System.currentTimeMillis()
+
+                        // The FD is open, but the RC has not answered yet. Re-send the
+                        // AOA handshake and camera/flight initialization after a short
+                        // settling interval. This handles the common race where usb_link
+                        // becomes ready slightly after Android openAccessory().
+                        if (silence >= 2500L && now - lastProbeMs >= 2500L) {
+                            Log.w("[Service] USB accessory open but no RX for ${silence}ms - probing link")
+                            usbManager.sendHandshakeProbe()
+                            activateLiveView()
+                            lastProbeMs = now
+                        }
+
+                        // If the accessory remains completely silent, force a clean reopen.
+                        // Keep this deliberately slow so a permission dialog or drone boot
+                        // cannot cause a reconnect storm.
+                        if (silence >= 10000L && now - lastReopenMs >= 10000L) {
+                            Log.w("[Service] USB link still silent - reopening accessory")
+                            usbManager.disconnect()
+                            delay(350)
+                            ensureUsbConnection()
+                            lastReopenMs = System.currentTimeMillis()
+                            lastProbeMs = lastReopenMs
+                        }
                     }
+                } catch (e: Exception) {
+                    Log.e("[Service] USB connection supervisor error: ${e.message}")
                 }
-                delay(2000)
+                delay(1000)
             }
         }
     }
@@ -254,7 +284,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     // === UsbAccessoryManager.Listener ===
 
     override fun onConnected() {
-        Log.i("[Service] USB Connected - resetting and starting loops")
+        Log.i("[Service] USB accessory opened - waiting for controller RX")
         videoExtractor.reset()
 
         startControlLoop()

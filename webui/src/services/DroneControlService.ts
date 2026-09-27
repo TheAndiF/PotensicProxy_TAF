@@ -75,8 +75,8 @@ export class DroneControlService {
 
   static requestIdr() {
     const store = useDroneStore()
-    if (!store.connection.usbConnected) {
-      store.addLog('WARN', 'IDR request skipped: controller/drone transport is not connected')
+    if (!store.connection.usbTransportOpen) {
+      store.addLog('WARN', 'IDR request skipped: USB accessory is not open')
       return
     }
     const host = store.normalizedHost
@@ -97,8 +97,8 @@ export class DroneControlService {
 
   static activateLiveView(preferH265 = true) {
     const store = useDroneStore()
-    if (!store.connection.usbConnected) {
-      store.addLog('WARN', 'LiveView activation deferred: controller/drone transport is not connected')
+    if (!store.connection.usbTransportOpen) {
+      store.addLog('WARN', 'LiveView activation deferred: USB accessory is not open')
       return
     }
 

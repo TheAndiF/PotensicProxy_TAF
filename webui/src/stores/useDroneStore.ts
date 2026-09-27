@@ -26,6 +26,7 @@ export const useDroneStore = defineStore('drone', () => {
   // Connection State
   const connection = reactive<ConnectionStatus>({
     usbConnected: false,
+    usbTransportOpen: false,
     wsConnected: false,
     phoneIp: '127.0.0.1',
     targetHost: getInitialHost()

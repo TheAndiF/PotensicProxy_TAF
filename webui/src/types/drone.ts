@@ -32,7 +32,10 @@ export interface JoystickState {
 }
 
 export interface ConnectionStatus {
+  /** Confirmed controller/drone link: actual RX traffic received recently. */
   usbConnected: boolean
+  /** Android has opened the AOA accessory, but the controller may not have replied yet. */
+  usbTransportOpen: boolean
   wsConnected: boolean
   phoneIp: string
   targetHost: string
