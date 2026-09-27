@@ -55,7 +55,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         usbManager = UsbAccessoryManager(applicationContext)
         usbManager.listener = this
 
-        webServer = WebServer(usbManager, videoExtractor, videoDecoder) { path ->
+        webServer = WebServer(usbManager, videoExtractor, videoDecoder, filesDir) { path ->
             try {
                 assets.open(path).use { it.readBytes() }
             } catch (e: Exception) {

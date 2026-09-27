@@ -1,6 +1,6 @@
 # PotensicProxy TAF - Map integration notes
 
-Version: v0.5  
+Version: v0.6  
 Date: 2026-09-27
 
 ## Architecture
@@ -16,7 +16,7 @@ The map implementation keeps the existing frontend/backend boundary:
 
 The backend provides `GET /api/version`. The Settings view displays the project package, Android app, backend, WebUI, map module, map API and build-date versions.
 
-Current project package: `v0.5` / application version `0.5.0`.
+Current project package: `v0.6` / application version `0.6.0`.
 
 ## Map API
 
@@ -113,3 +113,22 @@ The same log also showed two non-fatal toolchain warnings. v0.5 addresses them a
 - npm 11 reported that the `esbuild` install script was not covered by the project `allowScripts` policy. `webui/package.json` now explicitly allows the reviewed `esbuild` dependency to run its install script so Vite can obtain its platform binary during clean CI installs.
 
 No BX3, USB, telemetry, video, flight-control or map HTTP interface was changed by this repair. Map API remains v2. Project/application/backend/WebUI/map-module versions are updated to v0.5 / 0.5.0.
+
+
+## v0.6 - Android constructor repair after GitHub Actions log review
+
+The GitHub Actions build for v0.5 completed the Vue/TypeScript/Vite production build successfully and then failed during `:app:compileDebugKotlin`. The compiler reported `ProxyService.kt:58:58 No value passed for parameter 'filesDir'`.
+
+Cause: `WebServer` had already been extended to accept a `filesDir: File` argument and uses it to construct `MapBackend(filesDir)`, but `ProxyService` still instantiated `WebServer` with the older constructor signature. This was an integration mismatch between the map backend change and the Android service wiring.
+
+Repair: `ProxyService` now passes the Android service `filesDir` into `WebServer`. This gives `MapBackend` its intended app-private storage root for map configuration, tile cache and offline-region metadata. No new permission or external storage path is introduced.
+
+Validation performed for this delivery:
+
+- Required map source files are present in the package.
+- `vue-tsc --noEmit` passes from the repaired package; no Vue/TypeScript source error is present.
+- The supplied GitHub Actions log already shows the complete Vite production bundle succeeding before the Android Kotlin compiler is reached.
+- A source-diff check verifies that the functional Android fix is limited to the `WebServer` construction plus the deliberate v0.6 version/documentation updates.
+- A complete local Android Gradle build could not be repeated in the isolated repair environment because Gradle 8.11.1 is not cached and outbound DNS/network access is unavailable. The v0.6 repair therefore addresses the exact Kotlin compiler error reported by CI; the next GitHub Actions run remains the authoritative full APK build verification.
+
+No BX3, USB, telemetry, video, flight-control or map HTTP interface was changed by this repair. Map API remains v2. Project/application/backend/WebUI/map-module versions are updated to v0.6 / 0.6.0.
