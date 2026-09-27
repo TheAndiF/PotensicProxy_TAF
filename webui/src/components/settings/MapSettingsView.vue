@@ -17,7 +17,6 @@
       <el-skeleton v-else :rows="2" animated />
     </el-card>
 
-
     <el-card class="card">
       <template #header>Cockpit display</template>
       <el-form label-width="190px">
@@ -44,16 +43,49 @@
 
     <el-card class="card">
       <template #header>Map source</template>
-      <el-form v-if="config" label-width="170px">
+      <el-form v-if="config" label-width="190px">
         <el-form-item label="Provider">
           <el-select v-model="config.provider" @change="applyPreset">
             <el-option label="OpenStreetMap (online only)" value="osm" />
-            <el-option label="Mapbox Satellite" value="mapbox-satellite" />
+            <el-option label="Mapbox Satellite (Raster Tiles)" value="mapbox-satellite" />
+            <el-option label="Mapbox Studio Style (Static Tiles)" value="mapbox-style" />
             <el-option label="Custom XYZ" value="custom" />
           </el-select>
         </el-form-item>
-        <el-form-item label="Tile URL"><el-input v-model="config.tileUrlTemplate" /></el-form-item>
-        <el-form-item label="API key / token"><el-input v-model="config.accessToken" type="password" show-password placeholder="stored only in backend" /></el-form-item>
+
+        <el-form-item v-if="config.provider === 'mapbox-style'" label="Mapbox style">
+          <el-input v-model="config.mapboxStyle" placeholder="mapbox://styles/mapbox/streets-v12" />
+        </el-form-item>
+
+        <el-alert
+          v-if="config.provider === 'mapbox-style'"
+          class="source-info"
+          type="info"
+          :closable="false"
+          show-icon
+          title="This mode rasterizes a compatible Mapbox Studio style through the Static Tiles API. Mapbox Standard and Standard Satellite are currently not supported by that API; use Mapbox Satellite raster or a compatible Studio style instead."
+        />
+
+        <el-form-item v-if="config.provider === 'osm' || config.provider === 'custom'" label="Tile URL">
+          <el-input v-model="config.tileUrlTemplate" />
+        </el-form-item>
+
+        <el-form-item v-if="config.provider !== 'osm'" label="API key / token">
+          <el-input
+            v-model="config.accessToken"
+            type="password"
+            show-password
+            placeholder="stored in the local backend; returned only as ********"
+          />
+        </el-form-item>
+
+        <el-form-item v-if="isMapbox" label="Token handling">
+          <div class="token-help">
+            <el-tag v-if="effectiveTokenType !== 'none'" :type="tokenTagType">{{ tokenTypeLabel }}</el-tag>
+            <span>pk., sk. and tk. Mapbox tokens are accepted when the selected resource is permitted by their scopes/restrictions. Secret tokens are used only by the backend and are never returned to the WebUI.</span>
+          </div>
+        </el-form-item>
+
         <el-form-item label="Attribution"><el-input v-model="config.attribution" /></el-form-item>
         <el-form-item label="Default zoom"><el-slider v-model="config.defaultZoom" :min="1" :max="19" show-input /></el-form-item>
         <el-form-item label="Map data">
@@ -63,7 +95,24 @@
             <el-radio-button value="online">Online</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item><el-button type="primary" @click="saveConfig">Save</el-button></el-form-item>
+
+        <el-form-item>
+          <el-button :loading="testing" @click="testConnection">Test connection</el-button>
+          <el-button type="primary" :loading="saving" @click="saveConfig">Save & test</el-button>
+        </el-form-item>
+
+        <el-alert
+          v-if="connectionTest"
+          class="source-info"
+          :type="connectionTest.ok ? 'success' : 'error'"
+          :closable="false"
+          show-icon
+          :title="connectionTest.message"
+        >
+          <div>
+            {{ connectionTest.resource }} · token: {{ connectionTest.tokenType }} · HTTP {{ connectionTest.httpStatus || '-' }}
+          </div>
+        </el-alert>
       </el-form>
     </el-card>
 
@@ -74,7 +123,14 @@
         class="offline-warning"
         type="warning"
         :closable="false"
-        title="The public OpenStreetMap tile service does not permit bulk/offline preloading. Select Mapbox or a custom provider that explicitly permits offline downloads."
+        title="The public OpenStreetMap tile service does not permit bulk/offline preloading. Select a provider whose terms explicitly permit offline downloads."
+      />
+      <el-alert
+        v-else-if="isMapbox"
+        class="offline-warning"
+        type="info"
+        :closable="false"
+        title="Mapbox's documented full offline workflow is provided by its mobile Maps SDK/TileStore. Use this backend prefetch only when your Mapbox plan and terms permit the intended caching/offline use."
       />
       <el-form label-width="170px">
         <el-form-item label="Latitude"><el-input-number v-model="draft.latitude" :precision="6" :step="0.001" /></el-form-item>
@@ -89,7 +145,8 @@
     <el-card class="card">
       <template #header>Stored areas</template>
       <el-table :data="regions" empty-text="No offline areas">
-        <el-table-column prop="id" label="Region" min-width="170" />
+        <el-table-column prop="id" label="Region" min-width="160" />
+        <el-table-column prop="provider" label="Provider" min-width="130" />
         <el-table-column label="Radius" width="90"><template #default="s">{{ (s.row.radiusM / 1000).toFixed(1) }} km</template></el-table-column>
         <el-table-column label="Zoom" width="90"><template #default="s">{{ s.row.minZoom }}-{{ s.row.maxZoom }}</template></el-table-column>
         <el-table-column label="Status" min-width="180">
@@ -109,7 +166,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { MapService } from '../../services/MapService'
 import { useDroneStore } from '../../stores/useDroneStore'
-import type { MapConfig, OfflineRegion, VersionInfo } from '../../types/map'
+import type { MapConfig, MapConnectionTest, MapboxTokenType, OfflineRegion, VersionInfo } from '../../types/map'
 import { useCockpitViewSettings } from '../../composables/useCockpitViewSettings'
 
 const store = useDroneStore()
@@ -118,33 +175,89 @@ const config = ref<MapConfig | null>(null)
 const version = ref<VersionInfo | null>(null)
 const versionError = ref('')
 const regions = ref<OfflineRegion[]>([])
+const connectionTest = ref<MapConnectionTest | null>(null)
+const testing = ref(false)
+const saving = ref(false)
 const draft = reactive({ latitude: 52.52, longitude: 13.405, radiusKm: 5, minZoom: 11, maxZoom: 16 })
 let timer: ReturnType<typeof setInterval> | undefined
 
+const isMapbox = computed(() => config.value?.provider === 'mapbox-satellite' || config.value?.provider === 'mapbox-style')
 const hasGps = computed(() => {
   const lat = store.telemetry.latitude
   const lon = store.telemetry.longitude
   return Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 && !(lat === 0 && lon === 0)
 })
 
+function localTokenType(token: string): MapboxTokenType {
+  if (token === '********') return config.value?.tokenType || 'none'
+  if (token.startsWith('pk.')) return 'public'
+  if (token.startsWith('sk.')) return 'secret'
+  if (token.startsWith('tk.')) return 'temporary'
+  return token ? 'unknown' : 'none'
+}
+
+const effectiveTokenType = computed<MapboxTokenType>(() => connectionTest.value?.tokenType || localTokenType(config.value?.accessToken || ''))
+const tokenTypeLabel = computed(() => ({ public: 'Public token (pk.)', secret: 'Secret token (sk.)', temporary: 'Temporary token (tk.)', unknown: 'Unknown token format', none: 'No token' }[effectiveTokenType.value]))
+const tokenTagType = computed(() => effectiveTokenType.value === 'secret' ? 'warning' : effectiveTokenType.value === 'unknown' ? 'danger' : 'info')
+
 function applyPreset() {
   if (!config.value) return
+  connectionTest.value = null
   if (config.value.provider === 'osm') {
+    config.value.style = 'street'
     config.value.tileUrlTemplate = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
     config.value.attribution = '© OpenStreetMap contributors'
-    config.value.accessToken = ''
   } else if (config.value.provider === 'mapbox-satellite') {
-    config.value.tileUrlTemplate = 'https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles/256/{z}/{x}/{y}?access_token={key}'
+    config.value.style = 'satellite'
+    config.value.attribution = '© Mapbox © OpenStreetMap'
+  } else if (config.value.provider === 'mapbox-style') {
+    config.value.style = 'mapbox-style'
+    if (!config.value.mapboxStyle) config.value.mapboxStyle = 'mapbox://styles/mapbox/streets-v12'
     config.value.attribution = '© Mapbox © OpenStreetMap'
   }
 }
 
-async function saveConfig() {
+async function testConnection(showToast = true) {
+  if (!config.value) return false
+  testing.value = true
+  connectionTest.value = null
   try {
-    config.value = await MapService.saveConfig(config.value!)
-    ElMessage.success('Map settings saved')
+    connectionTest.value = await MapService.testConfig(config.value)
+    if (showToast) {
+      if (connectionTest.value.ok) ElMessage.success('Map provider connection successful')
+      else ElMessage.warning(connectionTest.value.message)
+    }
+    return connectionTest.value.ok
+  } catch (e: any) {
+    const message = e?.message || 'Could not test map provider'
+    connectionTest.value = {
+      ok: false,
+      provider: config.value.provider,
+      tokenType: localTokenType(config.value.accessToken),
+      httpStatus: 0,
+      resource: '',
+      contentType: '',
+      message
+    }
+    if (showToast) ElMessage.error(message)
+    return false
+  } finally {
+    testing.value = false
+  }
+}
+
+async function saveConfig() {
+  if (!config.value) return
+  saving.value = true
+  try {
+    config.value = await MapService.saveConfig(config.value)
+    const ok = await testConnection(false)
+    if (ok) ElMessage.success('Map settings saved and provider test passed')
+    else ElMessage.warning(`Map settings saved, but provider test failed: ${connectionTest.value?.message || 'unknown error'}`)
   } catch (e: any) {
     ElMessage.error(e?.message || 'Could not save map settings')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -216,5 +329,5 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.settings-page{height:100%;overflow:auto;padding:18px;max-width:1000px;margin:auto}.settings-page h2{margin:0 0 14px;color:var(--cyan)}.card{margin-bottom:14px;background:var(--panel-bg);border-color:var(--border)}.sep{padding:0 10px;color:var(--text-muted)}.offline-warning{margin-bottom:14px}.version-card :deep(.el-descriptions__label){width:150px}
+.settings-page{height:100%;overflow:auto;padding:18px;max-width:1050px;margin:auto}.settings-page h2{margin:0 0 14px;color:var(--cyan)}.card{margin-bottom:14px;background:var(--panel-bg);border-color:var(--border)}.sep{padding:0 10px;color:var(--text-muted)}.offline-warning,.source-info{margin-bottom:14px}.version-card :deep(.el-descriptions__label){width:150px}.token-help{display:flex;gap:10px;align-items:flex-start;line-height:1.45;color:var(--text-muted)}.token-help .el-tag{flex:none;margin-top:1px}
 </style>

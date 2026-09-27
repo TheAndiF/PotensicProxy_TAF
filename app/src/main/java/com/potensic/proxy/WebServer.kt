@@ -1,4 +1,4 @@
-﻿package com.potensic.proxy
+package com.potensic.proxy
 
 import io.ktor.server.application.*
 import io.ktor.server.cio.*
@@ -14,6 +14,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.Dispatchers
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
+import java.io.File
 
 /**
  * Embedded HTTP + WebSocket server for remote drone control.
@@ -33,11 +34,13 @@ class WebServer(
     private val usbManager: UsbAccessoryManager,
     private val videoExtractor: VideoExtractor,
     private val videoDecoder: VideoDecoder,
+    filesDir: File,
     private val assetLoader: (String) -> ByteArray?,
 ) {
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
     private val wsClients = CopyOnWriteArrayList<DefaultWebSocketSession>()
     private val usbWsClients = CopyOnWriteArrayList<DefaultWebSocketSession>()
+    private val mapBackend = MapBackend(filesDir)
 
     // Current joystick state (updated by WebSocket clients)
     @Volatile var throttle: Short = 0
@@ -119,6 +122,56 @@ class WebServer(
                     } else {
                         call.respond(HttpStatusCode.NotFound)
                     }
+                }
+
+                // Version index. Kept in the backend so the UI can show the version of the actually connected package.
+                get("/api/version") {
+                    call.respondText(mapBackend.versionInfo().toString(), ContentType.Application.Json)
+                }
+
+                // Map configuration is backend-owned. The browser never contacts tile providers directly.
+                get("/api/map/config") {
+                    call.respondText(mapBackend.publicConfig().toString(), ContentType.Application.Json)
+                }
+                post("/api/map/config") {
+                    try {
+                        val result = mapBackend.updateConfig(JSONObject(call.receiveText()))
+                        call.respondText(result.toString(), ContentType.Application.Json)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", e.message ?: "invalid config").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
+                }
+                post("/api/map/test") {
+                    try {
+                        val input = JSONObject(call.receiveText())
+                        val result = withContext(Dispatchers.IO) { mapBackend.testConnection(input) }
+                        call.respondText(result.toString(), ContentType.Application.Json)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", e.message ?: "map provider test failed").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
+                }
+                get("/api/map/tiles/{z}/{x}/{y}") {
+                    val z = call.parameters["z"]?.toIntOrNull(); val x = call.parameters["x"]?.toIntOrNull(); val y = call.parameters["y"]?.toIntOrNull()
+                    if (z == null || x == null || y == null) { call.respond(HttpStatusCode.BadRequest); return@get }
+                    val tile = withContext(Dispatchers.IO) { mapBackend.tile(z, x, y) }
+                    if (tile == null) call.respond(HttpStatusCode.NotFound)
+                    else call.respondBytes(tile.first, ContentType.parse(tile.second))
+                }
+                get("/api/map/regions") { call.respondText(mapBackend.regions().toString(), ContentType.Application.Json) }
+                post("/api/map/regions") {
+                    try {
+                        val region = mapBackend.startRegionDownload(JSONObject(call.receiveText()))
+                        call.respondText(region.toString(), ContentType.Application.Json, HttpStatusCode.Accepted)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", e.message ?: "invalid region").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
+                }
+                get("/api/map/regions/{id}") {
+                    val r = mapBackend.job(call.parameters["id"] ?: "")
+                    if (r == null) call.respond(HttpStatusCode.NotFound) else call.respondText(r.toString(), ContentType.Application.Json)
+                }
+                delete("/api/map/regions/{id}") {
+                    if (mapBackend.deleteRegion(call.parameters["id"] ?: "")) call.respond(HttpStatusCode.NoContent) else call.respond(HttpStatusCode.NotFound)
                 }
 
                 // USB WebSocket passthrough (bidirectional)

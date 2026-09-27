@@ -1,6 +1,6 @@
 # PotensicProxy TAF - Map integration notes
 
-Version: v0.3  
+Version: v0.4  
 Date: 2026-09-27
 
 ## Architecture
@@ -16,7 +16,7 @@ The map implementation keeps the existing frontend/backend boundary:
 
 The backend provides `GET /api/version`. The Settings view displays the project package, Android app, backend, WebUI, map module, map API and build-date versions.
 
-Current project package: `v0.3` / application version `0.3.0`.
+Current project package: `v0.4` / application version `0.4.0`.
 
 ## Map API
 
@@ -73,3 +73,29 @@ The preferences are stored locally in the WebUI (`localStorage`) and do not chan
 The cockpit provides direct LIVE / MAP / PIP controls so Liveview and Map can be swapped even when the small window is hidden. Clicking the small window also swaps the large and small views. Vue Teleport is used to move the existing view instance between the large area and the selected small-window location without introducing another telemetry or map interface.
 
 Project/application/backend/WebUI/map-module version index is updated to v0.3 / 0.3.0.
+
+## v0.4 - Mapbox token/resource handling
+
+Version v0.4 extends the backend-owned map provider configuration while keeping the frontend/backend separation intact.
+
+- Mapbox access tokens with the documented `pk.`, `sk.` and `tk.` prefixes are accepted when their scopes/restrictions permit the selected resource.
+- The WebUI never receives the stored token value from `GET /api/map/config`; the backend returns only `********`, `hasAccessToken` and a derived token type.
+- A newly typed token is present in the local browser only while the user enters/tests/saves it. After storage, the backend does not echo it back.
+- Secret (`sk.`) tokens are used only for backend HTTP requests. They are never embedded in the browser tile URL.
+- `POST /api/map/test` tests the configured map resource and returns only status, token type and a token-free resource label.
+- `Save & test` persists the configuration and immediately performs the provider test. A separate `Test connection` action is available before saving.
+
+Supported Mapbox rendering paths in the existing 256 px XYZ map renderer:
+
+1. **Mapbox Satellite (Raster Tiles API)** - uses the `mapbox.satellite` raster tileset.
+2. **Mapbox Studio Style (Static Tiles API)** - rasterizes a compatible Mapbox Studio style such as `mapbox://styles/mapbox/streets-v12` into XYZ tiles.
+
+Mapbox Standard and Mapbox Standard Satellite are not exposed through the Static Tiles API at the time of this project revision. They therefore cannot be rendered by the current backend-raster path without replacing/extending the renderer with a full Mapbox/GL style client. The Settings UI reports this limitation instead of silently accepting an unsupported style.
+
+Tile cache paths are now namespaced by provider/resource identity. Switching from OSM to Mapbox, from Satellite to a Studio style, or between custom tile URLs can no longer accidentally reuse tiles cached for a different source. The access token itself is deliberately not part of the cache namespace.
+
+Map API v0.4 / API index 2 adds:
+
+- `POST /api/map/test`
+
+Existing map and BX3/USB/telemetry interfaces remain unchanged.
