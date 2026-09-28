@@ -11,14 +11,20 @@ android {
         applicationId = "com.potensic.proxy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.913"
+        versionCode = 13
+        versionName = "0.914"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
         }
+    }
+
+    // VersionInfo reads BuildConfig.VERSION_NAME at runtime.
+    // AGP 8+ may not generate BuildConfig unless explicitly enabled.
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {

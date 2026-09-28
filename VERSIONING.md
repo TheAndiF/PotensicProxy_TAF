@@ -15,3 +15,7 @@ combined version information.
 
 For a new release, update these two central source values. `versionCode` must
 also be incremented for Android package upgrades.
+
+## Android BuildConfig requirement
+
+`VersionInfo.kt` reads the backend version from `BuildConfig.VERSION_NAME`. With Android Gradle Plugin 8.x, BuildConfig generation is explicitly enabled in `app/build.gradle.kts` via `buildFeatures { buildConfig = true }`. Keep this enabled so the runtime backend version remains sourced from the central Android `versionName`.
