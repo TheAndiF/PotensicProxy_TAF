@@ -1,5 +1,6 @@
 <template>
   <div class="usb-view-layout">
+    <UsbCapturePanel />
     <PacketConstructor ref="constructorRef" />
     <PacketMonitor @load-hex="onLoadHex" />
   </div>
@@ -8,6 +9,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import PacketConstructor from './PacketConstructor.vue'
+import UsbCapturePanel from './UsbCapturePanel.vue'
 import PacketMonitor from './PacketMonitor.vue'
 
 const constructorRef = ref<InstanceType<typeof PacketConstructor> | null>(null)

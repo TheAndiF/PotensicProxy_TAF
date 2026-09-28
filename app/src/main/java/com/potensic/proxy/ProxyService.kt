@@ -35,6 +35,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     lateinit var webServer: WebServer; private set
     val videoExtractor = VideoExtractor()
     val videoDecoder = VideoDecoder()
+    lateinit var transportCapture: TransportCaptureManager; private set
 
     // WiFi Direct transport
     var wifiTransport: WifiTransport? = null; private set
@@ -57,6 +58,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
         createNotificationChannel()
 
+        transportCapture = TransportCaptureManager(filesDir)
+        videoExtractor.captureManager = transportCapture
         usbManager = UsbAccessoryManager(applicationContext)
         usbManager.listener = this
 
@@ -339,6 +342,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     }
 
     fun sendAny(data: ByteArray) {
+        if (::transportCapture.isInitialized) transportCapture.event("TX", "packet", data.joinToString("") { "%02x".format(it.toInt() and 0xff) }, data.size)
         wifiTransport?.let {
             if (it.isConnected) {
                 it.send(data)
@@ -353,6 +357,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     }
 
     fun sendDirectAny(data: ByteArray) {
+        if (::transportCapture.isInitialized) transportCapture.event("TX", "packet", data.joinToString("") { "%02x".format(it.toInt() and 0xff) }, data.size)
         wifiTransport?.let {
             if (it.isConnected) {
                 it.sendDirect(data)
@@ -369,6 +374,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     override fun onDataReceived(data: ByteArray, length: Int) {
         // Never drop USB data ÔÇö dropping causes corrupted frames
         val copy = data.copyOf(length)
+        transportCapture.recordUsbRx(copy)
         rawDataQueue.offer(copy)
         scope.launch {
             webServer.broadcastUsbData(copy)

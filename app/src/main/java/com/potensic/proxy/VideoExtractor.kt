@@ -19,6 +19,8 @@ import java.util.zip.CRC32
  */
 class VideoExtractor {
 
+    @Volatile var captureManager: TransportCaptureManager? = null
+
     companion object {
         val VIDEO_MAGIC = byteArrayOf(0xCC.toByte(), 0xBB.toByte(), 0xAA.toByte(), 0xFF.toByte())
         const val FE_HEADER_SIZE = 16
@@ -243,6 +245,7 @@ class VideoExtractor {
         feFramesParsed.incrementAndGet()
 
         val payload = packet.copyOfRange(FE_HEADER_SIZE, FE_HEADER_SIZE + payloadLen)
+        captureManager?.recordFePacket(feType, packet, payload)
         if (feType != 0x06) {
             if (payload.size > 6) TelemetryParser.parse(feType, payload)
             return

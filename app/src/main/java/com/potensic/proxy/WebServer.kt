@@ -533,6 +533,33 @@ class WebServer(
                     }
                 }
 
+                // Raw transport capture for ATOM/ATOM 2 protocol comparison
+                post("/api/capture/start") {
+                    call.response.header("Access-Control-Allow-Origin", "*")
+                    val mgr = ProxyService.instance?.transportCapture
+                    if (mgr == null) {
+                        call.respondText(JSONObject().put("started", false).put("error", "service unavailable").toString(), ContentType.Application.Json, HttpStatusCode.ServiceUnavailable)
+                    } else {
+                        val st = mgr.start()
+                        call.respondText(JSONObject().put("started", true).put("directory", st.directory).toString(), ContentType.Application.Json)
+                    }
+                }
+                post("/api/capture/stop") {
+                    call.response.header("Access-Control-Allow-Origin", "*")
+                    val mgr = ProxyService.instance?.transportCapture
+                    val st = mgr?.stop()
+                    call.respondText(JSONObject().put("stopped", st != null).put("directory", st?.directory ?: JSONObject.NULL).put("rawBytes", st?.rawBytes ?: 0).put("feFrames", st?.feFrames ?: 0).put("fe06Bytes", st?.fe06Bytes ?: 0).toString(), ContentType.Application.Json)
+                }
+                get("/api/capture/status") {
+                    call.response.header("Access-Control-Allow-Origin", "*")
+                    val st = ProxyService.instance?.transportCapture?.status()
+                    call.respondText(JSONObject().put("active", st?.active ?: false).put("startedAt", st?.startedAt ?: 0).put("directory", st?.directory ?: JSONObject.NULL).put("rawBytes", st?.rawBytes ?: 0).put("feFrames", st?.feFrames ?: 0).put("fe06Bytes", st?.fe06Bytes ?: 0).toString(), ContentType.Application.Json)
+                }
+                get("/api/capture/download") {
+                    val zip = ProxyService.instance?.transportCapture?.latestZip()
+                    if (zip == null || !zip.exists()) call.respond(HttpStatusCode.NotFound) else call.respondFile(zip)
+                }
+
                 // Video stats
                 get("/api/video/stats") {
                     call.response.header("Access-Control-Allow-Origin", "*")
