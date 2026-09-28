@@ -126,13 +126,13 @@
         </div>
 
         <div class="osd-right">
-          <button class="osd-action-btn success" @click="activateSelectedLiveView" title="Activate stream using the selected drone protocol profile">
+          <button class="osd-action-btn taf-btn taf-btn--toolbar taf-btn--success" @click="activateSelectedLiveView" title="Activate stream using the selected drone protocol profile">
             ⚡ {{ currentDroneProfile }} Stream
           </button>
-          <button class="osd-action-btn" @click="requestIdr" title="Request Keyframe (IDR)">
+          <button class="osd-action-btn taf-btn taf-btn--toolbar taf-btn--primary" @click="requestIdr" title="Request Keyframe (IDR)">
             🔄 Request I-Frame
           </button>
-          <button class="osd-action-btn" @click="toggleFullscreen" :title="t('video.fullscreenTitle')">
+          <button class="osd-action-btn taf-btn taf-btn--toolbar" @click="toggleFullscreen" :title="t('video.fullscreenTitle')">
             ⛶ {{ t('video.fullscreen') }}
           </button>
           <span class="osd-item">
@@ -644,31 +644,8 @@ onUnmounted(() => {
 
 .osd-action-btn {
   pointer-events: auto;
-  background: rgba(0, 0, 0, 0.7);
-  border: 1px solid rgba(0, 229, 255, 0.4);
-  color: #00e5ff;
-  min-height: 28px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 11px;
   font-family: var(--mono);
-  transition: all 0.2s;
-}
-
-.osd-action-btn:hover {
-  background: rgba(0, 229, 255, 0.2);
-  border-color: #00e5ff;
-}
-
-.osd-action-btn.success {
-  border-color: rgba(0, 230, 118, 0.5);
-  color: #00e676;
-}
-
-.osd-action-btn.success:hover {
-  background: rgba(0, 230, 118, 0.2);
-  border-color: #00e676;
+  white-space: nowrap;
 }
 
 .fe-traffic-list {
