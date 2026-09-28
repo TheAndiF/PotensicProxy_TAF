@@ -1,6 +1,6 @@
 <template>
   <div class="settings-page">
-    <h2>Settings</h2>
+    <h2>Map Settings</h2>
 
     <el-card class="card version-card">
       <template #header>Version index</template>

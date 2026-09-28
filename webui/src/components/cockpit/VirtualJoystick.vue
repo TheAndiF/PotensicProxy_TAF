@@ -13,7 +13,7 @@
       <!-- Hardware Controller Echo Dot -->
       <div class="stick-rc-dot" :style="rcDotStyle" v-if="hasRcDot"></div>
     </div>
-    <div class="stick-label">{{ label }} ({{ modelValue.y }}, {{ modelValue.x }})</div>
+    <div class="stick-label"><span>{{ label }} (</span><span class="axis-value">{{ modelValue.y }}</span><span>, </span><span class="axis-value">{{ modelValue.x }}</span><span>)</span></div>
   </div>
 </template>
 
@@ -145,5 +145,13 @@ function updatePosition(e: PointerEvent) {
   font-size: 10px;
   font-family: var(--mono);
   color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.axis-value {
+  display: inline-block;
+  width: 5ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 </style>

@@ -15,7 +15,7 @@ import {
 
 export const useDebugStore = defineStore('debug', () => {
   // Active sub-tab in Debug View
-  const activeSubTab = ref<'camera' | 'fpv' | 'rf' | 'sensor' | 'rid' | 'relay'>('camera')
+  const activeSubTab = ref<'camera' | 'fpv' | 'rf' | 'sensor' | 'rid' | 'relay' | 'map'>('camera')
 
   // 1. Camera Interactive Debug Console
   const terminalLogs = ref<CameraTerminalEntry[]>([])

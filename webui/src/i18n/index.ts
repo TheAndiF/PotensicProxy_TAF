@@ -44,7 +44,7 @@ const messages: Record<EffectiveLocale, Record<string, string>> = {
     'video.render': 'Render', 'video.hwDecode': 'HW Decode', 'video.stream': 'Stream', 'video.requestIFrame': 'Request I-Frame',
     'video.fullscreen': 'Fullscreen', 'video.fullscreenTitle': 'View video fullscreen', 'video.battery': 'Battery',
     'engineering.camera': 'Camera Console', 'engineering.fpv': 'Video & RF', 'engineering.sensor': 'Sensors & Calibration',
-    'engineering.rid': 'Remote ID & System', 'engineering.relay': 'Remote / Relay', 'engineering.frontend': 'Frontend',
+    'engineering.rid': 'Remote ID & System', 'engineering.relay': 'Remote / Relay', 'engineering.map': 'Map', 'engineering.frontend': 'Frontend',
     'engineering.backend': 'Backend', 'engineering.hardwareTelemetry': 'Hardware Telemetry', 'engineering.waitingData': 'Waiting for data',
   },
   de: {
@@ -73,7 +73,7 @@ const messages: Record<EffectiveLocale, Record<string, string>> = {
     'video.render': 'Darstellung', 'video.hwDecode': 'HW-Decoding', 'video.stream': 'Stream', 'video.requestIFrame': 'I-Frame anfordern',
     'video.fullscreen': 'Vollbild', 'video.fullscreenTitle': 'Video im Vollbild anzeigen', 'video.battery': 'Batterie',
     'engineering.camera': 'Kamera-Konsole', 'engineering.fpv': 'Video & RF', 'engineering.sensor': 'Sensoren & Kalibrierung',
-    'engineering.rid': 'Remote ID & System', 'engineering.relay': 'Remote / Relay', 'engineering.frontend': 'Frontend',
+    'engineering.rid': 'Remote ID & System', 'engineering.relay': 'Remote / Relay', 'engineering.map': 'Karte', 'engineering.frontend': 'Frontend',
     'engineering.backend': 'Backend', 'engineering.hardwareTelemetry': 'Hardware-Telemetrie', 'engineering.waitingData': 'Warte auf Daten',
   },
   zh: {
@@ -98,7 +98,7 @@ const messages: Record<EffectiveLocale, Record<string, string>> = {
     'video.render': '渲染', 'video.hwDecode': '硬件解码', 'video.stream': '视频流', 'video.requestIFrame': '请求 I 帧', 'video.fullscreen': '全屏',
     'video.fullscreenTitle': '全屏查看视频', 'video.battery': '电量',
     'engineering.camera': '相机控制台', 'engineering.fpv': '视频与射频', 'engineering.sensor': '传感器与校准', 'engineering.rid': '远程识别与系统',
-    'engineering.relay': '远程 / 中继', 'engineering.frontend': '前端', 'engineering.backend': '后端', 'engineering.hardwareTelemetry': '硬件遥测', 'engineering.waitingData': '等待数据',
+    'engineering.relay': '远程 / 中继', 'engineering.map': '地图', 'engineering.frontend': '前端', 'engineering.backend': '后端', 'engineering.hardwareTelemetry': '硬件遥测', 'engineering.waitingData': '等待数据',
   }
 }
 

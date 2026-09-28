@@ -22,6 +22,24 @@
         </div>
       </div>
 
+      <div class="zoom-column">
+        <div class="field-label zoom-title">Zoom</div>
+        <div
+          ref="zoomRef"
+          class="zoom-lever"
+          @pointerdown="onZoomPointerDown"
+          @pointermove="onZoomPointerMove"
+          @pointerup="onZoomPointerUp"
+          @pointercancel="onZoomPointerUp"
+        >
+          <div class="zoom-axis"></div>
+          <div class="zoom-limit top">2.00</div>
+          <div class="zoom-limit bottom">1.00</div>
+          <div class="zoom-knob" :style="zoomKnobStyle"><span class="knob-dot"></span></div>
+        </div>
+        <div class="zoom-value">{{ zoomValue.toFixed(2) }}x</div>
+      </div>
+
       <div class="gimbal-controls">
         <label class="field-label" for="gimbal-target">Target angle</label>
         <div class="angle-input-wrap">
@@ -59,7 +77,17 @@ const MIN_ANGLE = -90
 const MAX_ANGLE = 30
 const targetAngle = ref(0)
 const dialRef = ref<HTMLElement | null>(null)
+const zoomRef = ref<HTMLElement | null>(null)
+const zoomValue = ref(1.00)
 let dragging = false
+let zoomDragging = false
+
+const zoomKnobStyle = computed(() => {
+  const normalized = (2 - zoomValue.value) / 1
+  const travel = 70
+  const y = -travel / 2 + normalized * travel
+  return { transform: `translate(-50%, calc(-50% + ${y}px))` }
+})
 
 const knobStyle = computed(() => {
   const normalized = (MAX_ANGLE - targetAngle.value) / (MAX_ANGLE - MIN_ANGLE)
@@ -67,6 +95,35 @@ const knobStyle = computed(() => {
   const y = -travel / 2 + normalized * travel
   return { transform: `translate(-50%, calc(-50% + ${y}px))` }
 })
+
+function setZoom(value: number) {
+  zoomValue.value = Math.max(1, Math.min(2, Math.round(value * 100) / 100))
+}
+
+function onZoomPointerDown(e: PointerEvent) {
+  zoomDragging = true
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  updateZoomFromPointer(e)
+}
+
+function onZoomPointerMove(e: PointerEvent) {
+  if (zoomDragging) updateZoomFromPointer(e)
+}
+
+function onZoomPointerUp(e: PointerEvent) {
+  if (!zoomDragging) return
+  zoomDragging = false
+  try { ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch (_) {}
+}
+
+function updateZoomFromPointer(e: PointerEvent) {
+  if (!zoomRef.value) return
+  const rect = zoomRef.value.getBoundingClientRect()
+  const usable = Math.max(1, rect.height - 30)
+  const y = Math.max(15, Math.min(rect.height - 15, e.clientY - rect.top))
+  const ratio = (y - 15) / usable
+  setZoom(2 - ratio)
+}
 
 function setAngle(value: number) {
   targetAngle.value = Math.max(MIN_ANGLE, Math.min(MAX_ANGLE, Math.round(value)))
@@ -141,7 +198,7 @@ function updateFromPointer(e: PointerEvent) {
 
 .gimbal-content {
   display: grid;
-  grid-template-columns: 120px 1fr;
+  grid-template-columns: 120px 58px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
 }
@@ -203,6 +260,41 @@ function updateFromPointer(e: PointerEvent) {
 
 .limit-mark.top { top: 3px; }
 .limit-mark.bottom { bottom: 3px; }
+
+.zoom-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.zoom-title { margin-bottom: 0; }
+
+.zoom-lever {
+  width: 54px;
+  height: 120px;
+  border-radius: 27px;
+  background: linear-gradient(#11182a, #0d111d);
+  border: 2px solid #2d3752;
+  position: relative;
+  cursor: ns-resize;
+  touch-action: none;
+  box-shadow: inset 0 0 12px rgba(0,0,0,.55);
+}
+
+.zoom-axis {
+  position: absolute; top: 18px; bottom: 18px; left: 50%; width: 1px;
+  background: linear-gradient(to bottom, rgba(0,217,255,.2), rgba(0,217,255,.8), rgba(0,217,255,.2));
+}
+.zoom-knob {
+  width: 30px; height: 30px; border-radius: 50%; background: radial-gradient(circle, #ff2a5f, #b31238);
+  border: 2px solid #ff5c84; position: absolute; top: 50%; left: 50%;
+  box-shadow: 0 0 9px rgba(255,42,95,.6); display:flex; align-items:center; justify-content:center; pointer-events:none;
+}
+.zoom-knob .knob-dot { width: 8px; height: 8px; }
+.zoom-limit { position:absolute; left:50%; transform:translateX(-50%); font-size:7px; color:var(--text-muted); font-family:var(--mono); }
+.zoom-limit.top { top:3px; } .zoom-limit.bottom { bottom:3px; }
+.zoom-value { font: 10px var(--mono); color: var(--cyan); font-variant-numeric: tabular-nums; }
 
 .gimbal-controls {
   min-width: 0;
