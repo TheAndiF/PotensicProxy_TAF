@@ -13,6 +13,12 @@
       </div>
 
       <div class="header-right-badges">
+        <el-tag size="small" effect="dark" type="success" class="badge-item version-badge">
+          Frontend: v{{ FRONTEND_VERSION }}
+        </el-tag>
+        <el-tag size="small" effect="dark" :type="backendVersion === 'unavailable' ? 'danger' : 'success'" class="badge-item version-badge">
+          Backend: {{ backendVersion === 'unavailable' ? 'unavailable' : 'v' + backendVersion }}
+        </el-tag>
         <el-tag size="small" effect="dark" type="info" class="badge-item">
           Hardware Telemetry: {{ debugStore.temperatures.lastUpdated || 'Waiting for data' }}
         </el-tag>
@@ -645,13 +651,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch } from 'vue'
+import { ref, nextTick, watch, onMounted } from 'vue'
 import { useDebugStore } from '../../stores/useDebugStore'
 import { DroneControlService } from '../../services/DroneControlService'
 import { ElMessage } from 'element-plus'
 import RemoteRelayPanel from './RemoteRelayPanel.vue'
+import { MapService } from '../../services/MapService'
+import { FRONTEND_VERSION } from '../../version'
 
 const debugStore = useDebugStore()
+const backendVersion = ref('loading...')
+
+async function refreshSoftwareVersions() {
+  try {
+    const info = await MapService.getVersion()
+    backendVersion.value = info.backendVersion || info.appVersion || 'unavailable'
+  } catch (_) {
+    backendVersion.value = 'unavailable'
+  }
+}
+
+onMounted(() => {
+  refreshSoftwareVersions()
+})
 
 // --- Camera Terminal State ---
 const autoScroll = ref(true)

@@ -160,7 +160,15 @@ export class UsbTransportService {
         } else if (typeof e.data === 'string') {
           try {
             const j = JSON.parse(e.data)
-            if (j.hex) bytes = ByteUtils.hexToBytes(j.hex)
+            if (j.hex) {
+              bytes = ByteUtils.hexToBytes(j.hex)
+              if (String(j.direction || '').toUpperCase() === 'TX') {
+                // Backend-generated TX echo. Parse directly instead of feeding the
+                // RX stream demuxer so LiveView/heartbeat/init packets appear in logs.
+                store.addPacket(PacketParser.parse(bytes, 'TX'))
+                return
+              }
+            }
           } catch (_) {
             bytes = ByteUtils.hexToBytes(e.data)
           }
@@ -213,10 +221,6 @@ export class UsbTransportService {
         store.addLog('ERROR', `HTTP send failed: ${e.message}`)
       })
     }
-
-    // Record TX packet in store
-    const parsed = PacketParser.parse(bytes, 'TX')
-    store.addPacket(parsed)
   }
 
   private startStatusPolling() {
@@ -233,7 +237,8 @@ export class UsbTransportService {
           const wasConnected = store.connection.usbConnected
           const wasOpen = store.connection.usbTransportOpen
           store.connection.usbTransportOpen = Boolean(d.usbOpen ?? d.usbConnected ?? d.connected)
-          store.connection.usbConnected = Boolean(d.usbConnected ?? d.connected)
+          store.connection.usbConnected = Boolean(d.usbConnected ?? d.connected ?? ((d.packetsReceived ?? 0) > 0))
+          store.connection.videoStreaming = Boolean(d.videoStreaming)
 
           if (store.connection.usbConnected && !wasConnected) {
             store.addLog('INFO', 'Controller/drone link confirmed by RX data')

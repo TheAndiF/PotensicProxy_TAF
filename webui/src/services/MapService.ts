@@ -1,5 +1,6 @@
 import type { MapConfig, MapConnectionTest, OfflineRegion, VersionInfo } from '../types/map'
 import { useDroneStore } from '../stores/useDroneStore'
+import { FRONTEND_VERSION } from '../version'
 
 function baseUrl() {
   const store = useDroneStore()
@@ -20,7 +21,9 @@ export const MapService = {
   async getVersion(): Promise<VersionInfo> {
     const r = await fetch(`${baseUrl()}/api/version`)
     if (!r.ok) throw new Error(await errorText(r))
-    return r.json()
+    const backendVersion = await r.json()
+    // Frontend version comes from the actually running web bundle, not a backend copy.
+    return { ...backendVersion, webUiVersion: FRONTEND_VERSION }
   },
   async getConfig(): Promise<MapConfig> {
     const r = await fetch(`${baseUrl()}/api/map/config`)

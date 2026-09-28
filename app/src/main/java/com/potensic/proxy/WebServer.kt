@@ -474,11 +474,14 @@ class WebServer(
                 post("/api/video/activate") {
                     call.response.header("Access-Control-Allow-Origin", "*")
                     Log.i("[WebServer] POST /api/video/activate")
-                    val activated = ProxyService.instance?.activateLiveView() == true
+                    val codec = call.request.queryParameters["codec"]?.lowercase() ?: "h265"
+                    val enableH265 = codec != "h264"
+                    val activated = ProxyService.instance?.activateLiveView(enableH265) == true
                     val json = JSONObject().apply {
                         put("success", activated)
                         put("activated", activated)
-                        put("connected", usbManager.isConnected || (ProxyService.instance?.wifiTransport?.isConnected == true))
+                        put("codec", if (enableH265) "h265" else "h264")
+                        put("connected", usbManager.isLinkReady || (ProxyService.instance?.wifiTransport?.isConnected == true))
                     }
                     call.respondText(
                         json.toString(),
@@ -540,6 +543,9 @@ class WebServer(
                         put("lastSendMs", usbManager.lastSendTime)
                         put("lastRecvMs", usbManager.lastRecvTime)
                         put("linkSilenceMs", if (usbManager.isConnected) usbManager.linkSilenceMs else -1L)
+                        put("videoFrames", videoExtractor.framesExtracted.get())
+                        put("videoLastFrameMs", videoExtractor.lastFrameTime)
+                        put("videoStreaming", videoExtractor.lastFrameTime > 0L && (System.currentTimeMillis() - videoExtractor.lastFrameTime) < 3000L)
                         put("wsClients", wsClients.size)
                         put("usbWsClients", usbWsClients.size)
                         put("joystick", JSONObject().apply {
@@ -728,6 +734,24 @@ class WebServer(
         usbWsClients.forEach { session ->
             try {
                 session.send(frame)
+            } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Broadcast a packet that the backend is transmitting to the controller.
+     * TX is sent as a small JSON envelope so browser clients can distinguish it
+     * from raw RX binary data and include backend-generated commands in logs.
+     */
+    suspend fun broadcastUsbTx(data: ByteArray) {
+        if (usbWsClients.isEmpty()) return
+        val json = JSONObject().apply {
+            put("direction", "TX")
+            put("hex", DroneProtocol.bytesToHex(data))
+        }.toString()
+        usbWsClients.forEach { session ->
+            try {
+                session.send(Frame.Text(json))
             } catch (_: Exception) {}
         }
     }

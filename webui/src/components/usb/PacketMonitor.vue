@@ -341,9 +341,9 @@ function objectFieldsToXml(tagName: string, value?: Record<string, any> | null):
   return `    <${tagName}>\n${fields}\n    </${tagName}>`
 }
 
-function buildPacketLogXml(): string {
+function buildPacketLogXml(packetSnapshot: ReturnType<typeof store.getPacketSnapshot>): string {
   const generatedAt = new Date().toISOString()
-  const packetsXml = store.packets.map((p, index) => {
+  const packetsXml = packetSnapshot.map((p, index) => {
     const feTypeHex = p.feType === null ? '' : `0x${p.feType.toString(16).padStart(2, '0').toUpperCase()}`
     return [
       `  <packet index="${index + 1}" id="${xmlEscape(p.id)}">`,
@@ -367,7 +367,7 @@ function buildPacketLogXml(): string {
     '<potensicPacketLog>',
     '  <metadata>',
     `    <generatedAt>${xmlEscape(generatedAt)}</generatedAt>`,
-    `    <packetCount>${store.packets.length}</packetCount>`,
+    `    <packetCount>${packetSnapshot.length}</packetCount>`,
     '    <bufferLimit>1000</bufferLimit>',
     '    <order>newest-first</order>',
     '  </metadata>',
@@ -384,7 +384,12 @@ function savePacketsAsXml() {
   const time = `${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`
   const filename = `${date}_${time}_log.xml`
 
-  const blob = new Blob([buildPacketLogXml()], { type: 'application/xml;charset=utf-8' })
+  // Snapshot first so incoming RX/TX traffic can continue without mutating the
+  // collection being serialized. The snapshot also includes packets waiting in
+  // the 100 ms UI batch queue.
+  const packetSnapshot = store.getPacketSnapshot()
+  const xml = buildPacketLogXml(packetSnapshot)
+  const blob = new Blob([xml], { type: 'application/xml;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
@@ -392,9 +397,11 @@ function savePacketsAsXml() {
   document.body.appendChild(anchor)
   anchor.click()
   anchor.remove()
-  URL.revokeObjectURL(url)
+  // Do not revoke synchronously. Android WebView/Chromium may still be handing
+  // the object URL to the download subsystem, especially while RX traffic is busy.
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 
-  store.addLog('INFO', `Saved ${store.packets.length} packet entries to ${filename}`)
+  store.addLog('INFO', `Saved ${packetSnapshot.length} packet entries to ${filename}`)
 }
 
 function scrollToNewestPacket() {

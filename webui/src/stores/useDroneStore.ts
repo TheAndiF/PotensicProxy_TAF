@@ -93,6 +93,41 @@ export const useDroneStore = defineStore('drone', () => {
   const activeTab = ref<'cockpit' | 'usb' | 'debug' | 'logs'>('cockpit')
   const ignoreTelemetryAtIngestion = ref(false)
 
+  // Incoming packets are batched before touching Vue's reactive array. This keeps
+  // the USB monitor responsive under high RX rates while preserving the latest
+  // 1000 packets for export.
+  const PACKET_BUFFER_LIMIT = 1000
+  const PACKET_UI_FLUSH_MS = 100
+  let pendingPackets: ParsedPacket[] = []
+  let packetFlushTimer: ReturnType<typeof setTimeout> | null = null
+
+  function flushPendingPackets() {
+    if (packetFlushTimer) {
+      clearTimeout(packetFlushTimer)
+      packetFlushTimer = null
+    }
+    if (pendingPackets.length === 0) return
+
+    const batch = pendingPackets
+    pendingPackets = []
+    // addPacket() receives packets oldest -> newest. The UI is newest-first.
+    packets.value.unshift(...batch.reverse())
+    if (packets.value.length > PACKET_BUFFER_LIMIT) {
+      packets.value.splice(PACKET_BUFFER_LIMIT)
+    }
+  }
+
+  function schedulePacketFlush() {
+    if (packetFlushTimer) return
+    packetFlushTimer = setTimeout(flushPendingPackets, PACKET_UI_FLUSH_MS)
+  }
+
+  function getPacketSnapshot(): ParsedPacket[] {
+    // Do not force a reactive UI update while saving. Merge the not-yet-rendered
+    // batch with the rendered ring buffer into a stable newest-first snapshot.
+    return [...pendingPackets].reverse().concat(packets.value).slice(0, PACKET_BUFFER_LIMIT)
+  }
+
   // Actions
   function addLog(level: 'INFO' | 'WARN' | 'ERROR', message: string) {
     logs.value.push({
@@ -132,13 +167,20 @@ export const useDroneStore = defineStore('drone', () => {
       return
     }
 
-    packets.value.unshift(packet)
-    if (packets.value.length > 1000) {
-      packets.value.pop()
+    pendingPackets.push(packet)
+    // Bound even the short-lived pending queue if the browser is heavily loaded.
+    if (pendingPackets.length > PACKET_BUFFER_LIMIT) {
+      pendingPackets = pendingPackets.slice(-PACKET_BUFFER_LIMIT)
     }
+    schedulePacketFlush()
   }
 
   function clearPackets() {
+    if (packetFlushTimer) {
+      clearTimeout(packetFlushTimer)
+      packetFlushTimer = null
+    }
+    pendingPackets = []
     packets.value = []
   }
 
@@ -166,6 +208,8 @@ export const useDroneStore = defineStore('drone', () => {
     ignoreTelemetryAtIngestion,
     addLog,
     addPacket,
+    getPacketSnapshot,
+    flushPendingPackets,
     clearPackets,
     clearLogs,
     setTargetHost

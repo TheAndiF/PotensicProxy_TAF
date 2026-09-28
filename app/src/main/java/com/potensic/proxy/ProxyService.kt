@@ -328,14 +328,37 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         get() = usbManager.isConnected || (wifiTransport?.isConnected == true)
 
     /** Send via whichever transport is active */
+    private fun broadcastTxToWebUi(data: ByteArray) {
+        val copy = data.copyOf()
+        scope.launch { webServer.broadcastUsbTx(copy) }
+    }
+
     fun sendAny(data: ByteArray) {
-        wifiTransport?.let { if (it.isConnected) { it.send(data); return } }
-        if (usbManager.isConnected) usbManager.send(data)
+        wifiTransport?.let {
+            if (it.isConnected) {
+                it.send(data)
+                broadcastTxToWebUi(data)
+                return
+            }
+        }
+        if (usbManager.isConnected) {
+            usbManager.send(data)
+            broadcastTxToWebUi(data)
+        }
     }
 
     fun sendDirectAny(data: ByteArray) {
-        wifiTransport?.let { if (it.isConnected) { it.sendDirect(data); return } }
-        if (usbManager.isConnected) usbManager.sendDirect(data)
+        wifiTransport?.let {
+            if (it.isConnected) {
+                it.sendDirect(data)
+                broadcastTxToWebUi(data)
+                return
+            }
+        }
+        if (usbManager.isConnected) {
+            usbManager.sendDirect(data)
+            broadcastTxToWebUi(data)
+        }
     }
 
     override fun onDataReceived(data: ByteArray, length: Int) {
