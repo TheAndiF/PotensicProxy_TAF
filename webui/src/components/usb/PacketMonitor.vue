@@ -43,6 +43,7 @@
           clearable
         />
         <el-checkbox v-model="autoScroll" label="Auto Scroll" size="small" />
+        <el-button size="small" type="primary" plain @click="savePacketsAsXml">Save</el-button>
         <el-button size="small" type="danger" plain @click="store.clearPackets()">Clear</el-button>
       </div>
     </div>
@@ -313,18 +314,106 @@ const filteredCount = computed(() => {
   return Math.max(0, store.packets.length - filteredPackets.value.length)
 })
 
+function xmlEscape(value: unknown): string {
+  const text = value === null || value === undefined ? '' : String(value)
+  return text
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+function objectFieldsToXml(tagName: string, value?: Record<string, any> | null): string {
+  if (!value || Object.keys(value).length === 0) return `    <${tagName} />`
+
+  const fields = Object.entries(value)
+    .map(([key, fieldValue]) =>
+      `      <field name="${xmlEscape(key)}">${xmlEscape(
+        typeof fieldValue === 'object' && fieldValue !== null
+          ? JSON.stringify(fieldValue)
+          : fieldValue
+      )}</field>`
+    )
+    .join('\n')
+
+  return `    <${tagName}>\n${fields}\n    </${tagName}>`
+}
+
+function buildPacketLogXml(): string {
+  const generatedAt = new Date().toISOString()
+  const packetsXml = store.packets.map((p, index) => {
+    const feTypeHex = p.feType === null ? '' : `0x${p.feType.toString(16).padStart(2, '0').toUpperCase()}`
+    return [
+      `  <packet index="${index + 1}" id="${xmlEscape(p.id)}">`,
+      `    <direction>${xmlEscape(p.dir)}</direction>`,
+      `    <time>${xmlEscape(p.time)}</time>`,
+      `    <lengthBytes>${p.len}</lengthBytes>`,
+      `    <feType decimal="${p.feType ?? ''}" hex="${feTypeHex}" />`,
+      `    <feTypeName>${xmlEscape(p.feTypeName)}</feTypeName>`,
+      `    <category>${xmlEscape(p.category)}</category>`,
+      `    <categoryLabel>${xmlEscape(p.categoryLabel)}</categoryLabel>`,
+      `    <summary>${xmlEscape(p.summary)}</summary>`,
+      `    <hex>${xmlEscape(p.hex)}</hex>`,
+      objectFieldsToXml('details', p.details),
+      objectFieldsToXml('telemetry', p.telemetry as Record<string, any> | null | undefined),
+      '  </packet>'
+    ].join('\n')
+  }).join('\n')
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<potensicPacketLog>',
+    '  <metadata>',
+    `    <generatedAt>${xmlEscape(generatedAt)}</generatedAt>`,
+    `    <packetCount>${store.packets.length}</packetCount>`,
+    '    <bufferLimit>1000</bufferLimit>',
+    '    <order>newest-first</order>',
+    '  </metadata>',
+    packetsXml,
+    '</potensicPacketLog>',
+    ''
+  ].join('\n')
+}
+
+function savePacketsAsXml() {
+  const now = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  const time = `${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`
+  const filename = `${date}_${time}_log.xml`
+
+  const blob = new Blob([buildPacketLogXml()], { type: 'application/xml;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+
+  store.addLog('INFO', `Saved ${store.packets.length} packet entries to ${filename}`)
+}
+
+function scrollToNewestPacket() {
+  if (!autoScroll.value || !tableRef.value) return
+  nextTick(() => {
+    if (tableRef.value) tableRef.value.scrollTop = 0
+  })
+}
+
+// Watch the newest packet ID instead of packet count. Once the ring buffer reaches
+// 1000 entries its length no longer changes, but the newest packet ID still does.
 watch(
-  () => store.packets.length,
-  () => {
-    if (autoScroll.value && tableRef.value) {
-      nextTick(() => {
-        if (tableRef.value) {
-          tableRef.value.scrollTop = 0
-        }
-      })
-    }
-  }
+  () => store.packets[0]?.id,
+  () => scrollToNewestPacket()
 )
+
+watch(autoScroll, enabled => {
+  if (enabled) scrollToNewestPacket()
+})
 </script>
 
 <style scoped>

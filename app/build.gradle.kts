@@ -11,8 +11,8 @@ android {
         applicationId = "com.potensic.proxy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.910"
+        versionCode = 10
+        versionName = "0.911"
     }
 
     buildTypes {
