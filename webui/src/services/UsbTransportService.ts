@@ -256,6 +256,8 @@ export class UsbTransportService {
           store.connection.usbTransportOpen = Boolean(d.usbOpen ?? d.usbConnected ?? d.connected)
           store.connection.usbConnected = Boolean(d.usbConnected ?? d.connected ?? ((d.packetsReceived ?? 0) > 0))
           store.connection.videoStreaming = Boolean(d.videoStreaming)
+          // Cockpit values use the backend-owned interpreted state; raw WS parsing remains diagnostic-only.
+          if (d.state) store.applyBackendState(d.state)
 
           if (store.connection.usbConnected && !wasConnected) {
             store.addLog('INFO', 'Controller/drone link confirmed by RX data')

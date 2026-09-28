@@ -1,6 +1,7 @@
 package com.potensic.proxy
 
 import android.app.Notification
+import com.potensic.proxy.protocol.PotensicProtocol
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
@@ -10,6 +11,11 @@ import android.os.IBinder
 import android.os.PowerManager
 import kotlinx.coroutines.*
 import org.json.JSONObject
+import com.potensic.proxy.core.ConnectionState
+import com.potensic.proxy.core.DroneStateStore
+import com.potensic.proxy.control.ControlCoordinator
+import com.potensic.proxy.core.VideoState
+import com.potensic.proxy.video.VideoFrameHub
 
 /**
  * Foreground service that bridges:
@@ -33,7 +39,10 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
     lateinit var usbManager: UsbAccessoryManager; private set
     lateinit var webServer: WebServer; private set
+    val droneState = DroneStateStore()
+    val controlCoordinator = ControlCoordinator(droneState)
     val videoExtractor = VideoExtractor()
+    val videoFrameHub = VideoFrameHub()
     val videoDecoder = VideoDecoder()
     lateinit var transportCapture: TransportCaptureManager; private set
     lateinit var droneProfileManager: DroneProfileManager; private set
@@ -67,7 +76,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         usbManager = UsbAccessoryManager(applicationContext)
         usbManager.listener = this
 
-        webServer = WebServer(usbManager, videoExtractor, videoDecoder, filesDir) { path ->
+        webServer = WebServer(usbManager, videoExtractor, videoDecoder, videoFrameHub, transportCapture, droneState, controlCoordinator, filesDir) { path ->
             try {
                 assets.open(path).use { it.readBytes() }
             } catch (e: Exception) {
@@ -308,6 +317,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         officialInitSentForConnection = false
         lastLiveViewActivationMs = 0L
         videoExtractor.reset()
+        droneState.updateConnection(ConnectionState(transport = "usb", transportOpen = true, linkReady = usbManager.isLinkReady, lastRxMs = usbManager.lastRecvTime))
 
         startControlLoop()
         startExtractorLoop()
@@ -324,6 +334,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         scope.launch {
             while (usbManager.isConnected) {
                 val tel = TelemetryParser.latest
+                droneState.updateTelemetry(tel)
+                droneState.updateConnection(ConnectionState(transport = "usb", transportOpen = usbManager.isConnected, linkReady = usbManager.isLinkReady, lastRxMs = usbManager.lastRecvTime))
                 val json = org.json.JSONObject().apply {
                     put("type", "telemetry")
                     put("data", tel.toJson())
@@ -343,6 +355,9 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         decoderJob?.cancel(); decoderJob = null
         extractorJob?.cancel(); extractorJob = null
         rawDataQueue.clear()
+        videoFrameHub.clear()
+        droneState.updateConnection(ConnectionState())
+        droneState.updateVideo(VideoState())
     }
 
     private var decoderJob: Job? = null
@@ -360,7 +375,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     }
 
     fun sendAny(data: ByteArray) {
-        if (::transportCapture.isInitialized) transportCapture.event("TX", "packet", data.joinToString("") { "%02x".format(it.toInt() and 0xff) }, data.size)
+        if (::transportCapture.isInitialized) transportCapture.recordTxPacket(data)
         wifiTransport?.let {
             if (it.isConnected) {
                 it.send(data)
@@ -375,7 +390,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     }
 
     fun sendDirectAny(data: ByteArray) {
-        if (::transportCapture.isInitialized) transportCapture.event("TX", "packet", data.joinToString("") { "%02x".format(it.toInt() and 0xff) }, data.size)
+        if (::transportCapture.isInitialized) transportCapture.recordTxPacket(data)
         wifiTransport?.let {
             if (it.isConnected) {
                 it.sendDirect(data)
@@ -451,7 +466,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                     Log.i("[Service] Sending captured official initialization sequence (pre-LiveView)...")
                     // Keep the captured initialization, but hold its final 0x73 packet so the
                     // explicit FPV sync + camera-function setup happens before LIVEVIEW_START.
-                    val initSeq = DroneProtocol.buildInitSequence(effectiveH265, includeLiveViewStart = false)
+                    val initSeq = PotensicProtocol.buildInitSequence(effectiveH265, includeLiveViewStart = false)
                     for ((i, cmd) in initSeq.withIndex()) {
                         sendDirectAny(cmd)
                         Log.i("[Service] Official init #${i + 1}/${initSeq.size} (${cmd.size}B)")
@@ -463,23 +478,23 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                 // Combined sequence from the TAF helpers + captured Android flow:
                 // FPV sync -> camera function/codec -> 0x73 start -> 0xD8 params -> 0xD9 IDR.
                 Log.i("[Service] LiveView step 1/5: FPV sync version (FE 0x16 / short 0x1600)")
-                sendDirectAny(DroneProtocol.buildFpvSyncVersion())
+                sendDirectAny(PotensicProtocol.buildFpvSyncVersion())
                 delay(100)
 
                 Log.i("[Service] LiveView step 2/5: camera function preview=${true} profile=${profile.id} codec=${if (effectiveH265) "H265" else "H264"}")
-                sendDirectAny(DroneProtocol.buildCameraFunction(enablePreview = true, enableH265 = effectiveH265))
+                sendDirectAny(PotensicProtocol.buildCameraFunction(enablePreview = true, enableH265 = effectiveH265))
                 delay(100)
 
                 Log.i("[Service] LiveView step 3/5: LIVEVIEW_START 0x73")
-                sendDirectAny(DroneProtocol.buildLiveViewStart())
+                sendDirectAny(PotensicProtocol.buildLiveViewStart())
                 delay(100)
 
                 Log.i("[Service] LiveView step 4/5: LIVEVIEW_PARAMS 0xD8 (1080p/5000 captured payload)")
-                sendDirectAny(DroneProtocol.buildLiveViewParams(enableH265 = effectiveH265, bitrateKbps = 5000))
+                sendDirectAny(PotensicProtocol.buildLiveViewParams(enableH265 = effectiveH265, bitrateKbps = 5000))
                 delay(100)
 
                 Log.i("[Service] LiveView step 5/5: IDR request 0xD9")
-                sendDirectAny(DroneProtocol.buildIDRRequestD9())
+                sendDirectAny(PotensicProtocol.buildIDRRequestD9())
                 lastLiveViewActivationMs = System.currentTimeMillis()
                 Log.i("[Service] Extended LiveView activation sent; waiting for FE traffic/video")
             } catch (e: Exception) {
@@ -511,6 +526,17 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
                 val nal = videoExtractor.nalQueue.poll()
                 if (nal != null) {
+                    // Consume the extractor queue exactly once, then fan out to browser/diagnostic clients.
+                    videoFrameHub.publish(nal)
+                    val frameTime = videoExtractor.lastFrameTime
+                    droneState.updateVideo(VideoState(
+                        codec = nal.codec,
+                        width = if (nal.width > 0) nal.width else videoExtractor.lastWidth,
+                        height = if (nal.height > 0) nal.height else videoExtractor.lastHeight,
+                        frames = videoExtractor.framesExtracted.get(),
+                        lastFrameMs = frameTime,
+                        streaming = frameTime > 0L && System.currentTimeMillis() - frameTime < 3000L,
+                    ))
                     if (nal.codec != "unknown" && nal.codec != decoderSyncCodec) {
                         decoderSyncCodec = nal.codec
                         gotFirstIdr = false
@@ -537,18 +563,6 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
                     videoDecoder.publishFrame = true
                     videoDecoder.decode(nal.data, nal.isIFrame)
-
-                    // Low latency backlog prevention: if queue has more than 15 frames (~0.5s),
-                    // skip non-IDR frames to catch up to real-time
-                    if (videoExtractor.nalQueue.size > 15) {
-                        while (videoExtractor.nalQueue.size > 2) {
-                            val skipped = videoExtractor.nalQueue.poll() ?: break
-                            if (skipped.isIFrame) {
-                                videoDecoder.decode(skipped.data, true)
-                                break
-                            }
-                        }
-                    }
 
                     // Broadcast stats periodically
                     if (++statsCounter % 25 == 0) {
@@ -583,20 +597,21 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             var lastIdrRequest = 0L
             var lastHeartbeat = 0L
             var lastVideoWatchdog = 0L
-            val heartbeatPacket = DroneProtocol.buildHeartbeat()
+            val heartbeatPacket = PotensicProtocol.buildHeartbeat()
             Log.hex("[Service] Heartbeat packet", heartbeatPacket)
 
             while (isActive && isAnyConnected) {
                 try {
                     // Send combined HFD2+HFD1+HFD3 (127B) FE-wrapped when web joysticks active
                     // Must match official app format: all 3 concatenated, FE type 0x14
-                    if (webServer.hasActiveInput) {
-                        val packet = DroneProtocol.buildCombinedControl(
-                            throttle = webServer.throttle,
-                            yaw = webServer.yaw,
-                            pitch = webServer.pitch,
-                            roll = webServer.roll,
-                            gimbalTilt = webServer.gimbalTilt,
+                    val control = controlCoordinator.current()
+                    if (control.active) {
+                        val packet = PotensicProtocol.buildCombinedControl(
+                            throttle = control.throttle,
+                            yaw = control.yaw,
+                            pitch = control.pitch,
+                            roll = control.roll,
+                            gimbalTilt = control.gimbal,
                         )
                         sendDirectAny(packet)
                     }
@@ -633,13 +648,13 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                     val needsIdr = videoExtractor.framesExtracted.get() == 0 ||
                         (videoExtractor.lastFrameTime > 0 && now - videoExtractor.lastFrameTime > 3000L)
                     if (fe06ActiveForIdr && needsIdr && now - lastIdrRequest > 5000L) {
-                        sendDirectAny(DroneProtocol.buildIDRRequestD9())
+                        sendDirectAny(PotensicProtocol.buildIDRRequestD9())
                         lastIdrRequest = now
                     }
 
                     loopCount++
                     if (loopCount % 250 == 0L) {
-                        Log.d("[Service] Control loop: $loopCount iterations, joystick=(${webServer.throttle},${webServer.yaw},${webServer.pitch},${webServer.roll}) iFrames=${videoExtractor.iFrames.get()}")
+                        Log.d("[Service] Control loop: $loopCount iterations, source=${controlCoordinator.activeSource().wireName} joystick=${controlCoordinator.current()} iFrames=${videoExtractor.iFrames.get()}")
                     }
 
                     delay(CONTROL_LOOP_MS)

@@ -63,6 +63,17 @@ class TransportCaptureManager(private val rootDir: File) {
 
     fun status() = Status(active.get(), startedAt, captureDir?.name, rawBytes.get(), feFrames.get(), fe06Bytes.get())
 
+
+    fun recordTxPacket(data: ByteArray) {
+        if (!active.get()) return
+        val copy = data.copyOf()
+        executor.execute {
+            val hex = copy.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            val safe = hex.replace('"','\'').replace(',',';')
+            events?.println("${System.currentTimeMillis()},TX,packet,$safe,${copy.size}")
+        }
+    }
+
     fun recordUsbRx(data: ByteArray) {
         if (!active.get()) return
         val copy = data.copyOf()

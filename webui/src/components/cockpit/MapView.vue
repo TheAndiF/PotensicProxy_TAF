@@ -51,7 +51,13 @@ const tiles = computed(() => {
   return out
 })
 function onWheel(e:WheelEvent){ zoom.value=Math.max(1,Math.min(19,zoom.value+(e.deltaY<0?1:-1))) }
-async function refreshSize(){ await nextTick(); requestAnimationFrame(()=>{ if(!root.value)return; const r=root.value.getBoundingClientRect(); if(r.width>0&&r.height>0) size.value={w:r.width,h:r.height} }) }
+async function refreshSize(){
+  await nextTick()
+  const measure=()=>{ if(!root.value)return; const r=root.value.getBoundingClientRect(); if(r.width>0&&r.height>0) size.value={w:r.width,h:r.height} }
+  requestAnimationFrame(()=>{ measure(); requestAnimationFrame(measure) })
+  window.setTimeout(measure,80)
+  window.setTimeout(measure,180)
+}
 onMounted(async()=>{ try{config.value=await MapService.getConfig();zoom.value=config.value.defaultZoom||15}catch{}; if(root.value){observer=new ResizeObserver(([e])=>{if(e.contentRect.width>0&&e.contentRect.height>0)size.value={w:e.contentRect.width,h:e.contentRect.height}});observer.observe(root.value)}; window.addEventListener('cockpit-view-resized',refreshSize); await refreshSize() })
 onUnmounted(()=>{observer?.disconnect();window.removeEventListener('cockpit-view-resized',refreshSize)})
 watch(()=>config.value?.defaultZoom,z=>{if(z)zoom.value=z})

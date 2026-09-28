@@ -192,6 +192,30 @@ export const useDroneStore = defineStore('drone', () => {
     logs.value = []
   }
 
+
+  function applyBackendState(state: any) {
+    if (!state || typeof state !== 'object') return
+    if (state.telemetry && typeof state.telemetry === 'object') {
+      Object.assign(telemetry, state.telemetry)
+    }
+    const measured = state.control?.measured
+    if (measured && typeof measured === 'object') {
+      rcHardwareJoysticks.throttle = Number(measured.throttle || 0)
+      rcHardwareJoysticks.yaw = Number(measured.yaw || 0)
+      rcHardwareJoysticks.pitch = Number(measured.pitch || 0)
+      rcHardwareJoysticks.roll = Number(measured.roll || 0)
+      rcHardwareJoysticks.gimbal = Number(measured.gimbal || 0)
+    }
+    if (state.video && typeof state.video === 'object') {
+      connection.videoStreaming = Boolean(state.video.streaming)
+    }
+    if (state.connection && typeof state.connection === 'object') {
+      connection.usbTransportOpen = Boolean(state.connection.transportOpen)
+      connection.usbConnected = Boolean(state.connection.linkReady)
+      if (state.connection.lastRxMs) connection.lastRxTimestamp = Number(state.connection.lastRxMs)
+    }
+  }
+
   function setTargetHost(host: string) {
     connection.targetHost = host
     if (typeof localStorage !== 'undefined') {
@@ -216,6 +240,7 @@ export const useDroneStore = defineStore('drone', () => {
     flushPendingPackets,
     clearPackets,
     clearLogs,
+    applyBackendState,
     setTargetHost
   }
 })
