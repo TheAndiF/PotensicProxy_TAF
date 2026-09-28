@@ -3,6 +3,8 @@ package com.potensic.proxy
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Extracts H265 NAL units from the Potensic video stream.
@@ -51,6 +53,77 @@ class VideoExtractor {
     var crcPassCount = 0; private set
     var crcFailCount = 0; private set
 
+    /** Per-FE-channel transport diagnostics. Video decoding still stays restricted to FE 0x06. */
+    private data class FeTrafficCounter(
+        val packets: AtomicLong = AtomicLong(0),
+        val bytes: AtomicLong = AtomicLong(0),
+        val payloadBytes: AtomicLong = AtomicLong(0),
+        var windowStartedMs: Long = System.currentTimeMillis(),
+        var windowBytes: Long = 0,
+        var windowPackets: Long = 0,
+        var bytesPerSecond: Long = 0,
+        var packetsPerSecond: Long = 0,
+        var lastPacketMs: Long = 0,
+        val samples: MutableList<String> = mutableListOf(),
+    )
+
+    data class FeTrafficSnapshot(
+        val feType: Int,
+        val packets: Long,
+        val bytes: Long,
+        val payloadBytes: Long,
+        val bytesPerSecond: Long,
+        val packetsPerSecond: Long,
+        val lastPacketMs: Long,
+        val samples: List<String>,
+    )
+
+    private val feTraffic = ConcurrentHashMap<Int, FeTrafficCounter>()
+
+    private fun recordFeTraffic(feType: Int, usbPacket: ByteArray, length: Int, payloadBytes: Int) {
+        val now = System.currentTimeMillis()
+        val counter = feTraffic.computeIfAbsent(feType) { FeTrafficCounter(windowStartedMs = now) }
+        counter.packets.incrementAndGet()
+        counter.bytes.addAndGet(length.toLong())
+        counter.payloadBytes.addAndGet(payloadBytes.coerceAtLeast(0).toLong())
+        synchronized(counter) {
+            counter.lastPacketMs = now
+            counter.windowBytes += length
+            counter.windowPackets += 1
+            val elapsed = now - counter.windowStartedMs
+            if (elapsed >= 1000) {
+                counter.bytesPerSecond = counter.windowBytes * 1000L / elapsed.coerceAtLeast(1)
+                counter.packetsPerSecond = counter.windowPackets * 1000L / elapsed.coerceAtLeast(1)
+                counter.windowStartedMs = now
+                counter.windowBytes = 0
+                counter.windowPackets = 0
+            }
+            if (counter.samples.size < 3) {
+                val sampleLen = minOf(length, 64)
+                val hex = usbPacket.take(sampleLen).joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
+                counter.samples += hex
+                Log.i("[FE-Diag] FE=0x${"%02X".format(feType)} sample#${counter.samples.size} len=$length payload=$payloadBytes: $hex")
+            }
+        }
+    }
+
+    fun getFeTrafficSnapshot(): List<FeTrafficSnapshot> = feTraffic.entries.map { (feType, counter) ->
+        synchronized(counter) {
+            // If traffic stopped, don't keep displaying a stale non-zero instantaneous rate.
+            val active = System.currentTimeMillis() - counter.lastPacketMs < 2000
+            FeTrafficSnapshot(
+                feType = feType,
+                packets = counter.packets.get(),
+                bytes = counter.bytes.get(),
+                payloadBytes = counter.payloadBytes.get(),
+                bytesPerSecond = if (active) counter.bytesPerSecond else 0,
+                packetsPerSecond = if (active) counter.packetsPerSecond else 0,
+                lastPacketMs = counter.lastPacketMs,
+                samples = counter.samples.toList(),
+            )
+        }
+    }.sortedBy { it.feType }
+
     data class NalUnit(
         val data: ByteArray, val width: Int, val height: Int,
         val isIFrame: Boolean, val nalType: String = "",
@@ -84,6 +157,9 @@ class VideoExtractor {
                     ((usbPacket[13].toInt() and 0xFF) shl 16) or
                     ((usbPacket[14].toInt() and 0xFF) shl 8) or
                     (usbPacket[15].toInt() and 0xFF)
+
+            val availablePayload = (length - FE_HEADER_SIZE).coerceAtLeast(0)
+            recordFeTraffic(feType, usbPacket, length, minOf(plen.coerceAtLeast(0), availablePayload))
 
             if (plen <= 0 || plen > 65536) return
 
@@ -218,6 +294,7 @@ class VideoExtractor {
         synchronized(lock) { currentFrame = null; currentHeader = null }
         nalQueue.clear()
         framesExtracted.set(0); iFrames.set(0); pFrames.set(0); feFramesParsed.set(0)
+        feTraffic.clear()
         crcPassCount = 0; crcFailCount = 0; lastIdrSequence = null
     }
 

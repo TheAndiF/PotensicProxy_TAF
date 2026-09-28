@@ -22,15 +22,15 @@ object DroneProtocol {
     /**
      * Build the exact initialization sequence captured from the official Potensic app.
      *
-     * Keep this byte sequence conservative: it mirrors the Android reference archive
-     * instead of the newer frontend-only experiment. The final packet already contains
-     * LIVEVIEW_START; activateLiveView() intentionally sends LIVEVIEW_START once more
-     * before parameters and IDR, matching the archived backend behavior.
+     * Keep this byte sequence conservative: it mirrors the Android reference archive.
+     * By default the captured final LIVEVIEW_START packet is included. The backend may
+     * request the pre-LiveView subset so FPV sync and CameraFunction can be inserted
+     * immediately before the explicit LIVEVIEW_START step.
      */
-    fun buildInitSequence(enableH265: Boolean = true): List<ByteArray> {
+    fun buildInitSequence(enableH265: Boolean = true, includeLiveViewStart: Boolean = true): List<ByteArray> {
         @Suppress("UNUSED_VARIABLE")
         val capturedSequenceDoesNotSelectCodec = enableH265
-        return listOf(
+        val sequence = mutableListOf(
             // #1 FPV: GET_FPV_INFO
             hexPkt("fe000000000000160000000000000007 fffd030000161500"),
             // #2 REMOTER: GET_INFO
@@ -47,9 +47,12 @@ object DroneProtocol {
             hexPkt("fe000000000000150000000000000008 fffd040000122036"),
             // #16 CAMERA: GET_STATUS
             hexPkt("fe000000000000150000000000000008 fffd040000120117"),
-            // #20 CAMERA: LIVEVIEW_START (cmd=0x73, data=0x00 0x64)
-            hexPkt("fe000000000000150000000000000009 fffd05000012730064"),
         )
+        if (includeLiveViewStart) {
+            // #20 CAMERA: LIVEVIEW_START (cmd=0x73, data=0x00 0x64)
+            sequence += hexPkt("fe000000000000150000000000000009 fffd05000012730064")
+        }
+        return sequence
     }
 
     /**
@@ -61,12 +64,19 @@ object DroneProtocol {
     }
 
     /**
-     * Build the REAL IDR request (cmd=0xD7, NOT 0xD9).
-     * The official app sends 0xD7 with a device hash.
+     * Build the captured/simple IDR request (camera cmd 0xD9).
+     * This remains the default until the exact 0xD7 device-hash payload is confirmed.
      */
-    fun buildIDRRequestReal(): ByteArray {
-        // cmd=0xD9 (simple IDR request without hash — fallback)
-        return wrapFE(buildInnerCommand(0xD9.toByte()), 0x15)
+    fun buildIDRRequestD9(): ByteArray = wrapFE(buildInnerCommand(0xD9.toByte()), 0x15)
+
+    /**
+     * Build the experimental 0xD7 IDR request used by the official app together with
+     * a device-specific hash. The hash MUST come from a real capture/device; this
+     * method deliberately refuses an empty value so we never invent protocol data.
+     */
+    fun buildIDRRequestD7(deviceHash: ByteArray): ByteArray {
+        require(deviceHash.isNotEmpty()) { "0xD7 IDR requires a captured device hash" }
+        return wrapFE(buildInnerCommand(0xD7.toByte(), deviceHash), 0x15)
     }
 
     // === Flight commands (reversed from np1.java / mp1.java enum) ===
@@ -353,7 +363,7 @@ object DroneProtocol {
      */
     /**
      * Build inner command with CUSTOM short (for flight commands etc).
-     * Format: FF FD [len_LE_2] [short_LE_2] [data...] [xor_checksum]
+     * Format: FF FD [len_LE_2] [short_LE_2] `data...` [xor_checksum]
      * No cmd byte — data follows directly after the short.
      */
     private fun buildInnerCommandWithShort(short: Int, data: ByteArray): ByteArray {
@@ -381,7 +391,7 @@ object DroneProtocol {
 
     /**
      * Build inner camera command with correct endianness.
-     * Format: FF FD [len_LE_2] [short_LE_2(0x1200)] [cmd_byte] [data...] [xor_checksum]
+     * Format: FF FD [len_LE_2] [short_LE_2(0x1200)] [cmd_byte] `data...` [xor_checksum]
      * Reversed from zy2.x() bytecode — ALL shorts are little-endian via kc4.J()
      */
     private fun buildInnerCommand(cmdByte: Byte, data: ByteArray? = null): ByteArray {
@@ -496,10 +506,10 @@ object DroneProtocol {
      * For H.265 LiveView the official app sends mask/value 0x34/0x34.
      */
     fun buildCameraFunction(enablePreview: Boolean = true, enableH265: Boolean = true): ByteArray {
-        val preview = if (enablePreview) 0x04 else 0x00
-        val h265 = if (enableH265) 0x30 else 0x00
-        val mask = preview or h265
-        val values = preview or h265
+        // Always include the known preview/codec bits in the mask so H.264 mode can
+        // explicitly clear H.265 instead of merely leaving the previous codec state untouched.
+        val mask = 0x34
+        val values = (if (enablePreview) 0x04 else 0x00) or (if (enableH265) 0x30 else 0x00)
         val data = byteArrayOf(mask.toByte(), values.toByte(), 0x00, 0x00)
         return wrapFE(buildInnerCommand(0x16, data))
     }
@@ -533,9 +543,8 @@ object DroneProtocol {
         return packet
     }
 
-    fun buildIDRRequest(): ByteArray {
-        return wrapFE(buildInnerCommand(0xD9.toByte()))
-    }
+    /** Backwards-compatible default: use the known/captured 0xD9 request. */
+    fun buildIDRRequest(): ByteArray = buildIDRRequestD9()
 
     /**
      * Build Request Frequency Parameters command (Command 5656 / 0x1618).

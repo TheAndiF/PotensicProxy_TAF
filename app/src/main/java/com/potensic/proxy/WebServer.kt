@@ -502,9 +502,34 @@ class WebServer(
                             HttpStatusCode.Conflict
                         )
                     } else {
-                        val idrCmd = DroneProtocol.buildIDRRequest()
+                        val mode = call.request.queryParameters["mode"]?.lowercase() ?: "d9"
+                        val idrCmd = when (mode) {
+                            "d9" -> DroneProtocol.buildIDRRequestD9()
+                            "d7" -> {
+                                val hashHex = call.request.queryParameters["hash"]?.replace(" ", "") ?: ""
+                                if (hashHex.isEmpty() || hashHex.length % 2 != 0 || !hashHex.matches(Regex("[0-9a-fA-F]+"))) {
+                                    call.respondText(
+                                        JSONObject().put("sent", false).put("error", "mode=d7 requires an even-length captured device hash in ?hash=<hex>").toString(),
+                                        ContentType.Application.Json,
+                                        HttpStatusCode.BadRequest
+                                    )
+                                    return@post
+                                }
+                                val hash = ByteArray(hashHex.length / 2) { i -> hashHex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+                                DroneProtocol.buildIDRRequestD7(hash)
+                            }
+                            else -> {
+                                call.respondText(
+                                    JSONObject().put("sent", false).put("error", "unknown IDR mode; use d9 or d7").toString(),
+                                    ContentType.Application.Json,
+                                    HttpStatusCode.BadRequest
+                                )
+                                return@post
+                            }
+                        }
                         ProxyService.instance?.sendDirectAny(idrCmd)
-                        call.respondText(JSONObject().put("sent", true).put("size", idrCmd.size).toString(), ContentType.Application.Json)
+                        Log.i("[WebServer] IDR request mode=$mode size=${idrCmd.size}")
+                        call.respondText(JSONObject().put("sent", true).put("mode", mode).put("size", idrCmd.size).toString(), ContentType.Application.Json)
                     }
                 }
 
@@ -522,6 +547,21 @@ class WebServer(
                         put("height", videoExtractor.lastHeight)
                         put("queueSize", videoExtractor.nalQueue.size)
                         put("lastFrameMs", videoExtractor.lastFrameTime)
+                        put("feTraffic", org.json.JSONArray().apply {
+                            videoExtractor.getFeTrafficSnapshot().forEach { stat ->
+                                put(JSONObject().apply {
+                                    put("feType", stat.feType)
+                                    put("feTypeHex", "0x${"%02X".format(stat.feType)}")
+                                    put("packets", stat.packets)
+                                    put("bytes", stat.bytes)
+                                    put("payloadBytes", stat.payloadBytes)
+                                    put("bytesPerSecond", stat.bytesPerSecond)
+                                    put("packetsPerSecond", stat.packetsPerSecond)
+                                    put("lastPacketMs", stat.lastPacketMs)
+                                    put("samples", org.json.JSONArray(stat.samples))
+                                })
+                            }
+                        })
                     }
                     call.respondText(json.toString(), ContentType.Application.Json)
                 }

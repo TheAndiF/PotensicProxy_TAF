@@ -54,6 +54,14 @@
               {{ videoStats.detectedCodec !== 'unknown' ? `[${videoStats.detectedCodec.toUpperCase()}]` : '' }}
             </span>
           </div>
+          <div class="diag-item" v-if="feTraffic.length > 0">
+            <span class="diag-label">FE RX Traffic:</span>
+            <span class="diag-muted fe-traffic-list">
+              <span v-for="item in feTraffic" :key="item.feType" class="fe-traffic-chip" :class="item.feType === 0x06 && item.bytesPerSecond > 0 ? 'diag-ok' : ''">
+                {{ item.feTypeHex }}: {{ formatRate(item.bytesPerSecond) }} / {{ item.packetsPerSecond }} pkt/s
+              </span>
+            </span>
+          </div>
           <div class="diag-item">
             <span class="diag-label">Browser Hardware Decode Support (WebCodecs):</span>
             <span :class="codecSupportOk ? 'diag-ok' : 'diag-warn'">
@@ -159,8 +167,23 @@ const videoExtractor = VideoExtractor.getInstance()
 let webCodecsPlayer: WebCodecsPlayer | null = null
 let unsubscribeExtractor: (() => void) | null = null
 let autoIdrTimer: any = null
+let backendStatsTimer: any = null
 let autoActivationSent = false
 let isDestroyed = false
+
+type FeTrafficStat = {
+  feType: number
+  feTypeHex: string
+  packets: number
+  bytes: number
+  payloadBytes: number
+  bytesPerSecond: number
+  packetsPerSecond: number
+  lastPacketMs: number
+  samples: string[]
+}
+
+const feTraffic = ref<FeTrafficStat[]>([])
 
 const videoStats = reactive({
   packetsFed: 0,
@@ -237,8 +260,34 @@ function activateLiveView(preferH265 = true) {
 }
 
 function requestIdr() {
-  store.addLog('INFO', '手动请求图传关键帧 (IDR)')
+  store.addLog('INFO', '手动请求图传关键帧 (IDR / 0xD9)')
   DroneControlService.requestIdr()
+}
+
+function formatRate(bytesPerSecond: number): string {
+  if (bytesPerSecond >= 1024 * 1024) return `${(bytesPerSecond / (1024 * 1024)).toFixed(2)} MB/s`
+  if (bytesPerSecond >= 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`
+  return `${bytesPerSecond} B/s`
+}
+
+async function refreshBackendVideoStats() {
+  try {
+    const host = store.normalizedHost
+    const httpProto = window.location.protocol === 'https:' ? 'https:' : 'http:'
+    const res = await fetch(`${httpProto}//${host}/api/video/stats`, { signal: AbortSignal.timeout(1500) })
+    if (!res.ok) return
+    const stats = await res.json()
+    if (typeof stats.framesExtracted === 'number') videoStats.framesExtracted = stats.framesExtracted
+    if (typeof stats.iFrames === 'number') videoStats.iFrames = stats.iFrames
+    if (typeof stats.pFrames === 'number') videoStats.pFrames = stats.pFrames
+    const traffic = Array.isArray(stats.feTraffic) ? stats.feTraffic as FeTrafficStat[] : []
+    feTraffic.value = traffic
+      .filter(item => item.packets > 0)
+      .sort((a, b) => b.bytesPerSecond - a.bytesPerSecond || b.bytes - a.bytes)
+      .slice(0, 8)
+  } catch (_) {
+    // Diagnostics are best-effort and must never disturb video/control paths.
+  }
 }
 
 function toggleFullscreen() {
@@ -375,6 +424,10 @@ onMounted(async () => {
       DroneControlService.requestIdr()
     }
   }, 5000)
+
+  // 4. Backend FE-channel diagnostics. This is intentionally independent from WebCodecs.
+  await refreshBackendVideoStats()
+  backendStatsTimer = setInterval(refreshBackendVideoStats, 1000)
 })
 
 onUnmounted(() => {
@@ -383,6 +436,7 @@ onUnmounted(() => {
   if (unsubscribeExtractor) unsubscribeExtractor()
   if (webCodecsPlayer) webCodecsPlayer.destroy()
   if (autoIdrTimer) clearInterval(autoIdrTimer)
+  if (backendStatsTimer) clearInterval(backendStatsTimer)
 })
 </script>
 
@@ -584,6 +638,17 @@ onUnmounted(() => {
   background: rgba(0, 230, 118, 0.2);
   border-color: #00e676;
 }
+
+.fe-traffic-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.fe-traffic-chip {
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 </style>
-
-

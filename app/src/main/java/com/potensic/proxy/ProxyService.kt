@@ -406,8 +406,10 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                 // On the first activation for each USB connection, reproduce the exact
                 // archived official-app initialization sequence before touching LiveView.
                 if (!officialInitSentForConnection) {
-                    Log.i("[Service] Sending captured official initialization sequence...")
-                    val initSeq = DroneProtocol.buildInitSequence(enableH265)
+                    Log.i("[Service] Sending captured official initialization sequence (pre-LiveView)...")
+                    // Keep the captured initialization, but hold its final 0x73 packet so the
+                    // explicit FPV sync + camera-function setup happens before LIVEVIEW_START.
+                    val initSeq = DroneProtocol.buildInitSequence(enableH265, includeLiveViewStart = false)
                     for ((i, cmd) in initSeq.withIndex()) {
                         sendDirectAny(cmd)
                         Log.i("[Service] Official init #${i + 1}/${initSeq.size} (${cmd.size}B)")
@@ -416,15 +418,27 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                     officialInitSentForConnection = true
                 }
 
-                // Match the archived Android backend: repeat LIVEVIEW_START, then send
-                // captured 1080p/5000 parameters, then request one IDR key frame.
-                Log.i("[Service] Activating LiveView using captured Android sequence...")
+                // Combined sequence from the TAF helpers + captured Android flow:
+                // FPV sync -> camera function/codec -> 0x73 start -> 0xD8 params -> 0xD9 IDR.
+                Log.i("[Service] LiveView step 1/5: FPV sync version (FE 0x16 / short 0x1600)")
+                sendDirectAny(DroneProtocol.buildFpvSyncVersion())
+                delay(100)
+
+                Log.i("[Service] LiveView step 2/5: camera function preview=${true} codec=${if (enableH265) "H265" else "H264"}")
+                sendDirectAny(DroneProtocol.buildCameraFunction(enablePreview = true, enableH265 = enableH265))
+                delay(100)
+
+                Log.i("[Service] LiveView step 3/5: LIVEVIEW_START 0x73")
                 sendDirectAny(DroneProtocol.buildLiveViewStart())
-                delay(50)
+                delay(100)
+
+                Log.i("[Service] LiveView step 4/5: LIVEVIEW_PARAMS 0xD8 (1080p/5000 captured payload)")
                 sendDirectAny(DroneProtocol.buildLiveViewParams(enableH265 = enableH265, bitrateKbps = 5000))
-                delay(50)
-                sendDirectAny(DroneProtocol.buildIDRRequest())
-                Log.i("[Service] Captured LiveView activation sent (1080p/5000 + IDR)")
+                delay(100)
+
+                Log.i("[Service] LiveView step 5/5: IDR request 0xD9")
+                sendDirectAny(DroneProtocol.buildIDRRequestD9())
+                Log.i("[Service] Extended LiveView activation sent; waiting for FE traffic/video")
             } catch (e: Exception) {
                 Log.e("[Service] Error activating LiveView: ${e.message}")
             } finally {
