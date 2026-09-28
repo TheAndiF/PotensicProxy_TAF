@@ -860,7 +860,7 @@ function onQueryRemoteId() {
 }
 
 .debug-header {
-  background: #0d101a;
+  background: var(--ui-bg-header);
   border-bottom: 1px solid var(--border);
   padding: 8px 16px;
   display: flex;
@@ -948,15 +948,15 @@ function onQueryRemoteId() {
 }
 
 .temp-good {
-  color: #00ff88;
+  color: var(--ui-success);
 }
 
 .temp-warn {
-  color: #ffb703;
+  color: var(--ui-warning);
 }
 
 .temp-danger {
-  color: #ff2a5f;
+  color: var(--ui-danger);
 }
 
 .temp-sub {
@@ -979,8 +979,8 @@ function onQueryRemoteId() {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #00ff88;
-  box-shadow: 0 0 8px #00ff88;
+  background: var(--ui-success);
+  box-shadow: 0 0 8px var(--ui-success);
 }
 
 /* Terminal Container */
@@ -1041,11 +1041,11 @@ function onQueryRemoteId() {
 }
 
 .line-tx {
-  color: #00d9ff;
+  color: var(--ui-primary);
 }
 
 .line-rx {
-  color: #00ff88;
+  color: var(--ui-success);
 }
 
 .line-time {
@@ -1074,7 +1074,7 @@ function onQueryRemoteId() {
 }
 
 .terminal-input-bar {
-  background: #0d101a;
+  background: var(--ui-bg-header);
   border-top: 1px solid var(--border);
   padding: 8px 12px;
   display: flex;
@@ -1219,19 +1219,19 @@ function onQueryRemoteId() {
 }
 
 .status-ok {
-  color: #00ff88 !important;
+  color: var(--ui-success) !important;
 }
 
 .status-bad {
-  color: #ff2a5f !important;
+  color: var(--ui-danger) !important;
 }
 
 .status-warn {
-  color: #ffb703 !important;
+  color: var(--ui-warning) !important;
 }
 
 .highlight-cyan {
-  color: #00d9ff !important;
+  color: var(--ui-primary) !important;
 }
 
 .highlight-blue {
@@ -1274,23 +1274,23 @@ function onQueryRemoteId() {
 .m-value .num {
   font-size: 15px;
   font-weight: 700;
-  color: #00d9ff;
+  color: var(--ui-primary);
 }
 
 .m-value .highlight {
-  color: #00ff88;
+  color: var(--ui-success);
 }
 
 .text-accent {
-  color: #00ff88 !important;
+  color: var(--ui-success) !important;
 }
 
 .text-warn {
-  color: #ffb703 !important;
+  color: var(--ui-warning) !important;
 }
 
 .text-danger {
-  color: #ff2a5f !important;
+  color: var(--ui-danger) !important;
 }
 
 /* Spectrum Chart */
@@ -1361,15 +1361,15 @@ function onQueryRemoteId() {
 }
 
 .noise-low {
-  background: linear-gradient(to top, #00ff88, #00d9ff);
+  background: linear-gradient(to top, var(--ui-success), var(--ui-primary));
 }
 
 .noise-mid {
-  background: linear-gradient(to top, #ffb703, #fb8500);
+  background: linear-gradient(to top, var(--ui-warning), #fb8500);
 }
 
 .noise-high {
-  background: linear-gradient(to top, #ff2a5f, #d90429);
+  background: linear-gradient(to top, var(--ui-danger), #d90429);
 }
 
 .bar-ch-num {
@@ -1420,11 +1420,11 @@ function onQueryRemoteId() {
 }
 
 .tx-color {
-  color: #00d9ff;
+  color: var(--ui-primary);
 }
 
 .rx-color {
-  color: #00ff88;
+  color: var(--ui-success);
 }
 
 /* ================= 3. Sensor Pane ================= */
@@ -1463,7 +1463,7 @@ function onQueryRemoteId() {
 }
 
 .face-done {
-  border-color: #00ff88;
+  border-color: var(--ui-success);
   background: rgba(0, 255, 136, 0.08);
 }
 
@@ -1481,7 +1481,7 @@ function onQueryRemoteId() {
 }
 
 .face-done .face-indicator {
-  color: #00ff88;
+  color: var(--ui-success);
   font-weight: 700;
 }
 

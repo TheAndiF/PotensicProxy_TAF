@@ -490,7 +490,7 @@ onUnmounted(() => {
   justify-content: center;
   position: relative;
   overflow: hidden;
-  background: #000;
+  background: var(--ui-bg-stage);
 }
 
 .video-feed {
@@ -509,7 +509,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   background: rgba(10, 10, 16, 0.95);
-  color: #fff;
+  color: var(--ui-text-strong);
   z-index: 5;
   text-align: center;
   padding: 24px;
@@ -543,7 +543,7 @@ onUnmounted(() => {
 
 .diag-checklist {
   background: rgba(18, 22, 36, 0.8);
-  border: 1px solid #232a40;
+  border: 1px solid var(--ui-border);
   border-radius: 6px;
   padding: 10px 16px;
   margin-bottom: 20px;
@@ -566,12 +566,12 @@ onUnmounted(() => {
 }
 
 .diag-ok {
-  color: #00ff88;
+  color: var(--ui-success);
   font-weight: 600;
 }
 
 .diag-warn {
-  color: #ffb703;
+  color: var(--ui-warning);
 }
 
 .diag-muted {
@@ -630,7 +630,7 @@ onUnmounted(() => {
 }
 
 .highlight-tag {
-  color: #00ff88;
+  color: var(--ui-success);
   border-color: rgba(0, 255, 136, 0.4);
 }
 

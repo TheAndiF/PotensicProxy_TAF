@@ -130,17 +130,16 @@ function updateFromPointer(e: PointerEvent) {
 <style scoped>
 .camera-card{background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:10px}
 .camera-header{display:flex;align-items:center;margin-bottom:10px}
-.panel-title{font-size:11px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px}
 .camera-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .control-column{min-width:0;border:1px solid #2a3248;border-radius:7px;padding:8px;background:rgba(10,13,22,.28)}
 .sub-title{font-size:10px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.45px;margin-bottom:7px}
 .control-body{display:grid;grid-template-columns:74px minmax(0,1fr);gap:7px;align-items:center}
 .vertical-dial{width:70px;height:120px;border-radius:34px;background:radial-gradient(circle,#1a2035,#0d111d);border:2px solid #2d3752;position:relative;cursor:ns-resize;touch-action:none;box-shadow:inset 0 0 15px rgba(0,0,0,.6)}
 .axis-line{position:absolute;top:18px;bottom:18px;left:50%;width:1px;background:linear-gradient(to bottom,rgba(0,217,255,.2),rgba(0,217,255,.8),rgba(0,217,255,.2))}
-.control-knob{width:34px;height:34px;border-radius:50%;background:radial-gradient(circle,#ff2a5f,#b31238);border:2px solid #ff5c84;position:absolute;top:50%;left:50%;box-shadow:0 0 10px rgba(255,42,95,.6);transition:transform .05s linear;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.control-knob{width:34px;height:34px;border-radius:50%;background:radial-gradient(circle,var(--ui-danger),#b31238);border:2px solid #ff5c84;position:absolute;top:50%;left:50%;box-shadow:0 0 10px rgba(255,42,95,.6);transition:transform .05s linear;display:flex;align-items:center;justify-content:center;pointer-events:none}
 .knob-dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
 .limit-mark{position:absolute;left:50%;transform:translateX(-50%);font-size:7px;color:var(--text-muted);font-family:var(--mono);white-space:nowrap}.limit-mark.top{top:3px}.limit-mark.bottom{bottom:3px}
 .presets{display:flex;flex-direction:column;gap:5px}.preset-label{color:var(--text-muted);font-size:8px;text-transform:uppercase;letter-spacing:.4px}
-.value-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:8px}.value-grid>div{min-height:31px;border:1px solid #30384f;border-radius:5px;background:#111726;display:flex;align-items:center;justify-content:space-between;padding:0 6px;font-family:var(--mono);font-size:9px}.value-grid strong{color:var(--cyan);font-size:10px}.value-label{color:var(--text-muted)}
+.value-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:8px}.value-grid>div{min-height:31px;border:1px solid var(--ui-border-control);border-radius:5px;background:var(--ui-bg-control-strong);display:flex;align-items:center;justify-content:space-between;padding:0 6px;font-family:var(--mono);font-size:9px}.value-grid strong{color:var(--cyan);font-size:10px}.value-label{color:var(--text-muted)}
 .feedback-state{margin-top:5px;text-align:center;color:var(--text-muted);font-size:8px;font-family:var(--mono)}
 </style>

@@ -198,14 +198,6 @@ onMounted(() => {
   gap: 12px;
 }
 
-.panel-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--cyan);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
 .desc-text {
   color: var(--text-muted);
   font-size: 11px;

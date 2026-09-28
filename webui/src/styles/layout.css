@@ -1,0 +1,36 @@
+/* Project-wide layout primitives. Prefer these for new screens. */
+.ui-page {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--ui-space-8);
+}
+
+.ui-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-5);
+}
+
+.ui-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-3);
+}
+
+.ui-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-space-5);
+}
+
+.ui-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-3);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .ui-grid-2 { grid-template-columns: 1fr; }
+}

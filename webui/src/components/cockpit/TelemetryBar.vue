@@ -44,7 +44,7 @@ const { t } = useI18n()
 }
 
 .val {
-  color: #fff;
+  color: var(--ui-text-strong);
   font-weight: bold;
 }
 

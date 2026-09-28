@@ -1,30 +1,37 @@
-BL_Refine cockpit UI and add confirmed ATOM telemetry
+BL_Centralize WebUI stylesheet system
 Date: 2026-09-28
 
 Summary:
-- Normalized cockpit and header controls across all model profiles without changing unconfirmed protocol behavior.
-- Reduced the Video Transport Capture panel to content height.
-- Renamed and aligned Joystick Control / Camera Control sections and their subsection labels.
-- Added separate target/actual presentation for Gimbal and Zoom; actual values remain unavailable until a confirmed feedback source exists.
-- Improved map/live resize handling and kept the inactive view mounted so tile coverage can be recalculated after a view swap.
-- Added only confirmed ATOM v0.7 telemetry fields for inner FE 0x21 messages 0x0000, 0x0001 and 0x0005, gated to the ATOM profile.
-- Preserved every unconfirmed protocol mapping, parser, command and scaling functionally unchanged; only visual WebUI normalization may affect those areas.
-- Updated package version to 0.936.
+- Added a central WebUI stylesheet architecture with design tokens, base styles, reusable component styles, layout primitives, and Element Plus theme harmonization.
+- Migrated repeated panel-title styling and common cockpit/debug/USB colors to shared design tokens while preserving component-specific layout rules.
+- Kept webui/src/style.css as a compatibility entry point and switched main.ts to the new styles/index.css entry point.
+- Updated the project UI style guide with the stylesheet structure and rules for future UI changes.
+- Bumped application and frontend version from 0.940 to 0.941 (versionCode 21).
+- No Potensic protocol, FE video extraction, telemetry parsing, F1-F5 control, USB/AOA, BX3, or capture logic was changed.
+- Verified the WebUI with vue-tsc --noEmit and re-ran scripts/verify_architecture.py successfully.
 
 Changed files:
+- COMMIT_MESSAGE.txt
+- UI_STYLE_GUIDE.md
 - app/build.gradle.kts
-- app/src/main/assets/web/assets/index-C6xULv8J.css
-- app/src/main/java/com/potensic/proxy/Telemetry.kt
-- app/src/main/java/com/potensic/proxy/VideoExtractor.kt
-- webui/package-lock.json
 - webui/package.json
+- webui/package-lock.json
+- webui/src/main.ts
+- webui/src/style.css
+- webui/src/styles/index.css
+- webui/src/styles/tokens.css
+- webui/src/styles/base.css
+- webui/src/styles/components.css
+- webui/src/styles/layout.css
 - webui/src/components/cockpit/CockpitView.vue
+- webui/src/components/cockpit/FlightActions.vue
 - webui/src/components/cockpit/GimbalControl.vue
 - webui/src/components/cockpit/MapView.vue
+- webui/src/components/cockpit/TelemetryBar.vue
 - webui/src/components/cockpit/VideoPlayer.vue
 - webui/src/components/cockpit/VirtualJoystick.vue
+- webui/src/components/debug/DebugConsoleView.vue
 - webui/src/components/header/HeaderBar.vue
+- webui/src/components/usb/PacketConstructor.vue
+- webui/src/components/usb/PacketMonitor.vue
 - webui/src/components/usb/UsbCapturePanel.vue
-- webui/src/components/usb/UsbManagerView.vue
-- webui/src/stores/useDroneStore.ts
-- webui/src/types/drone.ts

@@ -98,7 +98,7 @@ function updatePosition(e: PointerEvent) {
 .stick-wrapper{display:flex;flex-direction:column;align-items:center;gap:7px;min-width:0}
 .stick-title{align-self:stretch;text-align:left;font-size:10px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.45px}
 .stick-box{width:120px;height:120px;border-radius:50%;background:radial-gradient(circle,#1a2035,#0d111d);border:2px solid #2d3752;position:relative;cursor:crosshair;touch-action:none;box-shadow:inset 0 0 15px rgba(0,0,0,.6)}
-.stick-knob{width:40px;height:40px;border-radius:50%;background:radial-gradient(circle,#ff2a5f,#b31238);border:2px solid #ff5c84;position:absolute;top:40px;left:40px;box-shadow:0 0 10px rgba(255,42,95,.6);pointer-events:none;transition:transform .05s linear}
+.stick-knob{width:40px;height:40px;border-radius:50%;background:radial-gradient(circle,var(--ui-danger),#b31238);border:2px solid #ff5c84;position:absolute;top:40px;left:40px;box-shadow:0 0 10px rgba(255,42,95,.6);pointer-events:none;transition:transform .05s linear}
 .stick-rc-dot{width:10px;height:10px;border-radius:50%;background:var(--accent);position:absolute;top:55px;left:55px;box-shadow:0 0 8px var(--accent);pointer-events:none;opacity:.85;z-index:5}
 .stick-values{width:100%;display:flex;justify-content:center;gap:12px;font-size:9px;font-family:var(--mono);color:var(--text-muted);white-space:nowrap}
 </style>

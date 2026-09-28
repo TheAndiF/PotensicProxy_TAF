@@ -1,0 +1,86 @@
+:root {
+  /* Core palette */
+  --ui-bg-app: #0a0b12;
+  --ui-bg-header: #0d101a;
+  --ui-bg-panel: rgba(16, 19, 31, 0.95);
+  --ui-bg-card: rgba(25, 30, 48, 0.6);
+  --ui-bg-control: #151b2a;
+  --ui-bg-control-strong: #111726;
+  --ui-bg-hover: #232c45;
+  --ui-bg-stage: #000;
+
+  --ui-border: #232a40;
+  --ui-border-control: #30384f;
+  --ui-border-hover: #435176;
+  --ui-border-strong: #3b455f;
+
+  --ui-text: #e2e8f0;
+  --ui-text-strong: #ffffff;
+  --ui-text-muted: #7c8ba1;
+  --ui-text-subtle: #64748b;
+
+  /* Semantic colors */
+  --ui-success: #00ff88;
+  --ui-success-dim: rgba(0, 255, 136, 0.15);
+  --ui-primary: #00d9ff;
+  --ui-primary-bright: #00e5ff;
+  --ui-primary-dim: rgba(0, 217, 255, 0.15);
+  --ui-warning: #ffb703;
+  --ui-warning-dim: rgba(255, 183, 3, 0.07);
+  --ui-danger: #ff2a5f;
+  --ui-danger-dim: rgba(255, 42, 95, 0.15);
+
+  /* Typography */
+  --ui-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --ui-font-mono: "JetBrains Mono", Consolas, Monaco, monospace;
+  --ui-font-xs: 9px;
+  --ui-font-sm: 10px;
+  --ui-font-md: 11px;
+  --ui-font-body: 13px;
+  --ui-font-lg: 15px;
+  --ui-font-xl: 18px;
+
+  /* Spacing */
+  --ui-space-1: 4px;
+  --ui-space-2: 6px;
+  --ui-space-3: 8px;
+  --ui-space-4: 10px;
+  --ui-space-5: 12px;
+  --ui-space-6: 14px;
+  --ui-space-7: 16px;
+  --ui-space-8: 18px;
+  --ui-space-9: 24px;
+
+  /* Geometry */
+  --ui-radius-xs: 3px;
+  --ui-radius-sm: 4px;
+  --ui-radius-md: 6px;
+  --ui-radius-lg: 8px;
+  --ui-radius-xl: 10px;
+  --ui-control-h: 36px;
+  --ui-control-h-compact: 32px;
+  --ui-status-h: 28px;
+  --ui-header-h: 50px;
+  --ui-side-panel-w: 340px;
+
+  /* Motion / effects */
+  --ui-transition-fast: 0.15s ease;
+  --ui-shadow-pip: 0 4px 18px rgba(0, 0, 0, 0.67);
+  --ui-shadow-overlay: 0 1px 5px rgba(0, 0, 0, 0.9);
+
+  /* Compatibility aliases: existing components can migrate incrementally. */
+  --bg: var(--ui-bg-app);
+  --panel-bg: var(--ui-bg-panel);
+  --card-bg: var(--ui-bg-card);
+  --border: var(--ui-border);
+  --accent: var(--ui-success);
+  --accent-dim: var(--ui-success-dim);
+  --danger: var(--ui-danger);
+  --danger-dim: var(--ui-danger-dim);
+  --cyan: var(--ui-primary);
+  --cyan-dim: var(--ui-primary-dim);
+  --warn: var(--ui-warning);
+  --text: var(--ui-text);
+  --text-muted: var(--ui-text-muted);
+  --mono: var(--ui-font-mono);
+}

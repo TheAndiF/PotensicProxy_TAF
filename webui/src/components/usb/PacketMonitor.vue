@@ -482,7 +482,7 @@ watch(autoScroll, enabled => {
 
 .cat-label {
   font-size: 11px;
-  color: #64748b;
+  color: var(--ui-text-subtle);
   margin-right: 2px;
 }
 
@@ -507,7 +507,7 @@ watch(autoScroll, enabled => {
 
 .stats-text {
   font-size: 11px;
-  color: #64748b;
+  color: var(--ui-text-subtle);
   font-family: var(--mono);
 }
 
@@ -543,7 +543,7 @@ watch(autoScroll, enabled => {
 }
 
 .pkt-time {
-  color: #64748b;
+  color: var(--ui-text-subtle);
   width: 70px;
   flex-shrink: 0;
 }
@@ -569,7 +569,7 @@ watch(autoScroll, enabled => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #e2e8f0;
+  color: var(--ui-text);
 }
 
 /* Category Badges */
@@ -614,7 +614,7 @@ watch(autoScroll, enabled => {
 .cat-rc_sticks {
   background: rgba(71, 85, 105, 0.12);
   border: 1px solid rgba(71, 85, 105, 0.25);
-  color: #64748b;
+  color: var(--ui-text-subtle);
 }
 
 .cat-video {
@@ -704,7 +704,7 @@ watch(autoScroll, enabled => {
 }
 
 .hex-title {
-  color: #64748b;
+  color: var(--ui-text-subtle);
   font-size: 10.5px;
   margin-bottom: 2px;
 }

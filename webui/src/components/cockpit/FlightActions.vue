@@ -31,14 +31,6 @@ const { t } = useI18n()
   gap: 8px;
 }
 
-.panel-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--cyan);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
 .btn-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

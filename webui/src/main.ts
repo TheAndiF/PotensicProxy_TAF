@@ -5,7 +5,7 @@ import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 
-import './style.css'
+import './styles/index.css'
 import App from './App.vue'
 
 // Enable Element Plus dark mode by default

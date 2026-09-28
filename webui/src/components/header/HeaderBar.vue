@@ -47,7 +47,7 @@ const { t } = useI18n()
 
 <style scoped>
 .app-header {
-  background: #0d101a;
+  background: var(--ui-bg-header);
   border-bottom: 1px solid var(--border);
   padding: 0 14px;
   display: grid;
@@ -74,7 +74,7 @@ const { t } = useI18n()
   font-size: 15px;
   font-weight: 800;
   letter-spacing: 1px;
-  background: linear-gradient(135deg, #00ff88, #00d9ff);
+  background: linear-gradient(135deg, var(--ui-success), var(--ui-primary));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -92,8 +92,8 @@ const { t } = useI18n()
   align-items: center;
   justify-content: center;
   padding: 0 12px;
-  border-color: #30384f;
-  background: #151b2a;
+  border-color: var(--ui-border-control);
+  background: var(--ui-bg-control);
   color: var(--text);
   font-size: 11px;
   box-shadow: none;
