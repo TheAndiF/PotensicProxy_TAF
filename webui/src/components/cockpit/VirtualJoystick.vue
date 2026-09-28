@@ -1,5 +1,6 @@
 <template>
   <div class="stick-wrapper">
+    <div class="stick-title">{{ label }}</div>
     <div
       class="stick-box"
       ref="boxRef"
@@ -8,12 +9,13 @@
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
     >
-      <!-- Knob -->
       <div class="stick-knob" :style="knobStyle"></div>
-      <!-- Hardware Controller Echo Dot -->
       <div class="stick-rc-dot" :style="rcDotStyle" v-if="hasRcDot"></div>
     </div>
-    <div class="stick-label"><span>{{ label }} (</span><span class="axis-value">{{ modelValue.y }}</span><span>, </span><span class="axis-value">{{ modelValue.x }}</span><span>)</span></div>
+    <div class="stick-values">
+      <span>{{ valueLabels[0] }}: {{ modelValue.y }}</span>
+      <span>{{ valueLabels[1] }}: {{ modelValue.x }}</span>
+    </div>
   </div>
 </template>
 
@@ -22,6 +24,7 @@ import { ref, computed } from 'vue'
 
 const props = defineProps<{
   label: string
+  valueLabels?: [string, string]
   modelValue: { x: number; y: number }
   rcEcho?: { x: number; y: number }
 }>()
@@ -35,6 +38,7 @@ const boxRef = ref<HTMLElement | null>(null)
 let isDragging = false
 
 const hasRcDot = computed(() => !!props.rcEcho)
+const valueLabels = computed<[string, string]>(() => props.valueLabels || ['Y', 'X'])
 
 const knobStyle = computed(() => ({
   transform: `translate(${props.modelValue.x * 0.04}px, ${-props.modelValue.y * 0.04}px)`
@@ -54,20 +58,17 @@ function onPointerDown(e: PointerEvent) {
 }
 
 function onPointerMove(e: PointerEvent) {
-  if (isDragging) {
-    updatePosition(e)
-  }
+  if (isDragging) updatePosition(e)
 }
 
 function onPointerUp(e: PointerEvent) {
-  if (isDragging) {
-    isDragging = false
-    try {
-      ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
-    } catch (_) {}
-    emit('update:modelValue', { x: 0, y: 0 })
-    emit('change', { x: 0, y: 0 })
-  }
+  if (!isDragging) return
+  isDragging = false
+  try {
+    ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+  } catch (_) {}
+  emit('update:modelValue', { x: 0, y: 0 })
+  emit('change', { x: 0, y: 0 })
 }
 
 function updatePosition(e: PointerEvent) {
@@ -94,64 +95,10 @@ function updatePosition(e: PointerEvent) {
 </script>
 
 <style scoped>
-.stick-wrapper {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.stick-box {
-  width: 120px;
-  height: 120px;
-  border-radius: 50%;
-  background: radial-gradient(circle, #1a2035, #0d111d);
-  border: 2px solid #2d3752;
-  position: relative;
-  cursor: crosshair;
-  touch-action: none;
-  box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.6);
-}
-
-.stick-knob {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: radial-gradient(circle, #ff2a5f, #b31238);
-  border: 2px solid #ff5c84;
-  position: absolute;
-  top: 40px;
-  left: 40px;
-  box-shadow: 0 0 10px rgba(255, 42, 95, 0.6);
-  pointer-events: none;
-  transition: transform 0.05s linear;
-}
-
-.stick-rc-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--accent);
-  position: absolute;
-  top: 55px;
-  left: 55px;
-  box-shadow: 0 0 8px var(--accent);
-  pointer-events: none;
-  opacity: 0.85;
-  z-index: 5;
-}
-
-.stick-label {
-  font-size: 10px;
-  font-family: var(--mono);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.axis-value {
-  display: inline-block;
-  width: 5ch;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
+.stick-wrapper{display:flex;flex-direction:column;align-items:center;gap:7px;min-width:0}
+.stick-title{align-self:stretch;text-align:left;font-size:10px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.45px}
+.stick-box{width:120px;height:120px;border-radius:50%;background:radial-gradient(circle,#1a2035,#0d111d);border:2px solid #2d3752;position:relative;cursor:crosshair;touch-action:none;box-shadow:inset 0 0 15px rgba(0,0,0,.6)}
+.stick-knob{width:40px;height:40px;border-radius:50%;background:radial-gradient(circle,#ff2a5f,#b31238);border:2px solid #ff5c84;position:absolute;top:40px;left:40px;box-shadow:0 0 10px rgba(255,42,95,.6);pointer-events:none;transition:transform .05s linear}
+.stick-rc-dot{width:10px;height:10px;border-radius:50%;background:var(--accent);position:absolute;top:55px;left:55px;box-shadow:0 0 8px var(--accent);pointer-events:none;opacity:.85;z-index:5}
+.stick-values{width:100%;display:flex;justify-content:center;gap:12px;font-size:9px;font-family:var(--mono);color:var(--text-muted);white-space:nowrap}
 </style>

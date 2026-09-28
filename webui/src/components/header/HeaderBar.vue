@@ -112,6 +112,15 @@ const { t } = useI18n()
   white-space: nowrap;
 }
 
+.status-tags :deep(.el-tag) {
+  height: 30px;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  padding: 0 9px;
+}
+
 @media (max-width: 1050px) {
   .app-header {
     grid-template-columns: auto 1fr;

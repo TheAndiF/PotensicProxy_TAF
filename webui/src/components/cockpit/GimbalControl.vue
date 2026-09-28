@@ -1,99 +1,63 @@
 <template>
-  <section class="gimbal-card" aria-label="Gimbal and zoom control preview">
-    <div class="gimbal-header">
-      <span class="panel-title">🎥 Gimbal Control</span>
-      <span class="taf-status-field taf-status-field--warning status-badge">UI only · not connected</span>
+  <section class="camera-card" aria-label="Camera control preview">
+    <div class="camera-header">
+      <span class="panel-title">📷 Camera Control</span>
     </div>
 
-    <div class="control-pair">
-      <div class="control-module">
-        <div class="module-title">Gimbal</div>
-        <div class="module-body">
-          <div class="lever-column">
-            <div
-              ref="gimbalRef"
-              class="axis-lever"
-              @pointerdown="onGimbalPointerDown"
-              @pointermove="onGimbalPointerMove"
-              @pointerup="onGimbalPointerUp"
-              @pointercancel="onGimbalPointerUp"
-            >
-              <div class="axis-track"></div>
-              <div class="axis-limit top">{{ MAX_ANGLE }}°</div>
-              <div class="axis-limit bottom">{{ MIN_ANGLE }}°</div>
-              <div class="axis-knob" :style="gimbalKnobStyle"><span class="knob-dot"></span></div>
-            </div>
-            <div class="current-value">{{ targetAngle }}°</div>
+    <div class="camera-grid">
+      <div class="control-column">
+        <div class="sub-title">Gimbal</div>
+        <div class="control-body">
+          <div
+            ref="dialRef"
+            class="vertical-dial"
+            @pointerdown="onPointerDown"
+            @pointermove="onPointerMove"
+            @pointerup="onPointerUp"
+            @pointercancel="onPointerUp"
+          >
+            <div class="axis-line"></div>
+            <div class="limit-mark top">{{ MAX_ANGLE }}°</div>
+            <div class="limit-mark bottom">{{ MIN_ANGLE }}°</div>
+            <div class="control-knob" :style="gimbalKnobStyle"><span class="knob-dot"></span></div>
           </div>
-
-          <div class="preset-column">
-            <div class="field-label">Preset</div>
-            <button class="taf-btn taf-btn--compact preset-btn" type="button" @click="setAngle(0)">0°</button>
-            <button class="taf-btn taf-btn--compact preset-btn" type="button" @click="setAngle(-45)">-45°</button>
-            <button class="taf-btn taf-btn--compact preset-btn" type="button" @click="setAngle(-90)">-90°</button>
-            <label class="custom-field" for="gimbal-custom">
-              <span class="sr-only">Custom gimbal angle</span>
-              <input
-                id="gimbal-custom"
-                v-model.number="targetAngle"
-                class="taf-value-input"
-                type="number"
-                :min="MIN_ANGLE"
-                :max="MAX_ANGLE"
-                step="1"
-                @change="clampTarget"
-              />
-              <span class="input-unit">°</span>
-            </label>
+          <div class="presets">
+            <span class="preset-label">Preset</span>
+            <button class="taf-btn taf-btn--compact" type="button" @click="setAngle(0)">0°</button>
+            <button class="taf-btn taf-btn--compact" type="button" @click="setAngle(-45)">-45°</button>
+            <button class="taf-btn taf-btn--compact" type="button" @click="setAngle(-90)">-90°</button>
           </div>
         </div>
+        <div class="value-grid">
+          <div><span class="value-label">Soll</span><strong>{{ targetAngle }}°</strong></div>
+          <div><span class="value-label">Ist</span><strong>{{ actualGimbalText }}</strong></div>
+        </div>
+        <div class="feedback-state">{{ gimbalStatus }}</div>
       </div>
 
-      <div class="control-module">
-        <div class="module-title">Zoom</div>
-        <div class="module-body">
-          <div class="lever-column">
-            <div
-              ref="zoomRef"
-              class="axis-lever"
-              @pointerdown="onZoomPointerDown"
-              @pointermove="onZoomPointerMove"
-              @pointerup="onZoomPointerUp"
-              @pointercancel="onZoomPointerUp"
-            >
-              <div class="axis-track"></div>
-              <div class="axis-limit top">2.00x</div>
-              <div class="axis-limit bottom">1.00x</div>
-              <div class="axis-knob" :style="zoomKnobStyle"><span class="knob-dot"></span></div>
-            </div>
-            <div class="current-value">{{ zoomValue.toFixed(2) }}x</div>
+      <div class="control-column">
+        <div class="sub-title">Zoom</div>
+        <div class="control-body">
+          <div class="vertical-dial">
+            <div class="axis-line"></div>
+            <div class="limit-mark top">{{ MAX_ZOOM.toFixed(2) }}x</div>
+            <div class="limit-mark bottom">{{ MIN_ZOOM.toFixed(2) }}x</div>
+            <div class="control-knob" :style="zoomKnobStyle"><span class="knob-dot"></span></div>
           </div>
-
-          <div class="preset-column">
-            <div class="field-label">Preset</div>
-            <button class="taf-btn taf-btn--compact preset-btn" type="button" @click="setZoom(1.0)">1.0x</button>
-            <button class="taf-btn taf-btn--compact preset-btn" type="button" @click="setZoom(1.5)">1.5x</button>
-            <button class="taf-btn taf-btn--compact preset-btn" type="button" @click="setZoom(2.0)">2.0x</button>
-            <label class="custom-field" for="zoom-custom">
-              <span class="sr-only">Custom zoom factor</span>
-              <input
-                id="zoom-custom"
-                v-model.number="zoomValue"
-                class="taf-value-input"
-                type="number"
-                min="1"
-                max="2"
-                step="0.01"
-                @change="clampZoom"
-              />
-              <span class="input-unit">x</span>
-            </label>
+          <div class="presets">
+            <span class="preset-label">Preset</span>
+            <button class="taf-btn taf-btn--compact" type="button" @click="setZoom(1)">1.0x</button>
+            <button class="taf-btn taf-btn--compact" type="button" @click="setZoom(1.5)">1.5x</button>
+            <button class="taf-btn taf-btn--compact" type="button" @click="setZoom(2)">2.0x</button>
           </div>
         </div>
+        <div class="value-grid">
+          <div><span class="value-label">Soll</span><strong>{{ targetZoom.toFixed(2) }}x</strong></div>
+          <div><span class="value-label">Ist</span><strong>{{ actualZoomText }}</strong></div>
+        </div>
+        <div class="feedback-state">{{ zoomStatus }}</div>
       </div>
     </div>
-
-    <div class="preview-note">Preview only. No value is transmitted to the drone, controller or BX3.</div>
   </section>
 </template>
 
@@ -102,305 +66,81 @@ import { computed, ref } from 'vue'
 
 const MIN_ANGLE = -90
 const MAX_ANGLE = 30
+const MIN_ZOOM = 1
+const MAX_ZOOM = 2
 const targetAngle = ref(0)
-const zoomValue = ref(1.00)
-const gimbalRef = ref<HTMLElement | null>(null)
-const zoomRef = ref<HTMLElement | null>(null)
-let gimbalDragging = false
-let zoomDragging = false
+const targetZoom = ref(1)
 
-function leverTransform(value: number, min: number, max: number) {
-  const normalized = (max - value) / (max - min)
-  const travel = 74
+// No confirmed measured Gimbal/Zoom feedback field exists in the current project data model.
+// Keep the actual value empty until a real telemetry source is wired in.
+const actualGimbal = ref<number | null>(null)
+const actualZoom = ref<number | null>(null)
+
+const dialRef = ref<HTMLElement | null>(null)
+let dragging = false
+
+const gimbalKnobStyle = computed(() => {
+  const normalized = (MAX_ANGLE - targetAngle.value) / (MAX_ANGLE - MIN_ANGLE)
+  const travel = 70
   const y = -travel / 2 + normalized * travel
   return { transform: `translate(-50%, calc(-50% + ${y}px))` }
-}
+})
 
-const gimbalKnobStyle = computed(() => leverTransform(targetAngle.value, MIN_ANGLE, MAX_ANGLE))
-const zoomKnobStyle = computed(() => leverTransform(zoomValue.value, 1, 2))
+const zoomKnobStyle = computed(() => {
+  const normalized = (targetZoom.value - MIN_ZOOM) / (MAX_ZOOM - MIN_ZOOM)
+  const travel = 70
+  const y = travel / 2 - normalized * travel
+  return { transform: `translate(-50%, calc(-50% + ${y}px))` }
+})
+
+const actualGimbalText = computed(() => actualGimbal.value == null ? '--' : `${actualGimbal.value.toFixed(0)}°`)
+const actualZoomText = computed(() => actualZoom.value == null ? '--' : `${actualZoom.value.toFixed(2)}x`)
+const gimbalStatus = computed(() => actualGimbal.value == null ? 'Keine Rückmeldung' : Math.abs(actualGimbal.value - targetAngle.value) <= 1 ? 'Erreicht' : 'Fährt')
+const zoomStatus = computed(() => actualZoom.value == null ? 'Keine Rückmeldung' : Math.abs(actualZoom.value - targetZoom.value) <= 0.02 ? 'Erreicht' : 'Fährt')
 
 function setAngle(value: number) {
   targetAngle.value = Math.max(MIN_ANGLE, Math.min(MAX_ANGLE, Math.round(value)))
 }
 
-function clampTarget() {
-  if (!Number.isFinite(targetAngle.value)) targetAngle.value = 0
-  setAngle(targetAngle.value)
-}
-
 function setZoom(value: number) {
-  zoomValue.value = Math.max(1, Math.min(2, Math.round(value * 100) / 100))
+  targetZoom.value = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(value * 100) / 100))
 }
 
-function clampZoom() {
-  if (!Number.isFinite(zoomValue.value)) zoomValue.value = 1
-  setZoom(zoomValue.value)
-}
-
-function valueFromPointer(e: PointerEvent, element: HTMLElement | null, min: number, max: number) {
-  if (!element) return max
-  const rect = element.getBoundingClientRect()
-  const margin = 16
-  const usable = Math.max(1, rect.height - margin * 2)
-  const y = Math.max(margin, Math.min(rect.height - margin, e.clientY - rect.top))
-  const ratio = (y - margin) / usable
-  return max - ratio * (max - min)
-}
-
-function onGimbalPointerDown(e: PointerEvent) {
-  gimbalDragging = true
+function onPointerDown(e: PointerEvent) {
+  dragging = true
   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-  setAngle(valueFromPointer(e, gimbalRef.value, MIN_ANGLE, MAX_ANGLE))
+  updateFromPointer(e)
 }
-
-function onGimbalPointerMove(e: PointerEvent) {
-  if (gimbalDragging) setAngle(valueFromPointer(e, gimbalRef.value, MIN_ANGLE, MAX_ANGLE))
-}
-
-function onGimbalPointerUp(e: PointerEvent) {
-  if (!gimbalDragging) return
-  gimbalDragging = false
+function onPointerMove(e: PointerEvent) { if (dragging) updateFromPointer(e) }
+function onPointerUp(e: PointerEvent) {
+  if (!dragging) return
+  dragging = false
   try { ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch (_) {}
 }
-
-function onZoomPointerDown(e: PointerEvent) {
-  zoomDragging = true
-  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-  setZoom(valueFromPointer(e, zoomRef.value, 1, 2))
-}
-
-function onZoomPointerMove(e: PointerEvent) {
-  if (zoomDragging) setZoom(valueFromPointer(e, zoomRef.value, 1, 2))
-}
-
-function onZoomPointerUp(e: PointerEvent) {
-  if (!zoomDragging) return
-  zoomDragging = false
-  try { ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch (_) {}
+function updateFromPointer(e: PointerEvent) {
+  if (!dialRef.value) return
+  const rect = dialRef.value.getBoundingClientRect()
+  const usable = Math.max(1, rect.height - 30)
+  const y = Math.max(15, Math.min(rect.height - 15, e.clientY - rect.top))
+  const ratio = (y - 15) / usable
+  setAngle(MAX_ANGLE - ratio * (MAX_ANGLE - MIN_ANGLE))
 }
 </script>
 
 <style scoped>
-.gimbal-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px;
-}
-
-.gimbal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 9px;
-}
-
-.panel-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--cyan);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.status-badge {
-  min-width: 118px;
-}
-
-.control-pair {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.control-module {
-  min-width: 0;
-  border: 1px solid rgba(48, 56, 79, 0.8);
-  border-radius: 7px;
-  background: rgba(13, 17, 29, 0.48);
-  padding: 8px;
-}
-
-.module-title {
-  color: var(--cyan);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.45px;
-  margin-bottom: 6px;
-}
-
-.module-body {
-  display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
-  gap: 7px;
-  align-items: start;
-}
-
-.lever-column,
-.preset-column {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-}
-
-.lever-column {
-  align-items: center;
-  gap: 5px;
-}
-
-.axis-lever {
-  width: 54px;
-  height: 128px;
-  border-radius: 27px;
-  background: linear-gradient(#11182a, #0d111d);
-  border: 2px solid #2d3752;
-  position: relative;
-  cursor: ns-resize;
-  touch-action: none;
-  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.55);
-}
-
-.axis-track {
-  position: absolute;
-  top: 18px;
-  bottom: 18px;
-  left: 50%;
-  width: 2px;
-  transform: translateX(-50%);
-  background: linear-gradient(to bottom, rgba(0, 217, 255, 0.2), rgba(0, 217, 255, 0.8), rgba(0, 217, 255, 0.2));
-}
-
-.axis-knob {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: radial-gradient(circle, #ff2a5f, #b31238);
-  border: 2px solid #ff5c84;
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  box-shadow: 0 0 9px rgba(255, 42, 95, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-  transition: transform 0.05s linear;
-}
-
-.knob-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent);
-}
-
-.axis-limit {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  font: 7px var(--mono);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.axis-limit.top { top: 3px; }
-.axis-limit.bottom { bottom: 3px; }
-
-.current-value {
-  width: 54px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #30384f;
-  border-radius: 6px;
-  background: #111726;
-  color: var(--cyan);
-  font: 10px var(--mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.field-label {
-  color: var(--text-muted);
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-}
-
-.preset-column {
-  gap: 5px;
-}
-
-.preset-btn {
-  width: 100%;
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.custom-field {
-  display: flex;
-  width: 100%;
-  height: 28px;
-}
-
-.taf-value-input {
-  min-width: 0;
-  width: 100%;
-  height: 28px;
-  border: 1px solid #30384f;
-  border-right: 0;
-  border-radius: 6px 0 0 6px;
-  background: #111726;
-  color: var(--text);
-  padding: 0 5px;
-  font: 10px var(--mono);
-  font-variant-numeric: tabular-nums;
-  outline: none;
-  user-select: text;
-}
-
-.taf-value-input:focus {
-  border-color: var(--cyan);
-}
-
-.input-unit {
-  width: 20px;
-  flex: 0 0 20px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #30384f;
-  border-left: 0;
-  border-radius: 0 6px 6px 0;
-  background: #151b2a;
-  color: var(--cyan);
-  font: 10px var(--mono);
-}
-
-.preview-note {
-  margin-top: 8px;
-  color: var(--text-muted);
-  font-size: 9px;
-  line-height: 1.35;
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
+.camera-card{background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:10px}
+.camera-header{display:flex;align-items:center;margin-bottom:10px}
+.panel-title{font-size:11px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px}
+.camera-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.control-column{min-width:0;border:1px solid #2a3248;border-radius:7px;padding:8px;background:rgba(10,13,22,.28)}
+.sub-title{font-size:10px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.45px;margin-bottom:7px}
+.control-body{display:grid;grid-template-columns:74px minmax(0,1fr);gap:7px;align-items:center}
+.vertical-dial{width:70px;height:120px;border-radius:34px;background:radial-gradient(circle,#1a2035,#0d111d);border:2px solid #2d3752;position:relative;cursor:ns-resize;touch-action:none;box-shadow:inset 0 0 15px rgba(0,0,0,.6)}
+.axis-line{position:absolute;top:18px;bottom:18px;left:50%;width:1px;background:linear-gradient(to bottom,rgba(0,217,255,.2),rgba(0,217,255,.8),rgba(0,217,255,.2))}
+.control-knob{width:34px;height:34px;border-radius:50%;background:radial-gradient(circle,#ff2a5f,#b31238);border:2px solid #ff5c84;position:absolute;top:50%;left:50%;box-shadow:0 0 10px rgba(255,42,95,.6);transition:transform .05s linear;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.knob-dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.limit-mark{position:absolute;left:50%;transform:translateX(-50%);font-size:7px;color:var(--text-muted);font-family:var(--mono);white-space:nowrap}.limit-mark.top{top:3px}.limit-mark.bottom{bottom:3px}
+.presets{display:flex;flex-direction:column;gap:5px}.preset-label{color:var(--text-muted);font-size:8px;text-transform:uppercase;letter-spacing:.4px}
+.value-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:8px}.value-grid>div{min-height:31px;border:1px solid #30384f;border-radius:5px;background:#111726;display:flex;align-items:center;justify-content:space-between;padding:0 6px;font-family:var(--mono);font-size:9px}.value-grid strong{color:var(--cyan);font-size:10px}.value-label{color:var(--text-muted)}
+.feedback-state{margin-top:5px;text-align:center;color:var(--text-muted);font-size:8px;font-family:var(--mono)}
 </style>

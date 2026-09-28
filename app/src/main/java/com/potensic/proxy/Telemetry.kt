@@ -7,6 +7,14 @@ import org.json.JSONObject
  * Reversed from the official Potensic Atom 2 APK (jadx decompilation).
  *
  * FE type 0x21 → inner FF FD → du1 dispatch by short:
+ * Existing project mappings remain available unchanged.
+ *
+ * Confirmed ATOM parser mappings from PotensicPro app code (v0.7 project concept):
+ *   0x0000 → FlightRevFlightInfoData — voltage, longitude, latitude, satellites, directToNorth
+ *   0x0001 → FlightRevBatteryData — battery type/cells/temperature/cycles/current/time/capacity
+ *   0x0005 → FlightRevHomePointData — home longitude/latitude + sync bit
+ *
+ * Legacy/current mappings retained unchanged:
  *   0x0200 (512) → vt1 (FlightRevGps) — GPS/flight telemetry
  *   0x0202 (514) → mu1 (FlightRevState) — flight state flags
  *   0x0211 (529) → fu1 (FlightRevRcValue) — physical joystick positions
@@ -31,21 +39,6 @@ data class TelemetryData(
     val latitude: Double = 0.0,
     val satellites: Int = 0,
     val heading: Int = 0,
-    // Confirmed ATOM Home Point block (message 0x0005)
-    val homeLongitude: Double = 0.0,
-    val homeLatitude: Double = 0.0,
-    val homeSynced: Boolean = false,
-    // Confirmed ATOM battery block (message 0x0001). Raw suffixes are intentional where v0.7 does not confirm a physical unit.
-    val batteryType: Int = 0,
-    val cellVoltage1: Float = 0f,
-    val cellVoltage2: Float = 0f,
-    val cellVoltage3: Float = 0f,
-    val cellVoltage4: Float = 0f,
-    val batteryTemperatureRaw: Int = 0,
-    val batteryCycleCount: Int = 0,
-    val batteryCurrentAbsRaw: Int = 0,
-    val batteryRemainingFlightTimeRaw: Int = 0,
-    val batteryRemainingCapacityRaw: Int = 0,
     val horizontalDistance: Float = 0f,
     val verticalDistance: Float = 0f,
     val horizontalSpeed: Float = 0f,
@@ -57,6 +50,21 @@ data class TelemetryData(
     val windDirection: Float = 0f,
     val gpsAccuracy: Int = 0,
     val altitude: Float = 0f,
+    // Confirmed ATOM Home Point (0x0005)
+    val homeLongitude: Double = 0.0,
+    val homeLatitude: Double = 0.0,
+    val homeSynced: Boolean = false,
+    // Confirmed ATOM Battery block (0x0001). Units that are not confirmed stay raw.
+    val batteryType: Int = 0,
+    val cellVoltage1: Float = 0f,
+    val cellVoltage2: Float = 0f,
+    val cellVoltage3: Float = 0f,
+    val cellVoltage4: Float = 0f,
+    val batteryTemperatureRaw: Int = 0,
+    val batteryCycleCount: Int = 0,
+    val batteryCurrentAbsRaw: Int = 0,
+    val batteryRemainingFlightTimeRaw: Int = 0,
+    val batteryRemainingCapacityRaw: Int = 0,
     // Remoter battery (hw4)
     val remoterBatteryVoltage: Float = 0f,
     val remoterBatteryPercent: Float = 0f,
@@ -82,6 +90,17 @@ data class TelemetryData(
         put("latitude", latitude)
         put("satellites", satellites)
         put("heading", heading)
+        put("horizontalDistance", horizontalDistance)
+        put("verticalDistance", verticalDistance)
+        put("horizontalSpeed", horizontalSpeed)
+        put("verticalSpeed", verticalSpeed)
+        put("battery", battery)
+        put("pitch", pitch)
+        put("roll", roll)
+        put("windSpeed", windSpeed)
+        put("windDirection", windDirection)
+        put("gpsAccuracy", gpsAccuracy)
+        put("altitude", altitude)
         put("homeLongitude", homeLongitude)
         put("homeLatitude", homeLatitude)
         put("homeSynced", homeSynced)
@@ -95,17 +114,6 @@ data class TelemetryData(
         put("batteryCurrentAbsRaw", batteryCurrentAbsRaw)
         put("batteryRemainingFlightTimeRaw", batteryRemainingFlightTimeRaw)
         put("batteryRemainingCapacityRaw", batteryRemainingCapacityRaw)
-        put("horizontalDistance", horizontalDistance)
-        put("verticalDistance", verticalDistance)
-        put("horizontalSpeed", horizontalSpeed)
-        put("verticalSpeed", verticalSpeed)
-        put("battery", battery)
-        put("pitch", pitch)
-        put("roll", roll)
-        put("windSpeed", windSpeed)
-        put("windDirection", windDirection)
-        put("gpsAccuracy", gpsAccuracy)
-        put("altitude", altitude)
         put("remoterBatteryVoltage", remoterBatteryVoltage)
         put("remoterBatteryPercent", remoterBatteryPercent)
         put("rcThrottle", rcThrottle)
@@ -148,7 +156,7 @@ object TelemetryParser {
     /**
      * Parse a raw FE payload (after 16B FE header).
      */
-    fun parse(feType: Int, payload: ByteArray, droneProfileId: String? = null): TelemetryData? {
+    fun parse(feType: Int, payload: ByteArray, profileId: String? = null): TelemetryData? {
         if (payload.size < 8) return null
 
         try {
@@ -170,17 +178,13 @@ object TelemetryParser {
                 logCount++
             }
 
-            // v0.7 confirmed ATOM parser additions. Existing legacy/ATOM 2 mappings below are intentionally preserved.
-            if (droneProfileId == "ATOM" && feType == 0x21) {
-                when (cmdShort) {
-                    0x0000 -> return parseAtomFlightInfo(payload, dataStart, dataLen)
-                    0x0001 -> return parseAtomBattery(payload, dataStart, dataLen)
-                    0x0005 -> return parseAtomHomePoint(payload, dataStart, dataLen)
-                }
-            }
-
             when (feType) {
                 0x21 -> when (cmdShort) {
+                    // v0.7: these mappings/offsets are confirmed for the ATOM app parser.
+                    // They are profile-gated so ATOM 2 and existing legacy mappings stay untouched.
+                    0x0000 -> if (profileId == "ATOM") return parseAtomFlightInfo(payload, dataStart, dataLen)
+                    0x0001 -> if (profileId == "ATOM") parseAtomBattery(payload, dataStart, dataLen)
+                    0x0005 -> if (profileId == "ATOM") parseAtomHomePoint(payload, dataStart, dataLen)
                     0x0200 -> return parseFlightGps(payload, dataStart, dataLen)
                     0x0211 -> parseRcValues(payload, dataStart, dataLen)
                 }
@@ -198,9 +202,11 @@ object TelemetryParser {
         return null
     }
 
+
     /**
-     * Potensic ATOM v0.7 confirmed Flight Info fields (inner message 0x0000).
-     * Only fixed offsets confirmed by the concept are parsed here. Fields after heading are deliberately untouched.
+     * Confirmed ATOM 0x0000 Flight Info fields from the PotensicPro parser.
+     * Only fixed offsets documented as safe in concept v0.7 are decoded here.
+     * No assumptions are made for the format-dependent fields after directToNorth.
      */
     private fun parseAtomFlightInfo(payload: ByteArray, i: Int, dataLen: Int): TelemetryData? {
         if (dataLen < 15) return null
@@ -211,17 +217,35 @@ object TelemetryParser {
             latitude = readIntLE(payload, i + 8) / 1.0E7,
             satellites = payload[i + 12].toInt() and 0xFF,
             heading = readUShortLE(payload, i + 13),
+            remoterBatteryVoltage = remoterBatVoltage,
+            remoterBatteryPercent = remoterBatPercent,
+            rcThrottle = rcThrottle, rcYaw = rcYaw, rcPitch = rcPitch, rcRoll = rcRoll,
+            rcLeftWheel = rcLeftWheel, rcRightWheel = rcRightWheel,
+            btnRecord = btnRecord, btnPhoto = btnPhoto, btnRTH = btnRTH, btnC1 = btnC1, btnC2 = btnC2,
             timestamp = System.currentTimeMillis(),
         )
         latest = tel
         return tel
     }
 
-    /** Potensic ATOM v0.7 confirmed Battery fields (inner message 0x0001). */
-    private fun parseAtomBattery(payload: ByteArray, i: Int, dataLen: Int): TelemetryData? {
-        if (dataLen < 19) return null
-        val currentAbs = kotlin.math.abs(readShortLE(payload, i + 13))
-        val tel = latest.copy(
+    /** Confirmed ATOM 0x0005 Home Point layout. */
+    private fun parseAtomHomePoint(payload: ByteArray, i: Int, dataLen: Int) {
+        if (dataLen < 9) return
+        latest = latest.copy(
+            homeLongitude = readIntLE(payload, i) / 1.0E7,
+            homeLatitude = readIntLE(payload, i + 4) / 1.0E7,
+            homeSynced = ((payload[i + 8].toInt() and 0xFF) and 0x01) != 0,
+            timestamp = System.currentTimeMillis(),
+        )
+    }
+
+    /**
+     * Confirmed ATOM 0x0001 Battery layout. Values whose physical unit is not confirmed
+     * by v0.7 are deliberately exported as raw values.
+     */
+    private fun parseAtomBattery(payload: ByteArray, i: Int, dataLen: Int) {
+        if (dataLen < 19) return
+        latest = latest.copy(
             batteryType = payload[i].toInt() and 0xFF,
             cellVoltage1 = readUShortLE(payload, i + 1) / 100f,
             cellVoltage2 = readUShortLE(payload, i + 3) / 100f,
@@ -229,26 +253,11 @@ object TelemetryParser {
             cellVoltage4 = readUShortLE(payload, i + 7) / 100f,
             batteryTemperatureRaw = readShortLE(payload, i + 9),
             batteryCycleCount = readUShortLE(payload, i + 11),
-            batteryCurrentAbsRaw = currentAbs,
+            batteryCurrentAbsRaw = kotlin.math.abs(readShortLE(payload, i + 13)),
             batteryRemainingFlightTimeRaw = readUShortLE(payload, i + 15),
             batteryRemainingCapacityRaw = readUShortLE(payload, i + 17),
             timestamp = System.currentTimeMillis(),
         )
-        latest = tel
-        return tel
-    }
-
-    /** Potensic ATOM v0.7 confirmed Home Point fields (inner message 0x0005). */
-    private fun parseAtomHomePoint(payload: ByteArray, i: Int, dataLen: Int): TelemetryData? {
-        if (dataLen < 9) return null
-        val tel = latest.copy(
-            homeLongitude = readIntLE(payload, i) / 1.0E7,
-            homeLatitude = readIntLE(payload, i + 4) / 1.0E7,
-            homeSynced = (payload[i + 8].toInt() and 0x01) != 0,
-            timestamp = System.currentTimeMillis(),
-        )
-        latest = tel
-        return tel
     }
 
     /**
@@ -265,19 +274,6 @@ object TelemetryParser {
             latitude = readIntLE(payload, i + 8) / 1.0E7,
             satellites = payload[i + 12].toInt() and 0xFF,
             heading = readUShortLE(payload, i + 13),
-            homeLongitude = latest.homeLongitude,
-            homeLatitude = latest.homeLatitude,
-            homeSynced = latest.homeSynced,
-            batteryType = latest.batteryType,
-            cellVoltage1 = latest.cellVoltage1,
-            cellVoltage2 = latest.cellVoltage2,
-            cellVoltage3 = latest.cellVoltage3,
-            cellVoltage4 = latest.cellVoltage4,
-            batteryTemperatureRaw = latest.batteryTemperatureRaw,
-            batteryCycleCount = latest.batteryCycleCount,
-            batteryCurrentAbsRaw = latest.batteryCurrentAbsRaw,
-            batteryRemainingFlightTimeRaw = latest.batteryRemainingFlightTimeRaw,
-            batteryRemainingCapacityRaw = latest.batteryRemainingCapacityRaw,
             horizontalDistance = if (dataLen >= 19) readIntLE(payload, i + 15) / 10f else 0f,
             verticalDistance = if (dataLen >= 21) readShortLE(payload, i + 19) / 10f else 0f,
             horizontalSpeed = if (dataLen >= 23) readUShortLE(payload, i + 21) / 10f else 0f,

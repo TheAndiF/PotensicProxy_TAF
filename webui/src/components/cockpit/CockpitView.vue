@@ -12,20 +12,20 @@
           @click="swapViews"
         ></div>
 
-        <div class="view-toolbar taf-segment">
-          <button class="taf-segment__item" :class="{ active: mainView === 'video' }" @click="mainView = 'video'">LIVE</button>
-          <button class="taf-segment__item" :class="{ active: mainView === 'map' }" @click="mainView = 'map'">MAP</button>
-          <button class="taf-segment__item" :class="{ active: pipVisible }" @click="pipVisible = !pipVisible">PIP</button>
+        <div class="view-toolbar">
+          <button :class="{ active: mainView === 'video' }" @click="mainView = 'video'">LIVE</button>
+          <button :class="{ active: mainView === 'map' }" @click="mainView = 'map'">MAP</button>
+          <button :class="{ active: pipVisible }" @click="pipVisible = !pipVisible">PIP</button>
         </div>
       </div>
       <TelemetryBar />
     </div>
 
     <div class="right-panel">
-      <div class="panel-title">🕹️ Virtual Joystick Control</div>
+      <div class="panel-title">🕹️ Joystick Control</div>
       <div class="joysticks-container">
-        <VirtualJoystick label="Throttle / Yaw" v-model="leftStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.yaw, y: store.rcHardwareJoysticks.throttle }" @change="onJoystickChange"/>
-        <VirtualJoystick label="Pitch / Roll" v-model="rightStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.roll, y: store.rcHardwareJoysticks.pitch }" @change="onRightStickChange"/>
+        <VirtualJoystick label="Throttle / Yaw" :value-labels="['Throttle', 'Yaw']" v-model="leftStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.yaw, y: store.rcHardwareJoysticks.throttle }" @change="onJoystickChange"/>
+        <VirtualJoystick label="Pitch / Roll" :value-labels="['Pitch', 'Roll']" v-model="rightStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.roll, y: store.rcHardwareJoysticks.pitch }" @change="onRightStickChange"/>
       </div>
       <GimbalControl/>
       <FlightActions/>
@@ -61,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import VideoPlayer from './VideoPlayer.vue'
 import MapView from './MapView.vue'
 import TelemetryBar from './TelemetryBar.vue'
@@ -86,6 +86,12 @@ onMounted(async () => {
   await nextTick()
   teleportsReady.value = true
 })
+
+async function notifyViewResize() {
+  await nextTick()
+  requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('cockpit-view-resized')))
+}
+watch([mainView, pipVisible, pipPosition], notifyViewResize, { flush: 'post' })
 
 const leftStickModel = computed({
   get: () => ({ x: store.userJoysticks.yaw, y: store.userJoysticks.throttle }),
@@ -117,17 +123,19 @@ function throttleSend() {
 .left-section{display:flex;flex-direction:column;height:100%;background:#000;position:relative;overflow:hidden}
 .flight-stage{position:relative;flex:1;min-height:0;background:#000}
 .main-stage-slot{position:absolute;inset:0;z-index:1;overflow:hidden}
-.hidden-view-slot{display:none}
+.hidden-view-slot{position:absolute;left:-100000px;top:0;width:1px;height:1px;overflow:hidden;pointer-events:none}
 .pip-slot{overflow:hidden;border:2px solid #60708d;border-radius:8px;background:#000;box-shadow:0 4px 18px #000a;cursor:pointer}
 .pip-overlay-slot{position:absolute;right:16px;bottom:16px;width:230px;height:150px;z-index:20}
 .teleported-view{position:relative;width:100%;height:100%;overflow:hidden}
 .teleported-view>*:first-child{width:100%;height:100%}
 .small-view>*:first-child{pointer-events:none}
 .small-view-label{position:absolute;left:7px;bottom:6px;z-index:30;background:#0d101add;color:#fff;font-size:10px;font-weight:700;padding:3px 6px;border-radius:3px;pointer-events:none}
-.view-toolbar{position:absolute;left:10px;top:10px;z-index:35;background:#0d101acc}
+.view-toolbar{position:absolute;left:10px;top:10px;z-index:35;display:flex;gap:5px;background:#0d101acc;border:1px solid #30384f;border-radius:6px;padding:4px}
+.view-toolbar button{width:46px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid #3b455f;background:#151b2a;color:#cbd5e1;border-radius:4px;font-size:10px;font-weight:700;padding:0;cursor:pointer}
+.view-toolbar button.active{color:#fff;border-color:var(--cyan);box-shadow:inset 0 0 0 1px var(--cyan)}
 .right-panel{background:var(--panel-bg);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;padding:14px;gap:12px}
 .panel-title{font-size:11px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px}
-.joysticks-container{display:flex;justify-content:space-around;align-items:center;padding:10px 0;background:var(--card-bg);border-radius:8px;border:1px solid var(--border)}
+.joysticks-container{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;padding:10px;background:var(--card-bg);border-radius:8px;border:1px solid var(--border)}
 .controls-pip-section{display:flex;flex-direction:column;gap:7px;margin-top:2px}
 .pip-controls-slot{position:relative;width:100%;height:190px;flex:0 0 190px}
 </style>

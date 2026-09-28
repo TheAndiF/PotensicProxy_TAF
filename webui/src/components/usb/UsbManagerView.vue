@@ -26,8 +26,8 @@ function onLoadHex(hex: string) {
   display: grid;
   grid-template-columns: 420px 1fr;
   grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
   height: 100%;
   min-height: 0;
-  overflow: hidden;
 }
 </style>

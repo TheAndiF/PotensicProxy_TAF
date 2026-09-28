@@ -1,0 +1,30 @@
+BL_Refine cockpit UI and add confirmed ATOM telemetry
+Date: 2026-09-28
+
+Summary:
+- Normalized cockpit and header controls across all model profiles without changing unconfirmed protocol behavior.
+- Reduced the Video Transport Capture panel to content height.
+- Renamed and aligned Joystick Control / Camera Control sections and their subsection labels.
+- Added separate target/actual presentation for Gimbal and Zoom; actual values remain unavailable until a confirmed feedback source exists.
+- Improved map/live resize handling and kept the inactive view mounted so tile coverage can be recalculated after a view swap.
+- Added only confirmed ATOM v0.7 telemetry fields for inner FE 0x21 messages 0x0000, 0x0001 and 0x0005, gated to the ATOM profile.
+- Preserved every unconfirmed protocol mapping, parser, command and scaling functionally unchanged; only visual WebUI normalization may affect those areas.
+- Updated package version to 0.936.
+
+Changed files:
+- app/build.gradle.kts
+- app/src/main/assets/web/assets/index-C6xULv8J.css
+- app/src/main/java/com/potensic/proxy/Telemetry.kt
+- app/src/main/java/com/potensic/proxy/VideoExtractor.kt
+- webui/package-lock.json
+- webui/package.json
+- webui/src/components/cockpit/CockpitView.vue
+- webui/src/components/cockpit/GimbalControl.vue
+- webui/src/components/cockpit/MapView.vue
+- webui/src/components/cockpit/VideoPlayer.vue
+- webui/src/components/cockpit/VirtualJoystick.vue
+- webui/src/components/header/HeaderBar.vue
+- webui/src/components/usb/UsbCapturePanel.vue
+- webui/src/components/usb/UsbManagerView.vue
+- webui/src/stores/useDroneStore.ts
+- webui/src/types/drone.ts
