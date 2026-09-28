@@ -533,7 +533,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                         codec = nal.codec,
                         width = if (nal.width > 0) nal.width else videoExtractor.lastWidth,
                         height = if (nal.height > 0) nal.height else videoExtractor.lastHeight,
-                        frames = videoExtractor.framesExtracted.get(),
+                        frames = videoExtractor.framesExtracted.get().toLong(),
                         lastFrameMs = frameTime,
                         streaming = frameTime > 0L && System.currentTimeMillis() - frameTime < 3000L,
                     ))

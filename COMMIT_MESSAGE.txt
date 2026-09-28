@@ -1,37 +1,15 @@
-BL_Centralize WebUI stylesheet system
+BL_Fix video state frame counter type
 Date: 2026-09-28
 
 Summary:
-- Added a central WebUI stylesheet architecture with design tokens, base styles, reusable component styles, layout primitives, and Element Plus theme harmonization.
-- Migrated repeated panel-title styling and common cockpit/debug/USB colors to shared design tokens while preserving component-specific layout rules.
-- Kept webui/src/style.css as a compatibility entry point and switched main.ts to the new styles/index.css entry point.
-- Updated the project UI style guide with the stylesheet structure and rules for future UI changes.
-- Bumped application and frontend version from 0.940 to 0.941 (versionCode 21).
-- No Potensic protocol, FE video extraction, telemetry parsing, F1-F5 control, USB/AOA, BX3, or capture logic was changed.
-- Verified the WebUI with vue-tsc --noEmit and re-ran scripts/verify_architecture.py successfully.
+- Fixed the Android Kotlin compilation error in ProxyService by converting the AtomicInteger video frame counter to Long before assigning it to VideoState.frames.
+- Kept the confirmed Potensic protocol, telemetry parsing, and video extraction implementations unchanged.
+- Bumped application and frontend version from 0.941 to 0.942 (versionCode 22).
+- Verified the architecture guard script and Vue TypeScript type check after the correction.
 
 Changed files:
 - COMMIT_MESSAGE.txt
-- UI_STYLE_GUIDE.md
 - app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/ProxyService.kt
 - webui/package.json
 - webui/package-lock.json
-- webui/src/main.ts
-- webui/src/style.css
-- webui/src/styles/index.css
-- webui/src/styles/tokens.css
-- webui/src/styles/base.css
-- webui/src/styles/components.css
-- webui/src/styles/layout.css
-- webui/src/components/cockpit/CockpitView.vue
-- webui/src/components/cockpit/FlightActions.vue
-- webui/src/components/cockpit/GimbalControl.vue
-- webui/src/components/cockpit/MapView.vue
-- webui/src/components/cockpit/TelemetryBar.vue
-- webui/src/components/cockpit/VideoPlayer.vue
-- webui/src/components/cockpit/VirtualJoystick.vue
-- webui/src/components/debug/DebugConsoleView.vue
-- webui/src/components/header/HeaderBar.vue
-- webui/src/components/usb/PacketConstructor.vue
-- webui/src/components/usb/PacketMonitor.vue
-- webui/src/components/usb/UsbCapturePanel.vue
