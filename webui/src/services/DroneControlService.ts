@@ -26,35 +26,35 @@ export class DroneControlService {
 
   static takeoff() {
     const store = useDroneStore()
-    store.addLog('INFO', '发送起飞指令 (重复 20 次)')
+    store.addLog('INFO', 'Send takeoff command (repeat 20 times)')
     const packet = PacketBuilder.buildTakeoff()
     this.sendPacketWithRepeats(packet, 20, 50)
   }
 
   static land() {
     const store = useDroneStore()
-    store.addLog('INFO', '发送降落指令 (重复 20 次)')
+    store.addLog('INFO', 'Send landing command (repeat 20 times)')
     const packet = PacketBuilder.buildLand()
     this.sendPacketWithRepeats(packet, 20, 50)
   }
 
   static rth() {
     const store = useDroneStore()
-    store.addLog('INFO', '发送返航指令 (重复 20 次)')
+    store.addLog('INFO', 'Send RTH command (repeat 20 times)')
     const packet = PacketBuilder.buildRTH()
     this.sendPacketWithRepeats(packet, 20, 50)
   }
 
   static cancelRth() {
     const store = useDroneStore()
-    store.addLog('INFO', '取消返航')
+    store.addLog('INFO', 'Cancel RTH')
     const packet = PacketBuilder.buildCancelRTH()
     this.sendPacketWithRepeats(packet, 5, 50)
   }
 
   static emergencyStop() {
     const store = useDroneStore()
-    store.addLog('WARN', '发送Emergency Stop指令 (重复 30 次)')
+    store.addLog('WARN', 'Send Emergency Stop command (repeat 30 times)')
     const packet = PacketBuilder.buildEmergencyStop()
     this.sendPacketWithRepeats(packet, 30, 30)
   }
@@ -63,13 +63,13 @@ export class DroneControlService {
 
   static takePhoto() {
     const store = useDroneStore()
-    store.addLog('INFO', '发送Photo指令')
+    store.addLog('INFO', 'Send photo command')
     this.transport.send(PacketBuilder.buildTakePhoto())
   }
 
   static toggleRecord() {
     const store = useDroneStore()
-    store.addLog('INFO', '切换Record Toggle')
+    store.addLog('INFO', 'Toggle recording')
     this.transport.send(PacketBuilder.buildToggleRecord())
   }
 
@@ -91,7 +91,7 @@ export class DroneControlService {
 
   static initLiveView() {
     const store = useDroneStore()
-    store.addLog('INFO', '发送图传初始化参数')
+    store.addLog('INFO', 'Send video initialization parameters')
     this.transport.send(PacketBuilder.buildLiveViewParams())
   }
 
@@ -129,7 +129,7 @@ export class DroneControlService {
     const clean = hex.replace(/[\s\r\n]/g, '')
     if (!clean) return
     const bytes = ByteUtils.hexToBytes(clean)
-    store.addLog('INFO', `注入自定义 HEX 数据 (${bytes.length} 字节, 重复 ${repeats} 次)`)
+    store.addLog('INFO', `Inject custom HEX data (${bytes.length} bytes, repeat ${repeats} times)`)
     this.sendPacketWithRepeats(bytes, repeats, intervalMs)
   }
 
@@ -174,7 +174,7 @@ export class DroneControlService {
    */
   static sendCameraTerminal(opcode: number, paramStr: string) {
     const store = useDroneStore()
-    store.addLog('INFO', `[相机终端发送] OpCode=${opcode}, Cmd="${paramStr}"`)
+    store.addLog('INFO', `[Camera terminal TX] OpCode=${opcode}, Cmd="${paramStr}"`)
     const packet = PacketBuilder.buildCameraTerminalCommand(opcode, paramStr)
     this.transport.send(packet)
   }
@@ -185,7 +185,7 @@ export class DroneControlService {
   static sendFpvCustomHex(hexStr: string) {
     const store = useDroneStore()
     const clean = hexStr.replace(/[\s\r\n]/g, '')
-    store.addLog('INFO', `[图传自定义命令] 发送: ${clean}`)
+    store.addLog('INFO', `[Custom video-link command] Send: ${clean}`)
     const packet = PacketBuilder.buildFpvCustomHex(clean)
     this.transport.send(packet)
   }
@@ -195,7 +195,7 @@ export class DroneControlService {
    */
   static setFpvFactoryFlyMode(enable: boolean) {
     const store = useDroneStore()
-    store.addLog('INFO', `[工厂飞行模式] 设置: ${enable ? '开启' : '关闭'}`)
+    store.addLog('INFO', `[Factory flight mode] Set: ${enable ? 'Enabled' : 'Disabled'}`)
     const packet = PacketBuilder.buildFpvFactoryFlyMode(enable)
     this.transport.send(packet)
   }
@@ -205,7 +205,7 @@ export class DroneControlService {
    */
   static setFpvBandwidth(isOpen: boolean, bandwidthMhz: number) {
     const store = useDroneStore()
-    store.addLog('INFO', `[图传频宽设置] 开关=${isOpen}, 频宽=${bandwidthMhz}MHz`)
+    store.addLog('INFO', `[Video bandwidth setting] switch=${isOpen}, bandwidth=${bandwidthMhz}MHz`)
     const packet = PacketBuilder.buildFpvBandwidth(isOpen, bandwidthMhz)
     this.transport.send(packet)
   }
@@ -215,7 +215,7 @@ export class DroneControlService {
    */
   static allowAllRfFrequencies() {
     const store = useDroneStore()
-    store.addLog('WARN', '[全频段解锁] 发送解除所有频段限制指令 (5658)')
+    store.addLog('WARN', '[All-band unlock] Send command to remove band restrictions (5658)')
     const packet = PacketBuilder.buildRfAllowAllFrequencies()
     this.sendPacketWithRepeats(packet, 3, 50)
   }
@@ -225,7 +225,7 @@ export class DroneControlService {
    */
   static resetRf() {
     const store = useDroneStore()
-    store.addLog('WARN', '[射频复位] 发送射频复位指令 "reset\\n" (5650)')
+    store.addLog('WARN', '[RF reset] Send RF reset command "reset\\n" (5650)')
     const packet = PacketBuilder.buildRfReset()
     this.sendPacketWithRepeats(packet, 3, 50)
   }
@@ -235,7 +235,7 @@ export class DroneControlService {
    */
   static toggleRfProbeStream(enable: boolean) {
     const store = useDroneStore()
-    store.addLog('INFO', `[射频频谱探测] ${enable ? '开启' : '停止'}实时参数上报流 (5656)`)
+    store.addLog('INFO', `[RF spectrum probing] ${enable ? 'Enabled' : 'Stop'}real-time parameter reporting stream (5656)`)
     const packet = PacketBuilder.buildRfProbe(enable)
     this.transport.send(packet)
   }
@@ -245,7 +245,7 @@ export class DroneControlService {
    */
   static enterRfTest() {
     const store = useDroneStore()
-    store.addLog('INFO', '[射频测试] 进入射频测试模式 (5642)')
+    store.addLog('INFO', '[RF test] Enter RF test mode (5642)')
     const packet = PacketBuilder.buildEnterRfTest()
     this.transport.send(packet)
   }
@@ -255,7 +255,7 @@ export class DroneControlService {
    */
   static startImuCalibration() {
     const store = useDroneStore()
-    store.addLog('INFO', '[IMU标定] 启动 IMU 传感器标定流程')
+    store.addLog('INFO', '[IMU calibration] Start IMU sensor calibration')
     const packet = PacketBuilder.buildImuCalibration(3)
     this.sendPacketWithRepeats(packet, 5, 50)
   }
@@ -265,7 +265,7 @@ export class DroneControlService {
    */
   static stopImuCalibration() {
     const store = useDroneStore()
-    store.addLog('INFO', '[IMU标定] 停止 IMU 传感器标定流程')
+    store.addLog('INFO', '[IMU calibration] Stop IMU sensor calibration')
     const packet = PacketBuilder.buildImuCalibration(2)
     this.sendPacketWithRepeats(packet, 3, 50)
   }
@@ -275,7 +275,7 @@ export class DroneControlService {
    */
   static clearGimbalImu() {
     const store = useDroneStore()
-    store.addLog('INFO', '[云台控制] 清除云台 IMU 标定数据')
+    store.addLog('INFO', '[Gimbal control] Clear gimbal IMU calibration data')
     const packet = PacketBuilder.buildGimbalClearImu()
     this.sendPacketWithRepeats(packet, 3, 50)
   }
@@ -285,7 +285,7 @@ export class DroneControlService {
    */
   static startCameraDpc(isDark: boolean, step = 0) {
     const store = useDroneStore()
-    store.addLog('INFO', `[相机标定] 开始第 ${step} 步${isDark ? '暗场' : '亮场'}坏点检测 (DPC)`)
+    store.addLog('INFO', `[Camera calibration] Start step ${step}${isDark ? 'dark-frame ' : 'bright-frame '}defective-pixel detection (DPC)`)
     const packet = PacketBuilder.buildCameraDpcCheck(isDark, step)
     this.transport.send(packet)
   }
@@ -295,7 +295,7 @@ export class DroneControlService {
    */
   static startCameraFpn() {
     const store = useDroneStore()
-    store.addLog('INFO', '[相机标定] 开始 FPN 固定模式噪声消除校准')
+    store.addLog('INFO', '[Camera calibration] Start FPN fixed-pattern-noise calibration')
     const packet = PacketBuilder.buildCameraFpnCheck()
     this.transport.send(packet)
   }
@@ -305,7 +305,7 @@ export class DroneControlService {
    */
   static queryRemoteId() {
     const store = useDroneStore()
-    store.addLog('INFO', '[Remote ID] 查询无人机远程识别 (RID) 参数')
+    store.addLog('INFO', '[Remote ID] Query aircraft Remote ID (RID) parameters')
     const packet = PacketBuilder.buildRemoteIdQuery()
     this.transport.send(packet)
   }
@@ -315,7 +315,7 @@ export class DroneControlService {
    */
   static setGpsTest(enable: boolean) {
     const store = useDroneStore()
-    store.addLog('INFO', `[GPS测试] 设置 GPS 测试功能: ${enable ? '开启' : '关闭'}`)
+    store.addLog('INFO', `[GPS test] Set GPS test feature: ${enable ? 'Enabled' : 'Disabled'}`)
     const packet = PacketBuilder.buildGpsTestControl(enable)
     this.transport.send(packet)
   }
@@ -325,7 +325,7 @@ export class DroneControlService {
    */
   static setBeidou(enable: boolean) {
     const store = useDroneStore()
-    store.addLog('INFO', `[北斗卫星] 设置北斗系统: ${enable ? '开启' : '关闭'}`)
+    store.addLog('INFO', `[BeiDou] Set BeiDou system: ${enable ? 'Enabled' : 'Disabled'}`)
     const packet = PacketBuilder.buildBeidouSwitch(enable)
     this.transport.send(packet)
   }

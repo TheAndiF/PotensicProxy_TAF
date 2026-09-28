@@ -1,22 +1,24 @@
 <template>
   <div class="hud-bar">
-    <div class="hud-item"><span class="lbl">Battery</span><span class="val hi">{{ store.telemetry.battery }}%</span></div>
-    <div class="hud-item"><span class="lbl">Altitude</span><span class="val">{{ store.telemetry.altitude?.toFixed(1) || 0 }}m</span></div>
-    <div class="hud-item"><span class="lbl">Horizontal Speed</span><span class="val">{{ store.telemetry.horizontalSpeed?.toFixed(1) || 0 }}m/s</span></div>
-    <div class="hud-item"><span class="lbl">Vertical Speed</span><span class="val">{{ store.telemetry.verticalSpeed?.toFixed(1) || 0 }}m/s</span></div>
-    <div class="hud-item"><span class="lbl">Horizontal Distance</span><span class="val">{{ store.telemetry.horizontalDistance?.toFixed(1) || 0 }}m</span></div>
-    <div class="hud-item"><span class="lbl">Satellites</span><span class="val">{{ store.telemetry.satellites || 0 }}</span></div>
-    <div class="hud-item"><span class="lbl">Heading</span><span class="val">{{ store.telemetry.heading || 0 }}°</span></div>
-    <div class="hud-item"><span class="lbl">Pitch</span><span class="val">{{ store.telemetry.pitch || 0 }}°</span></div>
-    <div class="hud-item"><span class="lbl">Roll</span><span class="val">{{ store.telemetry.roll || 0 }}°</span></div>
-    <div class="hud-item"><span class="lbl">Controller Voltage</span><span class="val">{{ store.telemetry.remoterVoltage?.toFixed(1) || '--' }}V</span></div>
+    <div class="hud-item"><span class="lbl">{{ t('telemetry.battery') }}</span><span class="val hi">{{ store.telemetry.battery }}%</span></div>
+    <div class="hud-item"><span class="lbl">{{ t('telemetry.altitude') }}</span><span class="val">{{ store.telemetry.altitude?.toFixed(1) || 0 }}m</span></div>
+    <div class="hud-item"><span class="lbl">{{ t('telemetry.horizontalSpeed') }}</span><span class="val">{{ store.telemetry.horizontalSpeed?.toFixed(1) || 0 }}m/s</span></div>
+    <div class="hud-item"><span class="lbl">{{ t('telemetry.verticalSpeed') }}</span><span class="val">{{ store.telemetry.verticalSpeed?.toFixed(1) || 0 }}m/s</span></div>
+    <div class="hud-item"><span class="lbl">{{ t('telemetry.horizontalDistance') }}</span><span class="val">{{ store.telemetry.horizontalDistance?.toFixed(1) || 0 }}m</span></div>
+    <div class="hud-item"><span class="lbl">{{ t('telemetry.satellites') }}</span><span class="val">{{ store.telemetry.satellites || 0 }}</span></div>
+    <div class="hud-item"><span class="lbl">{{ t('telemetry.heading') }}</span><span class="val">{{ store.telemetry.heading || 0 }}°</span></div>
+    <div class="hud-item"><span class="lbl">{{ t('telemetry.pitch') }}</span><span class="val">{{ store.telemetry.pitch || 0 }}°</span></div>
+    <div class="hud-item"><span class="lbl">{{ t('telemetry.roll') }}</span><span class="val">{{ store.telemetry.roll || 0 }}°</span></div>
+    <div class="hud-item"><span class="lbl">{{ t('telemetry.controllerVoltage') }}</span><span class="val">{{ store.telemetry.remoterVoltage?.toFixed(1) || '--' }}V</span></div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { useDroneStore } from '../../stores/useDroneStore'
+import { useI18n } from '../../i18n'
 
 const store = useDroneStore()
+const { t } = useI18n()
 </script>
 
 <style scoped>

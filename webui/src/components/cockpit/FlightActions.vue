@@ -1,25 +1,27 @@
 <template>
   <div class="actions-container">
-    <div class="panel-title">✈️ Flight Actions</div>
+    <div class="panel-title">✈️ {{ t('actions.flight') }}</div>
     <div class="btn-grid">
-      <button class="taf-btn taf-btn--success" @click="DroneControlService.takeoff()">🛫 Takeoff</button>
-      <button class="taf-btn" @click="DroneControlService.land()">🛬 Land</button>
-      <button class="taf-btn" @click="DroneControlService.rth()">🏠 RTH</button>
-      <button class="taf-btn taf-btn--danger" @click="DroneControlService.emergencyStop()">⛔ Emergency Stop</button>
+      <button class="taf-btn taf-btn--success" @click="DroneControlService.takeoff()">🛫 {{ t('actions.takeoff') }}</button>
+      <button class="taf-btn" @click="DroneControlService.land()">🛬 {{ t('actions.land') }}</button>
+      <button class="taf-btn" @click="DroneControlService.rth()">🏠 {{ t('actions.rth') }}</button>
+      <button class="taf-btn taf-btn--danger" @click="DroneControlService.emergencyStop()">⛔ {{ t('actions.emergency') }}</button>
     </div>
 
-    <div class="panel-title" style="margin-top: 10px;">📷 Camera & Video Control</div>
+    <div class="panel-title" style="margin-top: 10px;">📷 {{ t('actions.camera') }}</div>
     <div class="btn-grid">
-      <button class="taf-btn" @click="DroneControlService.takePhoto()">📸 Photo</button>
-      <button class="taf-btn" @click="DroneControlService.toggleRecord()">🎥 Record Toggle</button>
-      <button class="taf-btn taf-btn--primary" @click="DroneControlService.requestIdr()">🔄 Request Keyframe (IDR)</button>
-      <button class="taf-btn" @click="DroneControlService.initLiveView()">📡 Initialize LiveView Parameters</button>
+      <button class="taf-btn" @click="DroneControlService.takePhoto()">📸 {{ t('actions.photo') }}</button>
+      <button class="taf-btn" @click="DroneControlService.toggleRecord()">🎥 {{ t('actions.record') }}</button>
+      <button class="taf-btn taf-btn--primary" @click="DroneControlService.requestIdr()">🔄 {{ t('actions.keyframe') }}</button>
+      <button class="taf-btn" @click="DroneControlService.initLiveView()">📡 {{ t('actions.liveview') }}</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { DroneControlService } from '../../services/DroneControlService'
+import { useI18n } from '../../i18n'
+const { t } = useI18n()
 </script>
 
 <style scoped>

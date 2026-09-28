@@ -31,7 +31,7 @@ class MainActivity : Activity() {
         @Suppress("DEPRECATION")
         val ip = android.text.format.Formatter.formatIpAddress(wifiManager.connectionInfo.ipAddress)
         Log.i("[MainActivity] Phone IP: $ip")
-        android.widget.Toast.makeText(this, "Potensic Proxy: http://$ip:9090", android.widget.Toast.LENGTH_LONG).show()
+        android.widget.Toast.makeText(this, getString(R.string.toast_web_ui, ip), android.widget.Toast.LENGTH_LONG).show()
 
         finish()
     }

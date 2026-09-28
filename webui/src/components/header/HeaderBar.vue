@@ -9,10 +9,10 @@
 
     <nav class="tabs-group" aria-label="Main navigation">
       <el-radio-group v-model="store.activeTab" size="small" class="main-tabs">
-        <el-radio-button value="cockpit">🎮 Flight Cockpit</el-radio-button>
-        <el-radio-button value="usb">⚡ USB Tools</el-radio-button>
-        <el-radio-button value="debug">🛠️ Engineering</el-radio-button>
-        <el-radio-button value="logs">📋 Logs</el-radio-button>
+        <el-radio-button value="cockpit">🎮 {{ t('header.cockpit') }}</el-radio-button>
+        <el-radio-button value="usb">⚡ {{ t('header.usb') }}</el-radio-button>
+        <el-radio-button value="debug">🛠️ {{ t('header.engineering') }}</el-radio-button>
+        <el-radio-button value="logs">📋 {{ t('header.logs') }}</el-radio-button>
       </el-radio-group>
     </nav>
 
@@ -22,7 +22,7 @@
         effect="dark"
         size="small"
       >
-        USB: {{ store.connection.usbConnected ? 'Connected' : 'Disconnected' }}
+        USB: {{ store.connection.usbConnected ? t('status.connected') : t('status.disconnected') }}
       </el-tag>
 
       <el-tag
@@ -30,7 +30,7 @@
         effect="dark"
         size="small"
       >
-        Passthrough: {{ store.connection.wsConnected ? 'Ready' : 'Disconnected' }}
+        Passthrough: {{ store.connection.wsConnected ? t('status.ready') : t('status.disconnected') }}
       </el-tag>
     </div>
   </header>
@@ -39,8 +39,10 @@
 <script setup lang="ts">
 import { Compass } from '@element-plus/icons-vue'
 import { useDroneStore } from '../../stores/useDroneStore'
+import { useI18n } from '../../i18n'
 
 const store = useDroneStore()
+const { t } = useI18n()
 </script>
 
 <style scoped>

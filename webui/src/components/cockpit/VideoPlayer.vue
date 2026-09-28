@@ -21,41 +21,40 @@
       <!-- Placeholder / Waiting Screen with Diagnostics -->
       <div v-if="!hasFrame" class="video-placeholder">
         <div class="placeholder-icon">🚁</div>
-        <div class="placeholder-title">Waiting for drone video stream</div>
+        <div class="placeholder-title">{{ t('video.waitingTitle') }}</div>
         <div class="placeholder-desc">
-          Currently using direct frontend USB passthrough mode.
-          If the aircraft is powered on and paired, click Activate Stream below to send the initialization sequence.
+          {{ t('video.waitingDesc') }}
         </div>
 
         <!-- Real-time Diagnostics Checklist -->
         <div class="diag-checklist">
           <div class="diag-item">
-            <span class="diag-label">USB Passthrough Channel (WebSocket):</span>
+            <span class="diag-label">{{ t('video.usbPassthrough') }}</span>
             <span :class="store.connection.wsConnected ? 'diag-ok' : 'diag-warn'">
               {{ store.connection.wsConnected ? '✓ Ready' : '✗ Not Connected' }}
             </span>
           </div>
           <div class="diag-item">
-            <span class="diag-label">Android USB accessory:</span>
+            <span class="diag-label">{{ t('video.androidUsb') }}</span>
             <span :class="store.connection.usbTransportOpen ? 'diag-ok' : 'diag-warn'">
               {{ store.connection.usbTransportOpen ? '✓ Open' : '✗ Closed' }}
             </span>
           </div>
           <div class="diag-item">
-            <span class="diag-label">Controller / Drone RX link:</span>
+            <span class="diag-label">{{ t('video.rxLink') }}</span>
             <span :class="store.connection.usbConnected ? 'diag-ok' : 'diag-warn'">
               {{ store.connection.usbConnected ? '✓ Connected (RX confirmed)' : (store.connection.usbTransportOpen ? '… Waiting for RX' : '✗ Not Connected') }}
             </span>
           </div>
           <div class="diag-item">
-            <span class="diag-label">0x06 Video Frame Extraction (FE/w42):</span>
+            <span class="diag-label">{{ t('video.videoExtraction') }}</span>
             <span :class="videoStats.framesExtracted > 0 ? 'diag-ok' : 'diag-muted'">
               {{ videoStats.framesExtracted }} frames (I: {{ videoStats.iFrames }} / P: {{ videoStats.pFrames }})
               {{ videoStats.detectedCodec !== 'unknown' ? `[${videoStats.detectedCodec.toUpperCase()}]` : '' }}
             </span>
           </div>
           <div class="diag-item" v-if="feTraffic.length > 0">
-            <span class="diag-label">FE RX Traffic:</span>
+            <span class="diag-label">{{ t('video.feTraffic') }}</span>
             <span class="diag-muted fe-traffic-list">
               <span v-for="item in feTraffic" :key="item.feType" class="fe-traffic-chip" :class="item.feType === 0x06 && item.bytesPerSecond > 0 ? 'diag-ok' : ''">
                 {{ item.feTypeHex }}: {{ formatRate(item.bytesPerSecond) }} / {{ item.packetsPerSecond }} pkt/s
@@ -63,7 +62,7 @@
             </span>
           </div>
           <div class="diag-item" v-if="parserStats.fePacketsParsed > 0">
-            <span class="diag-label">Video Parser:</span>
+            <span class="diag-label">{{ t('video.parser') }}</span>
             <span :class="videoStats.framesExtracted > 0 ? 'diag-ok' : 'diag-muted'">
               {{ currentDroneProfile }} / {{ currentVideoTransport }} | FE {{ parserStats.fePacketsParsed }}
               <template v-if="currentVideoTransport === 'w42'"> | w42 valid {{ parserStats.w42HeadersParsed }} / invalid {{ parserStats.w42InvalidHeaders }}</template>
@@ -73,13 +72,13 @@
             </span>
           </div>
           <div class="diag-item">
-            <span class="diag-label">Browser Hardware Decode Support (WebCodecs):</span>
+            <span class="diag-label">{{ t('video.webcodecs') }}</span>
             <span :class="codecSupportOk ? 'diag-ok' : 'diag-warn'">
               {{ codecSupportText }}
             </span>
           </div>
           <div class="diag-item" v-if="decoderStats.framesDecoded > 0 || decoderStats.droppedFrames > 0">
-            <span class="diag-label">Decoder Status:</span>
+            <span class="diag-label">{{ t('video.decoder') }}</span>
             <span :class="decoderStats.framesDecoded > 0 ? 'diag-ok' : 'diag-warn'">
               Decoded {{ decoderStats.framesDecoded }} frames (dropped: {{ decoderStats.droppedFrames }})
             </span>
@@ -122,7 +121,7 @@
             {{ (decoderStats.codecType || 'h265').toUpperCase() }} HW Decode
           </span>
           <span v-if="hasFrame && decoderStats.framesDecoded > 0" class="osd-tag">
-            {{ decoderStats.framesDecoded }} 帧
+            {{ decoderStats.framesDecoded }} {{ t('video.frames') }}
           </span>
         </div>
 
@@ -133,11 +132,11 @@
           <button class="osd-action-btn" @click="requestIdr" title="Request Keyframe (IDR)">
             🔄 Request I-Frame
           </button>
-          <button class="osd-action-btn" @click="toggleFullscreen" title="View video fullscreen">
-            ⛶ Fullscreen
+          <button class="osd-action-btn" @click="toggleFullscreen" :title="t('video.fullscreenTitle')">
+            ⛶ {{ t('video.fullscreen') }}
           </button>
           <span class="osd-item">
-            Battery: {{ store.telemetry.battery }}% ({{ store.telemetry.flightVoltage?.toFixed(1) || '--' }}V)
+            {{ t('video.battery') }}: {{ store.telemetry.battery }}% ({{ store.telemetry.flightVoltage?.toFixed(1) || '--' }}V)
           </span>
         </div>
       </div>
@@ -151,8 +150,10 @@ import { useDroneStore } from '../../stores/useDroneStore'
 import { DroneControlService } from '../../services/DroneControlService'
 import { VideoExtractor, ExtractedVideoFrame } from '../../protocol/VideoExtractor'
 import { WebCodecsPlayer, VideoPlayerStats } from '../../video/WebCodecsPlayer'
+import { useI18n } from '../../i18n'
 
 const store = useDroneStore()
+const { t } = useI18n()
 const containerRef = ref<HTMLDivElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 
@@ -270,17 +271,17 @@ function toggleNextMode() {
   if (mode.value === 'webcodecs') {
     mode.value = 'snapshot'
     startSnapshotLoop()
-    store.addLog('INFO', '已切换为 HTTP 单帧轮询快照模式')
+    store.addLog('INFO', 'Switched to HTTP single-frame polling snapshot mode')
   } else if (mode.value === 'snapshot') {
     mode.value = 'mjpeg'
     stopSnapshotLoop()
     retryCounter.value = Date.now()
-    store.addLog('INFO', '已切换为 MJPEG 直流模式')
+    store.addLog('INFO', 'Switched to MJPEG direct-stream mode')
   } else {
     mode.value = 'webcodecs'
     stopSnapshotLoop()
     initWebCodecs()
-    store.addLog('INFO', '已切换为 WebCodecs 硬件加速模式 (USB 直通)')
+    store.addLog('INFO', 'Switched to WebCodecs hardware-accelerated mode (USB passthrough)')
   }
 }
 
@@ -291,7 +292,7 @@ function activateSelectedLiveView() {
 }
 
 function requestIdr() {
-  store.addLog('INFO', '手动请求图传关键帧 (IDR / 0xD9)')
+  store.addLog('INFO', 'Manual video keyframe request (IDR / 0xD9)')
   DroneControlService.requestIdr()
 }
 

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Potensic Proxy</string>
+    <string name="notification_usb_connected">USB 遥控器已连接</string>
+    <string name="notification_usb_disconnected">USB 遥控器已断开</string>
+    <string name="notification_service_running">Potensic Proxy 服务正在运行</string>
+    <string name="notification_proxy_title">Potensic Proxy</string>
+    <string name="notification_proxy_text">无人机控制中继已启用 - :9090</string>
+    <string name="notification_channel_name">无人机代理</string>
+    <string name="notification_channel_description">Potensic 无人机控制中继</string>
+    <string name="toast_web_ui">Potensic Proxy: http://%1$s:9090</string>
+</resources>

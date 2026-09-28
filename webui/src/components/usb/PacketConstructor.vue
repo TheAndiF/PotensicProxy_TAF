@@ -37,11 +37,11 @@
       <div class="inline-grid">
         <div>
           <div class="item-label">Inner Short (LE):</div>
-          <el-input v-model="cmdShort" size="small" @input="rebuildFrame" placeholder="例: 0x0301" />
+          <el-input v-model="cmdShort" size="small" @input="rebuildFrame" placeholder="e.g.: 0x0301" />
         </div>
         <div>
           <div class="item-label">Inner Cmd Byte (Hex):</div>
-          <el-input v-model="cmdByte" size="small" @input="rebuildFrame" placeholder="例: 0x01" />
+          <el-input v-model="cmdByte" size="small" @input="rebuildFrame" placeholder="e.g.: 0x01" />
         </div>
       </div>
     </div>
@@ -49,7 +49,7 @@
     <!-- Hex Input/Edit Area -->
     <div class="form-item">
       <div class="label-row">
-        <span class="item-label">Packet HEX Payload (可直接修改):</span>
+        <span class="item-label">Packet HEX Payload (editable):</span>
         <span class="byte-count">Bytes: {{ byteCount }}B</span>
       </div>
       <el-input
@@ -153,7 +153,7 @@ function applyPreset(id: string) {
 
   if (bytes) {
     hexContent.value = ByteUtils.bytesToHex(bytes)
-    store.addLog('INFO', `Vue3 构造器已载入: ${id} (${bytes.length} 字节)`)
+    store.addLog('INFO', `Vue3 constructor loaded: ${id} (${bytes.length} bytes)`)
   }
 }
 
@@ -175,7 +175,7 @@ function onSend() {
 
 function loadHex(hex: string) {
   hexContent.value = hex
-  store.addLog('INFO', `已将报文 (${Math.floor(hex.length / 2)} 字节) Load into Builder`)
+  store.addLog('INFO', `Loaded packet (${Math.floor(hex.length / 2)} bytes) into builder`)
 }
 
 defineExpose({

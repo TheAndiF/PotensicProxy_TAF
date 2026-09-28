@@ -54,7 +54,7 @@ export const useDebugStore = defineStore('debug', () => {
   const imuCal = reactive<ImuCalibrationData>({
     isCalibrating: false,
     stage: 0,
-    text: '空闲 (未开启校准)',
+    text: 'Idle (calibration not started)',
     faces: {
       top: false,
       bottom: false,
@@ -71,7 +71,7 @@ export const useDebugStore = defineStore('debug', () => {
   const remoteId = reactive<RemoteIdData>({
     countryCode: 'CN',
     uasId: 'N/A',
-    status: '未Connect'
+    status: 'Not connected'
   })
   const boundDroneSn = ref<string>('N/A')
 

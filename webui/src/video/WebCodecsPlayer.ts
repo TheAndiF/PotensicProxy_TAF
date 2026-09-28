@@ -38,7 +38,7 @@ export class WebCodecsPlayer {
     droppedFrames: 0,
     width: 0,
     height: 0,
-    codec: '检测中...',
+    codec: 'Detecting...',
     codecType: 'none',
     latencyMs: 0
   }
@@ -130,7 +130,7 @@ export class WebCodecsPlayer {
 
   async init(width = 1920, height = 1080, preferH265 = true): Promise<boolean> {
     if (!WebCodecsPlayer.isSupported()) {
-      this.stats.codec = '当前浏览器不支持 WebCodecs 硬解'
+      this.stats.codec = 'Current browser does not support WebCodecs hardware decode'
       this.stats.codecType = 'none'
       this.onStatsCallback?.({ ...this.stats })
       return false
@@ -203,7 +203,7 @@ export class WebCodecsPlayer {
       this.isConfigured = true
     } catch (e: any) {
       console.error('[WebCodecsPlayer] Configure failed:', e)
-      this.stats.codec = `配置失败: ${e.message || e}`
+      this.stats.codec = `Configuration failed: ${e.message || e}`
       this.isConfigured = false
       this.onStatsCallback?.({ ...this.stats })
     }

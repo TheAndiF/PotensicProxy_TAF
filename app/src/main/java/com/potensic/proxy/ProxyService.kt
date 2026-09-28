@@ -658,8 +658,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
     private fun buildNotification(): Notification {
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("Potensic Proxy")
-            .setContentText("Drone control relay active — :9090")
+            .setContentTitle(getString(R.string.notification_proxy_title))
+            .setContentText(getString(R.string.notification_proxy_text))
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setOngoing(true)
             .build()
@@ -669,8 +669,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Drone Proxy", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Potensic drone control relay"
+                NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel_name), NotificationManager.IMPORTANCE_LOW).apply {
+                    description = getString(R.string.notification_channel_description)
                     setShowBadge(false)
                 }
             )

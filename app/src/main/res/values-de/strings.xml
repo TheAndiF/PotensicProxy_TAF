@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Potensic Proxy</string>
+    <string name="notification_usb_connected">USB-Controller verbunden</string>
+    <string name="notification_usb_disconnected">USB-Controller getrennt</string>
+    <string name="notification_service_running">Potensic-Proxy-Dienst läuft</string>
+    <string name="notification_proxy_title">Potensic Proxy</string>
+    <string name="notification_proxy_text">Drohnen-Steuerrelais aktiv - :9090</string>
+    <string name="notification_channel_name">Drohnen-Proxy</string>
+    <string name="notification_channel_description">Potensic-Drohnen-Steuerrelais</string>
+    <string name="toast_web_ui">Potensic Proxy: http://%1$s:9090</string>
+</resources>

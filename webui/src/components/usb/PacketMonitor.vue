@@ -17,13 +17,13 @@
           size="small"
           class="quick-filter-btn"
           @click="hideTelemetry = !hideTelemetry"
-          :title="hideTelemetry ? '点击恢复显示遥测数据' : '点击过滤掉高频Flight Telemetry、Joystick Feedback和视频帧'"
+          :title="hideTelemetry ? 'Click to show telemetry data again' : 'Click to hide high-rate flight telemetry, joystick feedback, and video frames'"
         >
-          {{ hideTelemetry ? '🚫 已Hide Normal Telemetry' : '👁️ Hide Normal Telemetry' }}
+          {{ hideTelemetry ? '🚫 Normal Telemetry Hidden' : '👁️ Hide Normal Telemetry' }}
         </el-button>
 
         <!-- Drop Telemetry at Ingestion to protect queue -->
-        <el-tooltip content="开启后高频遥测不录入历史列表，避免关键指令被冲刷覆盖" placement="top">
+        <el-tooltip content="When enabled, high-rate telemetry is not added to history, preventing important commands from being pushed out." placement="top">
           <el-checkbox
             v-model="store.ignoreTelemetryAtIngestion"
             label="Queue Flood Protection"
@@ -97,9 +97,9 @@
         </el-select>
 
         <span class="stats-text">
-          显示 {{ filteredPackets.length }}/{{ store.packets.length }} 条
+          Showing {{ filteredPackets.length }}/{{ store.packets.length }} entries
           <span v-if="filteredCount > 0" class="filtered-badge">
-            (已滤除 {{ filteredCount }} 条)
+            (Filtered {{ filteredCount }} entries)
           </span>
         </span>
 
@@ -159,7 +159,7 @@
           </div>
 
           <div class="hex-section">
-            <div class="hex-title"><strong>Raw HEX Packet ({{ p.len }} 字节):</strong></div>
+            <div class="hex-title"><strong>Raw HEX Packet ({{ p.len }} bytes):</strong></div>
             <div class="hex-dump">{{ ByteUtils.formatHex(p.hex) }}</div>
           </div>
 
@@ -171,7 +171,7 @@
 
       <el-empty
         v-if="filteredPackets.length === 0"
-        :description="store.packets.length > 0 ? '当前过滤条件未匹配到数据包' : 'Waiting for USB packet stream...'"
+        :description="store.packets.length > 0 ? 'No packets match the current filter' : 'Waiting for USB packet stream...'"
         :image-size="80"
         style="padding: 40px 0;"
       >
@@ -232,13 +232,13 @@ function getDetailValClass(val: any): string {
   if (val === true) return 'val-success'
   if (val === false) return 'val-danger'
   if (typeof val === 'string') {
-    if (val.includes('已') || val.includes('正常') || val.includes('就绪') || val.includes('开启') || val.includes('PASS')) {
+    if (val.includes('Ready') || val.includes('Normal') || val.includes('Ready') || val.includes('Enabled') || val.includes('PASS')) {
       return 'val-success'
     }
-    if (val.includes('未') || val.includes('异常') || val.includes('High Interference') || val.includes('触发') || val.includes('关闭')) {
+    if (val.includes('Not') || val.includes('Abnormal') || val.includes('High Interference') || val.includes('Triggered') || val.includes('Disabled')) {
       return 'val-danger'
     }
-    if (val.includes('对频中')) {
+    if (val.includes('Pairing')) {
       return 'val-warning'
     }
   }

@@ -4,32 +4,33 @@
     <div class="debug-header">
       <div class="tab-selectors">
         <el-radio-group v-model="debugStore.activeSubTab" size="small">
-          <el-radio-button value="camera">📷 Camera Console</el-radio-button>
-          <el-radio-button value="fpv">📶 Video & RF</el-radio-button>
-          <el-radio-button value="sensor">⚖️ Sensors & Calibration</el-radio-button>
-          <el-radio-button value="rid">📡 Remote ID & System</el-radio-button>
-          <el-radio-button value="relay">🌐 Remote / Relay</el-radio-button>
+          <el-radio-button value="camera">📷 {{ t('engineering.camera') }}</el-radio-button>
+          <el-radio-button value="fpv">📶 {{ t('engineering.fpv') }}</el-radio-button>
+          <el-radio-button value="sensor">⚖️ {{ t('engineering.sensor') }}</el-radio-button>
+          <el-radio-button value="rid">📡 {{ t('engineering.rid') }}</el-radio-button>
+          <el-radio-button value="relay">🌐 {{ t('engineering.relay') }}</el-radio-button>
         </el-radio-group>
       </div>
 
       <div class="header-right-badges">
         <el-tag size="small" effect="dark" type="success" class="badge-item version-badge">
-          Frontend: v{{ FRONTEND_VERSION }}
+          {{ t('engineering.frontend') }}: v{{ FRONTEND_VERSION }}
         </el-tag>
         <el-tag size="small" effect="dark" :type="backendVersion === 'unavailable' ? 'danger' : 'success'" class="badge-item version-badge">
-          Backend: {{ backendVersion === 'unavailable' ? 'unavailable' : 'v' + backendVersion }}
+          {{ t('engineering.backend') }}: {{ backendVersion === 'unavailable' ? 'unavailable' : 'v' + backendVersion }}
         </el-tag>
         <el-tag size="small" effect="dark" type="info" class="badge-item">
-          Hardware Telemetry: {{ debugStore.temperatures.lastUpdated || 'Waiting for data' }}
+          {{ t('engineering.hardwareTelemetry') }}: {{ debugStore.temperatures.lastUpdated || t('engineering.waitingData') }}
         </el-tag>
       </div>
     </div>
 
     <DroneProfilePanel />
+    <LanguagePanel />
 
     <!-- Main Content Area -->
     <div class="debug-body">
-      <!-- ================= Sub-tab 1: 相机命令行终端 ================= -->
+      <!-- ================= Sub-tab 1: Camera command console ================= -->
       <div v-show="debugStore.activeSubTab === 'camera'" class="sub-tab-pane camera-pane">
         <!-- Chip Temperatures Bar -->
         <div class="temp-cards-bar">
@@ -144,7 +145,7 @@
         </div>
       </div>
 
-      <!-- ================= Sub-tab 2: 图传与射频底层 ================= -->
+      <!-- ================= Sub-tab 2: Video and RF low-level tools ================= -->
       <div v-show="debugStore.activeSubTab === 'fpv'" class="sub-tab-pane fpv-pane">
         <!-- Left: Quick RF Actions -->
         <div class="fpv-controls-col">
@@ -158,7 +159,7 @@
                 <el-tag size="small" type="danger" effect="dark">Unlock Band</el-tag>
               </div>
               <p class="act-desc">
-                下发内层 5658 协议帧，强制打开全频段支持（解除国内/国外频段信道屏蔽与功率限制）。
+                Sends inner protocol frame 5658 to enable all supported frequency bands.
               </p>
               <el-button type="warning" size="small" @click="onAllowAllFrequencies">
                 🔓 Send Full-Band Unlock (5658)
@@ -172,7 +173,7 @@
                 <el-tag size="small" type="info" effect="dark">reset\n</el-tag>
               </div>
               <p class="act-desc">
-                向射频基带写入 "reset\n" ASCII 控制字符，触发射频前端硬件热重启。
+                Writes the ASCII command "reset\n" to the RF baseband to trigger an RF front-end restart.
               </p>
               <el-button type="danger" plain size="small" @click="onResetRf">
                 🔄 RF Hardware Reset (5650)
@@ -192,7 +193,7 @@
                 />
               </div>
               <p class="act-desc">
-                切换工厂内部测试飞行模式，绕过部分传感器准备校验与限飞逻辑。
+                Toggles the internal factory flight test mode.
               </p>
             </div>
 
@@ -227,7 +228,7 @@
                 </el-button>
               </div>
               <p class="act-desc">
-                启动基带实时信道扫描与噪声探测，上报 5913 实时工作参数。
+                Starts real-time baseband channel scanning and noise probing; reports 5913 runtime parameters.
               </p>
             </div>
           </div>
@@ -288,7 +289,7 @@
               <div class="link-card-item">
                 <div class="lc-label">Pairing Status</div>
                 <div class="lc-val" :class="debugStore.linkState.isPairing ? 'status-warn' : 'status-ok'">
-                  {{ debugStore.linkState.isPairing ? 'Pairing' : '非Pairing Status' }}
+                  {{ debugStore.linkState.isPairing ? 'Pairing' : 'Not Pairing' }}
                 </div>
               </div>
 
@@ -319,7 +320,7 @@
               <div class="link-card-item">
                 <div class="lc-label">Frequency Hopping & Power Adaptation</div>
                 <div class="lc-val">
-                  跳频: {{ debugStore.linkState.isHopSupport ? '开' : '关' }} / 自适应: {{ debugStore.linkState.powerAdaptive ? '开' : '关' }}
+                  Frequency hopping: {{ debugStore.linkState.isHopSupport ? 'On' : 'Off' }} / Adaptive: {{ debugStore.linkState.powerAdaptive ? 'On' : 'Off' }}
                 </div>
               </div>
             </div>
@@ -390,7 +391,7 @@
               </div>
 
               <div v-if="debugStore.rfStats.channels.length === 0" class="spectrum-empty">
-                <span>暂未接收到 5913 射频工作参数帧。可点击左侧「Start Spectrum Capture (5656)」启动主动探测。</span>
+                <span>No 5913 RF runtime parameter frame received yet. Use Start Spectrum Capture (5656) to begin active probing.</span>
               </div>
 
               <div v-else class="spectrum-bars">
@@ -437,7 +438,7 @@
         </div>
       </div>
 
-      <!-- ================= Sub-tab 3: 传感器与标定 ================= -->
+      <!-- ================= Sub-tab 3: Sensors and calibration ================= -->
       <div v-show="debugStore.activeSubTab === 'sensor'" class="sub-tab-pane sensor-pane">
         <!-- IMU 6-Axis Calibration Card -->
         <div class="panel-box">
@@ -453,7 +454,7 @@
           </div>
 
           <p class="cal-desc">
-            IMU 标定需在水平桌面或按指引依次将飞行器的 6 个面平稳放置静止。
+            IMU calibration requires a level surface or placing all six aircraft sides steadily as instructed.
           </p>
 
           <div class="cal-actions-bar">
@@ -533,7 +534,7 @@
           <div class="panel-box">
             <div class="box-title">🎥 Gimbal Attitude & Calibration (0x0801 / 5)</div>
             <p class="cal-desc">
-              向三轴无刷云台下发清除 IMU 标定数据指令，用于解决云台倾斜、偏航零点飘移问题。
+              Sends a command to clear gimbal IMU calibration data for tilt or yaw-zero troubleshooting.
             </p>
             <el-popconfirm
               title="Clear gimbal IMU calibration data?"
@@ -553,7 +554,7 @@
           <div class="panel-box">
             <div class="box-title">📷 Camera Sensor DPC & Noise Calibration (0x1200)</div>
             <p class="cal-desc">
-              CMOS 感光元件出厂与后期坏点校正 (DPC) 及固定模式噪声 (FPN) 消除。
+              CMOS defective-pixel correction (DPC) and fixed-pattern-noise (FPN) calibration.
             </p>
             <div class="cam-cal-buttons">
               <el-button-group size="small">
@@ -603,7 +604,7 @@
         </div>
       </div>
 
-      <!-- ================= Sub-tab 4: 远程识别与系统 ================= -->
+      <!-- ================= Sub-tab 4: Remote ID and system ================= -->
       <div v-show="debugStore.activeSubTab === 'rid'" class="sub-tab-pane rid-pane">
         <div class="panel-box">
           <div class="box-title-row">
@@ -659,10 +660,13 @@ import { DroneControlService } from '../../services/DroneControlService'
 import { ElMessage } from 'element-plus'
 import RemoteRelayPanel from './RemoteRelayPanel.vue'
 import DroneProfilePanel from './DroneProfilePanel.vue'
+import LanguagePanel from './LanguagePanel.vue'
+import { useI18n } from '../../i18n'
 import { MapService } from '../../services/MapService'
 import { FRONTEND_VERSION } from '../../version'
 
 const debugStore = useDebugStore()
+const { t } = useI18n()
 const backendVersion = ref('loading...')
 
 async function refreshSoftwareVersions() {
@@ -741,12 +745,12 @@ const fpvCustomHex = ref('')
 
 function onAllowAllFrequencies() {
   DroneControlService.allowAllRfFrequencies()
-  ElMessage.success('全频段解锁指令 (5658) 已发送')
+  ElMessage.success('All-band unlock command (5658) sent')
 }
 
 function onResetRf() {
   DroneControlService.resetRf()
-  ElMessage.warning('射频复位指令 "reset\\n" 已发送')
+  ElMessage.warning('RF reset command \"reset\\n\" sent')
 }
 
 function onToggleFactoryFly(val: string | number | boolean) {
@@ -755,14 +759,14 @@ function onToggleFactoryFly(val: string | number | boolean) {
 
 function onApplyBandwidth() {
   DroneControlService.setFpvBandwidth(true, debugStore.fpvSettings.bandwidthMhz)
-  ElMessage.success(`频宽 ${debugStore.fpvSettings.bandwidthMhz}MHz 设置指令已发送`)
+  ElMessage.success(`Bandwidth ${debugStore.fpvSettings.bandwidthMhz}MHz setting command sent`)
 }
 
 function onToggleRfProbe() {
   const next = !debugStore.fpvSettings.rfProbeActive
   debugStore.fpvSettings.rfProbeActive = next
   DroneControlService.toggleRfProbeStream(next)
-  ElMessage.info(next ? '已开启实时频谱遥测探测' : '已停止实时频谱探测')
+  ElMessage.info(next ? 'Real-time spectrum telemetry probing enabled' : 'Real-time spectrum probing stopped')
 }
 
 function onSendFpvHex() {
@@ -772,7 +776,7 @@ function onSendFpvHex() {
     return
   }
   DroneControlService.sendFpvCustomHex(hex)
-  debugStore.addFpvLog('TX', hex, '用户下发自定义指令')
+  debugStore.addFpvLog('TX', hex, 'User custom command')
 }
 
 function getSnrClass(snr: number) {
@@ -798,30 +802,30 @@ const gpsTestEnabled = ref(false)
 const beidouEnabled = ref(true)
 
 function onStartImuCal() {
-  debugStore.updateImuCal({ isCalibrating: true, text: '六面标定已启动，请按指引平放' })
+  debugStore.updateImuCal({ isCalibrating: true, text: 'Six-side calibration started; place the aircraft as instructed' })
   DroneControlService.startImuCalibration()
-  ElMessage.info('已启动 IMU 传感器标定流程')
+  ElMessage.info('IMU sensor calibration started')
 }
 
 function onStopImuCal() {
-  debugStore.updateImuCal({ isCalibrating: false, text: '标定流程已终止' })
+  debugStore.updateImuCal({ isCalibrating: false, text: 'Calibration stopped' })
   DroneControlService.stopImuCalibration()
-  ElMessage.info('已终止 IMU 标定')
+  ElMessage.info('IMU calibration stopped')
 }
 
 function onClearGimbalImu() {
   DroneControlService.clearGimbalImu()
-  ElMessage.success('已下发清除云台 IMU 标定数据指令')
+  ElMessage.success('Clear gimbal IMU calibration-data command sent')
 }
 
 function onStartDpc(isDark: boolean, step: number) {
   DroneControlService.startCameraDpc(isDark, step)
-  ElMessage.info(`下发 ${isDark ? '暗场' : '亮场'} DPC 坏点检测步骤 ${step}`)
+  ElMessage.info(`Send ${isDark ? 'dark-frame' : 'bright-frame'} DPC defective-pixel test step ${step}`)
 }
 
 function onStartFpn() {
   DroneControlService.startCameraFpn()
-  ElMessage.info('下发相机 FPN 固定模式噪声消除校准指令')
+  ElMessage.info('Camera FPN fixed-pattern-noise calibration command sent')
 }
 
 function onToggleGpsTest(val: string | number | boolean) {
@@ -835,7 +839,7 @@ function onToggleBeidou(val: string | number | boolean) {
 // --- Remote ID State ---
 function onQueryRemoteId() {
   DroneControlService.queryRemoteId()
-  ElMessage.info('已下发 Remote ID 查询请求')
+  ElMessage.info('Remote ID query sent')
 }
 </script>
 

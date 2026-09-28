@@ -1,9 +1,9 @@
 <template>
   <section class="profile-panel">
     <div class="profile-copy">
-      <div class="profile-title">Drone Protocol</div>
+      <div class="profile-title">{{ t('profile.title') }}</div>
       <div class="profile-subtitle">
-        Central model selection. All confirmed ATOM / ATOM 2 protocol differences are switched together.
+        {{ t('profile.subtitle') }}
       </div>
     </div>
     <el-radio-group v-model="selected" size="small" :disabled="busy" @change="onChange">
@@ -22,7 +22,9 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { DroneControlService } from '../../services/DroneControlService'
 import { VideoExtractor } from '../../protocol/VideoExtractor'
+import { useI18n } from '../../i18n'
 
+const { t } = useI18n()
 const selected = ref<'ATOM' | 'ATOM_2'>('ATOM')
 const transport = ref('loading')
 const codec = ref('auto')
@@ -50,9 +52,9 @@ async function onChange(value: string | number | boolean | undefined) {
     codec.value = p.codec || 'auto'
     VideoExtractor.getInstance().setDroneModel(model)
     window.dispatchEvent(new CustomEvent('drone-profile-changed', { detail: p }))
-    ElMessage.success(`Drone protocol switched to ${model.replace('_', ' ')}`)
+    ElMessage.success(t('profile.switched', { model: model.replace('_', ' ') }))
   } catch (e: any) {
-    ElMessage.error(`Protocol switch failed: ${e?.message || e}`)
+    ElMessage.error(t('profile.failed', { error: e?.message || e }))
     await load()
   } finally {
     busy.value = false

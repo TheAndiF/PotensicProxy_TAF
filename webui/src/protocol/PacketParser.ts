@@ -47,7 +47,7 @@ export class PacketParser {
         res.categoryLabel = 'Video Stream'
         const nalType = bytes.length >= 21 ? (bytes[20] & 0x1F) : 0
         const isKey = [19, 20, 32, 33, 34].includes(nalType)
-        res.summary = `H.265 视频帧 (NALU ${nalType}${isKey ? ' [IDR关键帧]' : ''}, ${payloadLen}B)`
+        res.summary = `H.265 video frame (NALU ${nalType}${isKey ? ' [IDR keyframe]' : ''}, ${payloadLen}B)`
         return res
       }
 
@@ -58,7 +58,7 @@ export class PacketParser {
         // FE 0x21: FlightRevGps Telemetry (vt1.java)
         if (feType === 0x21 && cmdShort === 0x0200 && bytes.length >= 48) {
           res.category = 'telemetry'
-          res.categoryLabel = '飞行遥测'
+          res.categoryLabel = 'Flight Telemetry'
           try {
             const flightVoltage = view.getUint16(22, true) / 1000.0
             const remoterVoltage = view.getUint16(24, true) / 100.0
@@ -96,48 +96,48 @@ export class PacketParser {
               roll
             }
             res.details = {
-              '剩余电量': `${battery}%`,
-              '飞行对地高度': `${altitude.toFixed(1)} m`,
-              '水平对地距离': `${horizontalDistance.toFixed(1)} m`,
-              '水平飞行速度': `${horizontalSpeed.toFixed(1)} m/s`,
-              '垂直升降速度': `${verticalSpeed.toFixed(1)} m/s`,
-              'GPS搜星数量': `${satellites} 颗`,
-              '动力电池电压': `${flightVoltage.toFixed(2)} V`,
-              '遥控手柄电压': `${remoterVoltage.toFixed(2)} V`,
-              '机头指向航向': `${heading}°`,
-              '机身俯仰角度': `${pitch}°`,
-              '机身横滚角度': `${roll}°`,
-              '经纬度坐标': `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
+              'Battery remaining': `${battery}%`,
+              'Altitude above ground': `${altitude.toFixed(1)} m`,
+              'Horizontal ground distance': `${horizontalDistance.toFixed(1)} m`,
+              'Horizontal speed': `${horizontalSpeed.toFixed(1)} m/s`,
+              'Vertical speed': `${verticalSpeed.toFixed(1)} m/s`,
+              'GPS satellite count': `${satellites} `,
+              'Flight battery voltage': `${flightVoltage.toFixed(2)} V`,
+              'Controller voltage': `${remoterVoltage.toFixed(2)} V`,
+              'Heading': `${heading}°`,
+              'Aircraft pitch': `${pitch}°`,
+              'Aircraft roll': `${roll}°`,
+              'Latitude / longitude': `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
             }
-            res.summary = `飞行遥测: 电量=${battery}%, 高度=${altitude.toFixed(1)}m, 航速=${horizontalSpeed.toFixed(1)}m/s, 卫星=${satellites}, 电压=${flightVoltage.toFixed(1)}V`
+            res.summary = `Flight Telemetry: Battery=${battery}%, Altitude=${altitude.toFixed(1)}m, Speed=${horizontalSpeed.toFixed(1)}m/s, Satellites=${satellites}, Voltage=${flightVoltage.toFixed(1)}V`
             return res
           } catch (e: any) {
-            res.summary = '遥测解析异常: ' + e.message
+            res.summary = 'Telemetry parse error: ' + e.message
             return res
           }
         }
 
-        // FE 0x21: FlightRevAttitude (0x0201 / 513 - 三轴姿态角)
+        // FE 0x21: FlightRevAttitude (0x0201 / 513 - three-axis attitude angles)
         if (feType === 0x21 && cmdShort === 0x0201 && bytes.length >= 28) {
           res.category = 'telemetry'
-          res.categoryLabel = '姿态遥测'
+          res.categoryLabel = 'Attitude Telemetry'
           const pitch = view.getInt16(22, true) / 10.0
           const roll = view.getInt16(24, true) / 10.0
           const yaw = view.getInt16(26, true) / 10.0
           res.telemetry = { pitch: Math.round(pitch), roll: Math.round(roll), heading: Math.round(yaw) }
           res.details = {
-            '机身俯仰角 (Pitch)': `${pitch.toFixed(1)}°`,
-            '机身横滚角 (Roll)': `${roll.toFixed(1)}°`,
-            '机身航向角 (Yaw)': `${yaw.toFixed(1)}°`
+            'Aircraft pitch (Pitch)': `${pitch.toFixed(1)}°`,
+            'Aircraft roll (Roll)': `${roll.toFixed(1)}°`,
+            'Aircraft yaw (Yaw)': `${yaw.toFixed(1)}°`
           }
-          res.summary = `姿态航向 (513): 俯仰=${pitch.toFixed(1)}°, 横滚=${roll.toFixed(1)}°, 航向=${yaw.toFixed(1)}°`
+          res.summary = `Attitude / heading (513): Pitch=${pitch.toFixed(1)}°, Roll=${roll.toFixed(1)}°, Yaw=${yaw.toFixed(1)}°`
           return res
         }
 
-        // FE 0x21: FlightRevBattery (0x0204 / 516 - 动力电池分压与温度)
+        // FE 0x21: FlightRevBattery (0x0204 / 516 - flight-battery cell voltages and temperature)
         if (feType === 0x21 && cmdShort === 0x0204 && bytes.length >= 30) {
           res.category = 'telemetry'
-          res.categoryLabel = '电池遥测'
+          res.categoryLabel = 'Battery Telemetry'
           const cell1 = view.getUint16(22, true) / 1000.0
           const cell2 = view.getUint16(24, true) / 1000.0
           const totalV = cell1 + cell2
@@ -145,33 +145,33 @@ export class PacketParser {
           const temp = bytes.length >= 29 ? bytes[28] : 0
           res.telemetry = { flightVoltage: totalV }
           res.details = {
-            '动力总电压': `${totalV.toFixed(2)} V`,
-            '电芯 1 电压': `${cell1.toFixed(3)} V`,
-            '电芯 2 电压': `${cell2.toFixed(3)} V`,
-            '放电工作电流': `${current} mA`,
-            '动力电池温度': `${temp} °C`
+            'Total flight-battery voltage': `${totalV.toFixed(2)} V`,
+            'Cell 1 voltage': `${cell1.toFixed(3)} V`,
+            'Cell 2 voltage': `${cell2.toFixed(3)} V`,
+            'Discharge current': `${current} mA`,
+            'Flight-battery temperature': `${temp} °C`
           }
-          res.summary = `动力电池 (516): 总压=${totalV.toFixed(2)}V (Cell1: ${cell1.toFixed(2)}V, Cell2: ${cell2.toFixed(2)}V), 温度=${temp}℃`
+          res.summary = `Flight battery (516): Total=${totalV.toFixed(2)}V (Cell1: ${cell1.toFixed(2)}V, Cell2: ${cell2.toFixed(2)}V), Temperature=${temp}℃`
           return res
         }
 
-        // FE 0x21: FlightRevFault (0x0206 / 518 - 飞控故障诊断告警码)
+        // FE 0x21: FlightRevFault (0x0206 / 518 - flight-controller fault diagnostic codes)
         if (feType === 0x21 && cmdShort === 0x0206 && bytes.length >= 26) {
           res.category = 'telemetry'
-          res.categoryLabel = '飞控告警'
+          res.categoryLabel = 'Flight Controller Alerts'
           const faultCode = view.getUint32(22, true)
           const isWindWarn = (faultCode & 0x01) !== 0
           const isCompassDisturb = (faultCode & 0x02) !== 0
           const isLowBatRth = (faultCode & 0x04) !== 0
           const isNoFlyZone = (faultCode & 0x08) !== 0
           res.details = {
-            '原始故障字': `0x${faultCode.toString(16).padStart(8, '0')}`,
-            '大风预警': isWindWarn ? '触发 (强风警告)' : '正常',
-            '地磁指南针干扰': isCompassDisturb ? '异常 (地磁受扰)' : '正常',
-            '低电量强制返航': isLowBatRth ? '触发' : '正常',
-            '禁飞区边缘警告': isNoFlyZone ? '触发 (禁飞边缘)' : '正常'
+            'Raw fault word': `0x${faultCode.toString(16).padStart(8, '0')}`,
+            'High-wind warning': isWindWarn ? 'Triggered (high-wind warning)' : 'Normal',
+            'Compass magnetic interference': isCompassDisturb ? 'Abnormal (magnetic interference)' : 'Normal',
+            'Low-battery forced RTH': isLowBatRth ? 'Triggered' : 'Normal',
+            'No-fly-zone edge warning': isNoFlyZone ? 'Triggered (no-fly-zone edge)' : 'Normal'
           }
-          res.summary = `飞控告警 (518): 故障码=0x${faultCode.toString(16)}${isWindWarn ? ' [大风警告]' : ''}${isCompassDisturb ? ' [地磁受扰]' : ''}`
+          res.summary = `Flight Controller Alerts (518): Fault code=0x${faultCode.toString(16)}${isWindWarn ? ' [High-wind warning]' : ''}${isCompassDisturb ? ' [Magnetic interference]' : ''}`
           return res
         }
 
@@ -188,14 +188,14 @@ export class PacketParser {
 
           res.telemetry = { rcThrottle, rcYaw, rcPitch, rcRoll }
           res.details = {
-            '油门通道 (Throttle)': rcThrottle,
-            '偏航通道 (Yaw)': rcYaw,
-            '俯仰通道 (Pitch)': rcPitch,
-            '横滚通道 (Roll)': rcRoll,
-            '左侧拨轮 (Left Wheel)': rcLeftWheel,
-            '右侧拨轮 (Right Wheel)': rcRightWheel
+            'Throttle channel (Throttle)': rcThrottle,
+            'Yaw channel (Yaw)': rcYaw,
+            'Pitch channel (Pitch)': rcPitch,
+            'Roll channel (Roll)': rcRoll,
+            'Left wheel (Left Wheel)': rcLeftWheel,
+            'Right wheel (Right Wheel)': rcRightWheel
           }
-          res.summary = `硬件手柄遥控值: 油门=${rcThrottle}, 偏航=${rcYaw}, 俯仰=${rcPitch}, 横滚=${rcRoll}, 云台=${rcLeftWheel}`
+          res.summary = `Hardware controller values: Throttle=${rcThrottle}, Yaw=${rcYaw}, Pitch=${rcPitch}, Roll=${rcRoll}, Gimbal=${rcLeftWheel}`
           return res
         }
 
@@ -204,7 +204,7 @@ export class PacketParser {
           res.category = 'remoter'
           res.categoryLabel = 'Controller Status'
 
-          // 0x1130: 遥控器实时控制流
+          // 0x1130: controller real-time control stream
           if (cmdShort === 0x1130 && bytes.length >= 34) {
             const throttle = view.getInt16(22, true)
             const yaw = view.getInt16(24, true)
@@ -213,14 +213,14 @@ export class PacketParser {
             const dial = view.getInt16(30, true)
             const btns = view.getUint16(32, true)
             res.details = {
-              '油门量 (T)': throttle,
-              '偏航量 (R)': yaw,
-              '俯仰量 (E)': pitch,
-              '横滚量 (A)': roll,
-              '云台俯仰拨轮': dial,
-              '按键状态掩码': `0x${btns.toString(16).padStart(4, '0')}`
+              'Throttle (T)': throttle,
+              'Yaw (R)': yaw,
+              'Pitch (E)': pitch,
+              'Roll (A)': roll,
+              'Gimbal pitch wheel': dial,
+              'Button-state mask': `0x${btns.toString(16).padStart(4, '0')}`
             }
-            res.summary = `手柄实时通道 (4400): T=${throttle}, Y=${yaw}, P=${pitch}, R=${roll}, 拨轮=${dial}`
+            res.summary = `Controller live channels (4400): T=${throttle}, Y=${yaw}, P=${pitch}, R=${roll}, Wheel=${dial}`
             return res
           }
 
@@ -229,10 +229,10 @@ export class PacketParser {
             const remoterBatPercent = bytes.length >= 28 ? view.getFloat32(24, true) : 0
             res.telemetry = { remoterVoltage }
             res.details = {
-              '遥控器电池电压': `${remoterVoltage.toFixed(2)} V`,
-              ...(remoterBatPercent > 0 ? { '遥控器剩余电量': `${remoterBatPercent.toFixed(0)} %` } : {})
+              'Controller battery voltage': `${remoterVoltage.toFixed(2)} V`,
+              ...(remoterBatPercent > 0 ? { 'Controller battery remaining': `${remoterBatPercent.toFixed(0)} %` } : {})
             }
-            res.summary = `遥控器电池: ${remoterVoltage.toFixed(2)}V${remoterBatPercent > 0 ? ', ' + remoterBatPercent.toFixed(0) + '%' : ''}`
+            res.summary = `Controller battery: ${remoterVoltage.toFixed(2)}V${remoterBatPercent > 0 ? ', ' + remoterBatPercent.toFixed(0) + '%' : ''}`
             return res
           }
 
@@ -246,16 +246,16 @@ export class PacketParser {
             const rh = view.getUint16(29, true)
             const rv = view.getUint16(31, true)
             res.details = {
-              '返航键 (RTH)': btnRTH ? '按下' : '松开',
-              '录像按键': btnRecord ? '按下' : '松开',
-              'Photo按键': btnPhoto ? '按下' : '松开',
-              '左摇杆 (H, V)': `${lh}, ${lv}`,
-              '右摇杆 (H, V)': `${rh}, ${rv}`
+              'RTH button (RTH)': btnRTH ? 'Pressed' : 'Released',
+              'Record button': btnRecord ? 'Pressed' : 'Released',
+              'Photo button': btnPhoto ? 'Pressed' : 'Released',
+              'Left stick (H, V)': `${lh}, ${lv}`,
+              'Right stick (H, V)': `${rh}, ${rv}`
             }
-            res.summary = `手柄按键与摇杆: 左(${lh},${lv}) 右(${rh},${rv})${btnRTH ? ' [RTH]' : ''}${btnRecord ? ' [录像]' : ''}${btnPhoto ? ' [Photo]' : ''}`
+            res.summary = `Controller buttons and sticks: L(${lh},${lv}) R(${rh},${rv})${btnRTH ? ' [RTH]' : ''}${btnRecord ? ' [Record]' : ''}${btnPhoto ? ' [Photo]' : ''}`
             return res
           }
-          res.summary = `手柄状态响应 (Short=0x${cmdShort.toString(16).padStart(4, '0')}, ${payloadLen}B)`
+          res.summary = `Controller status response (Short=0x${cmdShort.toString(16).padStart(4, '0')}, ${payloadLen}B)`
           return res
         }
 
@@ -274,7 +274,7 @@ export class PacketParser {
                 const cmdBytes = bytes.subarray(24, Math.max(24, bytes.length - 1))
                 const cmdText = new TextDecoder('utf-8').decode(cmdBytes).trim()
                 // Do not addTerminalLog here for TX, as DebugConsoleView already records the user TX action
-                res.summary = `相机终端指令 (TX): Op=0x${opcode.toString(16).padStart(2, '0')}, "${cmdText}"`
+                res.summary = `Camera terminal command (TX): Op=0x${opcode.toString(16).padStart(2, '0')}, "${cmdText}"`
                 return res
               }
 
@@ -296,10 +296,10 @@ export class PacketParser {
               try {
                 useDebugStore().addTerminalLog('RX', subOpcode, showInfo, ByteUtils.bytesToHex(bytes))
               } catch (_) {}
-              res.summary = `相机终端输出 (RX): "${showInfo}"`
+              res.summary = `Camera terminal output (RX): "${showInfo}"`
               return res
             } catch (e: any) {
-              res.summary = `相机终端输出解析失败: ${e.message}`
+              res.summary = `Camera terminal output parse failed: ${e.message}`
               return res
             }
           }
@@ -308,9 +308,9 @@ export class PacketParser {
           if (cmdByte === CAMERA_CMDS.REMOTE_ID_CONFIG && bytes.length >= 24 && dir === 'RX') {
             const rawHex = ByteUtils.bytesToHex(bytes.subarray(22))
             try {
-              useDebugStore().updateRemoteId({ status: '已读取', rawHex })
+              useDebugStore().updateRemoteId({ status: 'Read', rawHex })
             } catch (_) {}
-            res.summary = `Remote ID 配置应答 (${bytes.length - 22}B)`
+            res.summary = `Remote ID configuration response (${bytes.length - 22}B)`
             return res
           }
 
@@ -333,7 +333,7 @@ export class PacketParser {
               try {
                 useDebugStore().updateTemperatures(soc, sensor, isp)
               } catch (_) {}
-              res.summary = `芯片温度遥测: SoC=${soc}℃, Sensor=${sensor}℃, 970=${isp}℃`
+              res.summary = `Chip temperature telemetry: SoC=${soc}℃, Sensor=${sensor}℃, 970=${isp}℃`
               return res
             } catch (_) {}
           }
@@ -342,13 +342,13 @@ export class PacketParser {
         // === FPV & RF Debug Responses ===
         if (feType === 0x16 || [5909, 5910, 5911, 5913, 5656, 5658, 5640, 5650, 5696, 5632, 5633, 5634, 5635, 5636, 5637, 5641, 5642, 5643, 5649, 5651, 5652].includes(cmdShort)) {
           res.category = 'rf_fpv'
-          res.categoryLabel = '射频图传'
+          res.categoryLabel = 'RF Video'
         }
 
         // RF Link & Pairing State (5909 / 0x1715 - FpvRevConnectState)
         if ((cmdShort === 5909 || cmdShort === CMD_SHORTS.FPV_CONNECT_STATE) && bytes.length >= 31) {
           res.category = 'rf_fpv'
-          res.categoryLabel = '链路对频'
+          res.categoryLabel = 'Link / Pairing'
           try {
             const signalLevel = bytes[23]
             const flags = bytes[24]
@@ -424,27 +424,27 @@ export class PacketParser {
             } catch (_) {}
 
             res.details = {
-              '遥控手柄': remoterConnected ? '已Connect (USB就绪)' : '未Connect',
-              '空中无线': wirelessConnected ? '已建立 (空中链路)' : '未建立',
-              '飞控通信': flightConnected ? '已连通 (可操控)' : '未连通',
-              '云台相机': cameraConnected ? '已连通' : '未连通',
-              '对频状态': isPairing ? '正在对频 (快闪)' : '空闲',
-              '当前频点': `${rfChannelMhz} MHz`,
-              '环境干扰': `${interference} (${isHighInterference ? '强干扰' : '正常'})`,
-              '编码速率': `MCS ${mcs}`,
-              '上行速率': txMcs >= 0 ? `MCS ${txMcs}` : 'N/A',
-              '下行速率': rxMcs >= 0 ? `MCS ${rxMcs}` : 'N/A',
-              '跳频支持': isHopSupport ? '支持 2.4G/5.8G' : '不支持',
-              '功率自适应': powerAdaptive ? '启用' : '关闭',
-              '大频宽模式': isLargeBand ? '开启' : '关闭',
-              ...(flightType ? { '机型识别': flightType } : {}),
-              ...(countryBand ? { '国家频段': countryBand } : {})
+              'Controller': remoterConnected ? 'Connected (USB ready)' : 'Not connected',
+              'Air link': wirelessConnected ? 'Established (air link)' : 'Not established',
+              'Flight controller': flightConnected ? 'Connected (control available)' : 'Not connected',
+              'Gimbal camera': cameraConnected ? 'Connected' : 'Not connected',
+              'Pairing state': isPairing ? 'Pairing' : 'Idle',
+              'Current RF channel': `${rfChannelMhz} MHz`,
+              'Interference': `${interference} (${isHighInterference ? 'High interference' : 'Normal'})`,
+              'Codec rate': `MCS ${mcs}`,
+              'Uplink rate': txMcs >= 0 ? `MCS ${txMcs}` : 'N/A',
+              'Downlink rate': rxMcs >= 0 ? `MCS ${rxMcs}` : 'N/A',
+              'Frequency hopping': isHopSupport ? '2.4G/5.8G supported' : 'Not supported',
+              'Power adaptation': powerAdaptive ? 'Enabled' : 'Disabled',
+              'Wide-band mode': isLargeBand ? 'Enabled' : 'Disabled',
+              ...(flightType ? { 'Aircraft model': flightType } : {}),
+              ...(countryBand ? { 'Country band': countryBand } : {})
             }
 
-            res.summary = `链路对频 (5909): 手柄${remoterConnected ? '已连' : '未连'}, 飞控${flightConnected ? '已连' : '未连'}, ${rfChannelMhz}MHz, 干扰${interference}${isHighInterference ? '[强干扰]' : ''}, TX=${txMcs}/RX=${rxMcs}`
+            res.summary = `Link / Pairing (5909): Controller${remoterConnected ? 'connected' : 'not connected'}, FC${flightConnected ? 'connected' : 'not connected'}, ${rfChannelMhz}MHz, interference${interference}${isHighInterference ? '[High interference]' : ''}, TX=${txMcs}/RX=${rxMcs}`
             return res
           } catch (e: any) {
-            res.summary = `链路状态 (5909) 解析异常: ${e.message}`
+            res.summary = `Link state (5909) parse error: ${e.message}`
             return res
           }
         }
@@ -452,41 +452,41 @@ export class PacketParser {
         // FPV Scan Frequency Results (5910 / 0x1716)
         if ((cmdShort === 5910 || cmdShort === CMD_SHORTS.FPV_SCAN_FREQ) && bytes.length >= 24) {
           res.category = 'rf_fpv'
-          res.categoryLabel = '信道扫频'
+          res.categoryLabel = 'Channel scan'
           const count = Math.max(0, Math.floor((bytes.length - 23) / 2))
           res.details = {
-            '扫频采集信道数': count,
-            '原始扫描载荷字节': `${bytes.length - 23} B`
+            'Scanned channel count': count,
+            'Raw scan payload bytes': `${bytes.length - 23} B`
           }
-          res.summary = `信道扫频结果 (5910): 采集到 ${count} 个频点噪声数据`
+          res.summary = `Channel scan result (5910): Captured ${count} channel noise samples`
           return res
         }
 
         // FPV Debug / Physical Telemetry (5911 / 0x1717)
         if ((cmdShort === 5911 || cmdShort === CMD_SHORTS.FPV_DEBUG_PARAMS) && bytes.length >= 26) {
           res.category = 'rf_fpv'
-          res.categoryLabel = '底层RF'
+          res.categoryLabel = 'Low-level RF'
           const snr = view.getInt16(22, true)
           const loss = bytes.length >= 25 ? bytes[24] : 0
           const retry = bytes.length >= 26 ? bytes[25] : 0
           res.details = {
-            '信噪比 (SNR)': `${snr} dB`,
-            '下行丢包率': `${loss} %`,
-            '重传比例': `${retry} %`
+            'Signal-to-noise ratio (SNR)': `${snr} dB`,
+            'Downlink packet loss': `${loss} %`,
+            'Retry ratio': `${retry} %`
           }
-          res.summary = `底层射频遥测 (5911): SNR=${snr}dB, 丢包=${loss}%, 重传=${retry}%`
+          res.summary = `Low-level RF telemetry (5911): SNR=${snr}dB, loss=${loss}%, retry=${retry}%`
           return res
         }
 
         // FPV Version Sync (5888 / 0x1700)
         if (cmdShort === 5888 || cmdShort === CMD_SHORTS.FPV_SYNC_VERSION) {
           res.category = 'rf_fpv'
-          res.categoryLabel = '图传版本'
+          res.categoryLabel = 'Video-link version'
           const verText = bytes.length > 23 ? new TextDecoder('utf-8').decode(bytes.subarray(22, bytes.length - 1)).trim() : ''
           res.details = {
-            '图传固件版本': verText || '已同步'
+            'Video-link firmware version': verText || 'Synchronized'
           }
-          res.summary = `图传版本同步 (5888): ${verText || '已响应'}`
+          res.summary = `Video-link version sync (5888): ${verText || 'Response received'}`
           return res
         }
 
@@ -531,10 +531,10 @@ export class PacketParser {
               })
             } catch (_) {}
 
-            res.summary = `射频实时参数 (5913): 遥控SNR=${rcSnr}dB, 飞机SNR=${fcSnr}dB, MCS=${mcs}`
+            res.summary = `Real-time RF parameters (5913): Controller SNR=${rcSnr}dB, Aircraft SNR=${fcSnr}dB, MCS=${mcs}`
             return res
           } catch (e: any) {
-            res.summary = `射频实时参数解析异常: ${e.message}`
+            res.summary = `Real-time RF parameter parse error: ${e.message}`
             return res
           }
         }
@@ -543,15 +543,15 @@ export class PacketParser {
         if (cmdShort === CMD_SHORTS.FPV_CUSTOM_DEBUG) {
           const hex = ByteUtils.bytesToHex(bytes.subarray(22))
           try {
-            useDebugStore().addFpvLog(dir, hex, '图传自定义命令 (5696)')
+            useDebugStore().addFpvLog(dir, hex, 'Custom video-link command (5696)')
           } catch (_) {}
-          res.summary = `图传自定义命令 (5696): ${hex}`
+          res.summary = `Custom video-link command (5696): ${hex}`
           return res
         }
 
         // RF Reset (5650 / 0x1612)
         if (cmdShort === CMD_SHORTS.FPV_RF_RESET) {
-          res.summary = `射频复位重启指令 (5650)`
+          res.summary = `RF reset/restart command (5650)`
           return res
         }
 
@@ -560,7 +560,7 @@ export class PacketParser {
           try {
             useDebugStore().fpvSettings.allFreqUnlocked = true
           } catch (_) {}
-          res.summary = `全频段强制解锁应答 (5658)`
+          res.summary = `All-band unlock response (5658)`
           return res
         }
 
@@ -570,7 +570,7 @@ export class PacketParser {
           try {
             useDebugStore().fpvSettings.factoryFlyMode = enabled
           } catch (_) {}
-          res.summary = `工厂飞行模式设置 (5640): ${enabled ? '已开启' : '已关闭'}`
+          res.summary = `Factory flight-mode setting (5640): ${enabled ? 'Enabled' : 'Disabled'}`
           return res
         }
 
@@ -582,18 +582,18 @@ export class PacketParser {
           if (subcmd === 23 || subcmd === 6) {
             try {
               const stage = bytes.length >= 24 ? bytes[23] : 0
-              let text = '校准中...'
-              if (stage === 1) text = '第1面完成'
-              else if (stage === 2) text = '第2面完成'
-              else if (stage === 3) text = '正在计算零偏'
-              else if (stage === 4) text = '校准成功 PASS'
+              let text = 'Calibrating...'
+              if (stage === 1) text = 'Side 1 complete'
+              else if (stage === 2) text = 'Side 2 complete'
+              else if (stage === 3) text = 'Calculating zero bias'
+              else if (stage === 4) text = 'Calibration successful PASS'
               useDebugStore().updateImuCal({
                 isCalibrating: stage < 4,
                 stage,
                 text
               })
             } catch (_) {}
-            res.summary = `飞控校准控制应答 (0x0301 Sub=${subcmd})`
+            res.summary = `Flight-controller calibration response (0x0301 Sub=${subcmd})`
             return res
           }
         }
@@ -606,10 +606,10 @@ export class PacketParser {
           res.categoryLabel = 'Camera & Terminal'
         } else if (feType === 0x16) {
           res.category = 'rf_fpv'
-          res.categoryLabel = '射频图传'
+          res.categoryLabel = 'RF Video'
         } else if (feType === 0x21 || feType === 0x32) {
           res.category = 'telemetry'
-          res.categoryLabel = '飞行遥测'
+          res.categoryLabel = 'Flight Telemetry'
         } else if (feType === 0x41 || feType === 0x17) {
           res.category = 'remoter'
           res.categoryLabel = 'Controller Status'
@@ -622,16 +622,16 @@ export class PacketParser {
 
       if (feType === 0x14) {
         res.category = 'flight_cmd'
-        res.categoryLabel = '飞控/心跳'
+        res.categoryLabel = 'Flight control / heartbeat'
       } else if (feType === 0x21) {
         res.category = 'telemetry'
-        res.categoryLabel = '飞行遥测'
+        res.categoryLabel = 'Flight Telemetry'
       } else if (feType === 0x41) {
         res.category = 'remoter'
         res.categoryLabel = 'Controller Status'
       } else if (feType === 0x12) {
         res.category = 'other'
-        res.categoryLabel = 'AOA握手'
+        res.categoryLabel = 'AOA handshake'
       }
 
       res.summary = `${res.feTypeName} (${payloadLen}B payload)`
@@ -644,30 +644,30 @@ export class PacketParser {
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
       if (bytes[0] === 3 && bytes.length >= 27) {
         res.category = 'rc_sticks'
-        res.categoryLabel = 'HFD3摇杆'
+        res.categoryLabel = 'HFD3 sticks'
         const rcThrottle = view.getInt16(17, true)
         const rcYaw = view.getInt16(19, true)
         const rcPitch = view.getInt16(21, true)
         const rcRoll = view.getInt16(23, true)
-        res.summary = `摇杆控制包 HFD3 (T=${rcThrottle}, Y=${rcYaw}, P=${rcPitch}, R=${rcRoll})`
+        res.summary = `Stick control packet HFD3 (T=${rcThrottle}, Y=${rcYaw}, P=${rcPitch}, R=${rcRoll})`
         res.telemetry = { rcThrottle, rcYaw, rcPitch, rcRoll }
         return res
       }
       if (bytes[0] === 1) {
         res.category = 'telemetry'
-        res.categoryLabel = 'HFD1位置'
-        res.summary = '位置数据包 HFD1'
+        res.categoryLabel = 'HFD1 position'
+        res.summary = 'Position packet HFD1'
         return res
       }
       if (bytes[0] === 2) {
         res.category = 'telemetry'
-        res.categoryLabel = 'HFD2状态'
-        res.summary = 'GPS状态包 HFD2'
+        res.categoryLabel = 'HFD2 status'
+        res.summary = 'GPS status packet HFD2'
         return res
       }
     }
 
-    res.summary = `原始数据 (${bytes.length} 字节)`
+    res.summary = `Raw data (${bytes.length} bytes)`
     return res
   }
 }
