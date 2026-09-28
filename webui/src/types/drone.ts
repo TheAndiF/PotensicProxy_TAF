@@ -40,6 +40,8 @@ export interface ConnectionStatus {
   phoneIp: string
   targetHost: string
   lastRxTimestamp?: number
+  /** Backend-confirmed FE 0x06 video stream state. */
+  videoStreaming: boolean
 }
 
 export interface SystemLog {

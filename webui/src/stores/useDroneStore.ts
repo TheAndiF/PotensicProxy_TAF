@@ -28,6 +28,7 @@ export const useDroneStore = defineStore('drone', () => {
     usbConnected: false,
     usbTransportOpen: false,
     wsConnected: false,
+    videoStreaming: false,
     phoneIp: '127.0.0.1',
     targetHost: getInitialHost()
   })
