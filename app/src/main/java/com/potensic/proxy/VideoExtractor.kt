@@ -1,16 +1,21 @@
 package com.potensic.proxy
 
-import java.io.ByteArrayOutputStream
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.ConcurrentHashMap
+import java.util.zip.CRC32
 
 /**
- * Extracts H265 NAL units from the Potensic video stream.
+ * Streaming extractor for Potensic ATOM 2 video transport.
  *
- * KEY INSIGHT: Each USB read() returns exactly ONE FE frame.
- * No need to search for FE headers — treat each read as atomic.
+ * USB read boundaries are NOT protocol boundaries. Incoming bytes are therefore
+ * processed in two independent streaming stages:
+ *   1) USB byte stream -> complete FE packets (16-byte FE header + payload)
+ *   2) FE 0x06 payload stream -> complete w42 chunks (CC BB AA FF + 24-byte header)
+ *
+ * This keeps FE and w42 headers detectable even when they are split across two
+ * Android InputStream.read() calls or when several FE packets arrive in one read.
  */
 class VideoExtractor {
 
@@ -18,7 +23,10 @@ class VideoExtractor {
         val VIDEO_MAGIC = byteArrayOf(0xCC.toByte(), 0xBB.toByte(), 0xAA.toByte(), 0xFF.toByte())
         const val FE_HEADER_SIZE = 16
         const val VIDEO_HEADER_SIZE = 24
-        const val MAX_FRAME_SIZE = 300_000
+        const val MAX_FE_PAYLOAD_SIZE = 1_000_000
+        const val MAX_FE_STREAM_BUFFER = 2_000_000
+        const val MAX_VIDEO_PAYLOAD_SIZE = 1_000_000
+        const val MAX_VIDEO_STREAM_BUFFER = 2_000_000
 
         val FALLBACK_VPS = hexToBytes("0000000140010c01ffff016000000300a0000003000003007bac0c00011940001a5e02a8")
         val FALLBACK_SPS = hexToBytes("00000001420101016000000300a0000003000003007ba003c08010e58d2ee452fcd404040410000465000069780a10")
@@ -28,32 +36,43 @@ class VideoExtractor {
             ByteArray(hex.length / 2) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
     }
 
-    // Current video frame being assembled from FE continuations
-    private var currentFrame: ByteArrayOutputStream? = null
-    private var currentHeader: ByteArray? = null
-    private var expectedPayloadLen = 0
     private val lock = Any()
+    private var feStreamBuffer = ByteArray(0)
+    private var videoStreamBuffer = ByteArray(0)
 
     val nalQueue = ConcurrentLinkedQueue<NalUnit>()
 
     @Volatile var vps: ByteArray? = null; private set
     @Volatile var sps: ByteArray? = null; private set
     @Volatile var pps: ByteArray? = null; private set
-    val hasStreamInit: Boolean get() = vps != null && sps != null && pps != null
+    @Volatile var sps264: ByteArray? = null; private set
+    @Volatile var pps264: ByteArray? = null; private set
+    @Volatile var detectedCodec: String = "unknown"; private set
     @Volatile var lastIdrSequence: ByteArray? = null; private set
-    @Volatile var crcEnabled: Boolean = false // 99% pass — let hardware decoder handle the 1%
+    @Volatile var crcEnabled: Boolean = false
 
+    val hasStreamInit: Boolean
+        get() = if (detectedCodec == "h264") sps264 != null && pps264 != null else vps != null && sps != null && pps != null
+
+    val usbChunksFed = AtomicLong(0)
+    val feFramesParsed = AtomicInteger(0)
     val framesExtracted = AtomicInteger(0)
     val iFrames = AtomicInteger(0)
     val pFrames = AtomicInteger(0)
-    var lastWidth = 0; private set
-    var lastHeight = 0; private set
-    var lastFrameTime = 0L; private set
-    val feFramesParsed = AtomicInteger(0)
-    var crcPassCount = 0; private set
-    var crcFailCount = 0; private set
+    val w42MagicHits = AtomicLong(0)
+    val w42HeadersParsed = AtomicLong(0)
+    val w42InvalidHeaders = AtomicLong(0)
+    val w42IncompleteChunks = AtomicLong(0)
+    val streamBytesDropped = AtomicLong(0)
 
-    /** Per-FE-channel transport diagnostics. Video decoding still stays restricted to FE 0x06. */
+    @Volatile var lastWidth = 0; private set
+    @Volatile var lastHeight = 0; private set
+    @Volatile var lastFrameTime = 0L; private set
+    @Volatile var crcPassCount = 0; private set
+    @Volatile var crcFailCount = 0; private set
+    @Volatile var feStreamBufferBytes = 0; private set
+    @Volatile var videoStreamBufferBytes = 0; private set
+
     private data class FeTrafficCounter(
         val packets: AtomicLong = AtomicLong(0),
         val bytes: AtomicLong = AtomicLong(0),
@@ -78,9 +97,356 @@ class VideoExtractor {
         val samples: List<String>,
     )
 
+    data class ParserSnapshot(
+        val usbChunksFed: Long,
+        val fePacketsParsed: Int,
+        val feStreamBufferBytes: Int,
+        val videoStreamBufferBytes: Int,
+        val w42MagicHits: Long,
+        val w42HeadersParsed: Long,
+        val w42InvalidHeaders: Long,
+        val w42IncompleteChunks: Long,
+        val streamBytesDropped: Long,
+        val detectedCodec: String,
+    )
+
+    data class NalUnit(
+        val data: ByteArray,
+        val width: Int,
+        val height: Int,
+        val isIFrame: Boolean,
+        val nalType: String = "",
+        val codec: String = "unknown",
+        val timestamp: Long = System.currentTimeMillis(),
+    )
+
+    private data class NalStart(val start: Int, val header: Int)
+
     private val feTraffic = ConcurrentHashMap<Int, FeTrafficCounter>()
 
-    private fun recordFeTraffic(feType: Int, usbPacket: ByteArray, length: Int, payloadBytes: Int) {
+    fun getStreamInitBytes(codec: String = detectedCodec): ByteArray {
+        return if (codec == "h264") {
+            val s = sps264 ?: ByteArray(0)
+            val p = pps264 ?: ByteArray(0)
+            s + p
+        } else {
+            (vps ?: FALLBACK_VPS) + (sps ?: FALLBACK_SPS) + (pps ?: FALLBACK_PPS)
+        }
+    }
+
+    fun getParserSnapshot() = ParserSnapshot(
+        usbChunksFed = usbChunksFed.get(),
+        fePacketsParsed = feFramesParsed.get(),
+        feStreamBufferBytes = feStreamBufferBytes,
+        videoStreamBufferBytes = videoStreamBufferBytes,
+        w42MagicHits = w42MagicHits.get(),
+        w42HeadersParsed = w42HeadersParsed.get(),
+        w42InvalidHeaders = w42InvalidHeaders.get(),
+        w42IncompleteChunks = w42IncompleteChunks.get(),
+        streamBytesDropped = streamBytesDropped.get(),
+        detectedCodec = detectedCodec,
+    )
+
+    fun hasRecentFeTraffic(feType: Int, maxAgeMs: Long = 2500L): Boolean {
+        val counter = feTraffic[feType] ?: return false
+        return System.currentTimeMillis() - counter.lastPacketMs <= maxAgeMs
+    }
+
+    fun getFeTrafficSnapshot(): List<FeTrafficSnapshot> = feTraffic.entries.map { (feType, counter) ->
+        synchronized(counter) {
+            val active = System.currentTimeMillis() - counter.lastPacketMs < 2000
+            FeTrafficSnapshot(
+                feType = feType,
+                packets = counter.packets.get(),
+                bytes = counter.bytes.get(),
+                payloadBytes = counter.payloadBytes.get(),
+                bytesPerSecond = if (active) counter.bytesPerSecond else 0,
+                packetsPerSecond = if (active) counter.packetsPerSecond else 0,
+                lastPacketMs = counter.lastPacketMs,
+                samples = counter.samples.toList(),
+            )
+        }
+    }.sortedBy { it.feType }
+
+    /** Feed an arbitrary USB read chunk. It may contain partial, one, or multiple FE packets. */
+    fun feed(usbChunk: ByteArray, length: Int) {
+        if (length <= 0) return
+        synchronized(lock) {
+            usbChunksFed.incrementAndGet()
+            val safeLength = minOf(length, usbChunk.size)
+            appendFeBytes(usbChunk, safeLength)
+            parseFeStream()
+        }
+    }
+
+    private fun appendFeBytes(data: ByteArray, length: Int) {
+        val incoming = data.copyOfRange(0, length)
+        feStreamBuffer = if (feStreamBuffer.isEmpty()) incoming else feStreamBuffer + incoming
+        if (feStreamBuffer.size > MAX_FE_STREAM_BUFFER) {
+            val keep = minOf(MAX_FE_STREAM_BUFFER / 2, feStreamBuffer.size)
+            val drop = feStreamBuffer.size - keep
+            streamBytesDropped.addAndGet(drop.toLong())
+            feStreamBuffer = feStreamBuffer.copyOfRange(drop, feStreamBuffer.size)
+            Log.w("[Video] FE stream buffer overflow; dropped $drop oldest bytes")
+        }
+        feStreamBufferBytes = feStreamBuffer.size
+    }
+
+    private fun parseFeStream() {
+        var cursor = 0
+        while (true) {
+            if (feStreamBuffer.size - cursor < FE_HEADER_SIZE) break
+
+            val header = findFeHeader(feStreamBuffer, cursor)
+            if (header < 0) {
+                // Keep only enough trailing bytes to complete a split FE header next time.
+                val keep = minOf(FE_HEADER_SIZE - 1, feStreamBuffer.size)
+                val drop = feStreamBuffer.size - keep
+                if (drop > 0) streamBytesDropped.addAndGet(drop.toLong())
+                feStreamBuffer = feStreamBuffer.copyOfRange(feStreamBuffer.size - keep, feStreamBuffer.size)
+                feStreamBufferBytes = feStreamBuffer.size
+                return
+            }
+
+            if (header > cursor) streamBytesDropped.addAndGet((header - cursor).toLong())
+            if (feStreamBuffer.size - header < FE_HEADER_SIZE) {
+                cursor = header
+                break
+            }
+
+            val payloadLen = readIntBE(feStreamBuffer, header + 12)
+            if (payloadLen <= 0 || payloadLen > MAX_FE_PAYLOAD_SIZE) {
+                cursor = header + 1
+                continue
+            }
+
+            val packetLen = FE_HEADER_SIZE + payloadLen
+            if (header + packetLen > feStreamBuffer.size) {
+                cursor = header
+                break
+            }
+
+            val packet = feStreamBuffer.copyOfRange(header, header + packetLen)
+            processFePacket(packet, payloadLen)
+            cursor = header + packetLen
+        }
+
+        if (cursor > 0) {
+            feStreamBuffer = feStreamBuffer.copyOfRange(cursor, feStreamBuffer.size)
+        }
+        feStreamBufferBytes = feStreamBuffer.size
+    }
+
+    private fun processFePacket(packet: ByteArray, payloadLen: Int) {
+        val feType = packet[7].toInt() and 0xFF
+        recordFeTraffic(feType, packet, packet.size, payloadLen)
+        feFramesParsed.incrementAndGet()
+
+        val payload = packet.copyOfRange(FE_HEADER_SIZE, FE_HEADER_SIZE + payloadLen)
+        if (feType != 0x06) {
+            if (payload.size > 6) TelemetryParser.parse(feType, payload)
+            return
+        }
+
+        appendVideoBytes(payload)
+        parseVideoStream()
+    }
+
+    private fun appendVideoBytes(payload: ByteArray) {
+        if (payload.isEmpty()) return
+        videoStreamBuffer = if (videoStreamBuffer.isEmpty()) payload else videoStreamBuffer + payload
+        if (videoStreamBuffer.size > MAX_VIDEO_STREAM_BUFFER) {
+            // Prefer resynchronizing at the newest known w42 magic. If none exists, keep a small tail.
+            val newestMagic = findLastMagic(videoStreamBuffer)
+            if (newestMagic > 0) {
+                streamBytesDropped.addAndGet(newestMagic.toLong())
+                videoStreamBuffer = videoStreamBuffer.copyOfRange(newestMagic, videoStreamBuffer.size)
+            } else if (videoStreamBuffer.size > VIDEO_HEADER_SIZE) {
+                val keep = VIDEO_HEADER_SIZE - 1
+                val drop = videoStreamBuffer.size - keep
+                streamBytesDropped.addAndGet(drop.toLong())
+                videoStreamBuffer = videoStreamBuffer.copyOfRange(drop, videoStreamBuffer.size)
+            }
+            Log.w("[Video] w42 stream buffer overflow; resynchronized to ${videoStreamBuffer.size} bytes")
+        }
+        videoStreamBufferBytes = videoStreamBuffer.size
+    }
+
+    private fun parseVideoStream() {
+        while (true) {
+            if (videoStreamBuffer.size < VIDEO_MAGIC.size) return
+            val magic = findMagic(videoStreamBuffer, 0)
+            if (magic < 0) {
+                // Keep 3 bytes so a CC BB AA FF marker can span the next FE packet.
+                val keep = minOf(VIDEO_MAGIC.size - 1, videoStreamBuffer.size)
+                val drop = videoStreamBuffer.size - keep
+                if (drop > 0) streamBytesDropped.addAndGet(drop.toLong())
+                videoStreamBuffer = videoStreamBuffer.copyOfRange(videoStreamBuffer.size - keep, videoStreamBuffer.size)
+                videoStreamBufferBytes = videoStreamBuffer.size
+                return
+            }
+
+            if (magic > 0) {
+                streamBytesDropped.addAndGet(magic.toLong())
+                videoStreamBuffer = videoStreamBuffer.copyOfRange(magic, videoStreamBuffer.size)
+            }
+
+            if (videoStreamBuffer.size < VIDEO_HEADER_SIZE) {
+                videoStreamBufferBytes = videoStreamBuffer.size
+                return
+            }
+
+            val width = readUShortLE(videoStreamBuffer, 4)
+            val height = readUShortLE(videoStreamBuffer, 6)
+            val frameOrder = readUShortLE(videoStreamBuffer, 8)
+            val dataType = videoStreamBuffer[10].toInt() and 0xFF
+            val refreshType = videoStreamBuffer[11].toInt() and 0xFF
+            val payloadLen = readIntLE(videoStreamBuffer, 12)
+            val realPayloadLen = readIntLE(videoStreamBuffer, 16)
+
+            val saneDimensions = width in 16..8192 && height in 16..8192
+            val saneHeader = saneDimensions && dataType <= 2 && payloadLen in 1..MAX_VIDEO_PAYLOAD_SIZE &&
+                realPayloadLen in 1..payloadLen
+
+            if (!saneHeader) {
+                w42MagicHits.incrementAndGet()
+                w42InvalidHeaders.incrementAndGet()
+                if (w42InvalidHeaders.get() <= 5) {
+                    Log.w("[Video] Invalid w42 header w=${width} h=${height} type=$dataType refresh=$refreshType payload=$payloadLen real=$realPayloadLen")
+                }
+                // Move one byte past the current false-positive magic and rescan.
+                videoStreamBuffer = videoStreamBuffer.copyOfRange(1, videoStreamBuffer.size)
+                videoStreamBufferBytes = videoStreamBuffer.size
+                continue
+            }
+
+            val totalChunkLen = VIDEO_HEADER_SIZE + payloadLen
+            if (videoStreamBuffer.size < totalChunkLen) {
+                w42IncompleteChunks.incrementAndGet()
+                videoStreamBufferBytes = videoStreamBuffer.size
+                return
+            }
+
+            w42MagicHits.incrementAndGet()
+            w42HeadersParsed.incrementAndGet()
+
+            val header = videoStreamBuffer.copyOfRange(0, VIDEO_HEADER_SIZE)
+            val videoData = videoStreamBuffer.copyOfRange(VIDEO_HEADER_SIZE, VIDEO_HEADER_SIZE + realPayloadLen)
+            if (dataType == 0) {
+                processVideoChunk(videoData, header, width, height, frameOrder, refreshType == 0)
+            }
+
+            videoStreamBuffer = videoStreamBuffer.copyOfRange(totalChunkLen, videoStreamBuffer.size)
+            videoStreamBufferBytes = videoStreamBuffer.size
+        }
+    }
+
+    private fun processVideoChunk(
+        data: ByteArray,
+        header: ByteArray,
+        width: Int,
+        height: Int,
+        frameOrder: Int,
+        headerIntra: Boolean,
+    ) {
+        if (data.isEmpty()) return
+
+        val expectedCrcLE = readIntLE(header, 20)
+        val expectedCrcBE = readIntBE(header, 20)
+        val actualCrc = crc32(data)
+        val crcOk = expectedCrcLE == actualCrc || expectedCrcBE == actualCrc
+        if (crcOk) crcPassCount++ else {
+            crcFailCount++
+            if (crcFailCount <= 3) {
+                Log.w("[Video] CRC mismatch frameOrder=$frameOrder LE=0x${expectedCrcLE.toUInt().toString(16)} BE=0x${expectedCrcBE.toUInt().toString(16)} actual=0x${actualCrc.toUInt().toString(16)} size=${data.size}")
+            }
+            if (crcEnabled) return
+        }
+
+        val nalStarts = findNalStartCodes(data)
+        var isIDR = headerIntra
+        var containsPicture = false
+        var codec = detectedCodec
+        var nalTypeLabel = if (headerIntra) "I-frame" else "P-frame"
+
+        for ((index, start) in nalStarts.withIndex()) {
+            if (start.header >= data.size) continue
+            val nextStart = if (index + 1 < nalStarts.size) nalStarts[index + 1].start else data.size
+            if (nextStart <= start.start) continue
+            val nal = data.copyOfRange(start.start, nextStart)
+            val first = data[start.header].toInt() and 0xFF
+            val second = if (start.header + 1 < data.size) data[start.header + 1].toInt() and 0xFF else 0
+
+            val h265Type = (first ushr 1) and 0x3F
+            val h264Type = first and 0x1F
+            val looksH265 = (second and 0x07) != 0 && h265Type in setOf(0, 1, 19, 20, 21, 32, 33, 34, 39, 40)
+            val thisCodec = when {
+                h265Type in 32..34 && looksH265 -> "h265"
+                h264Type == 7 || h264Type == 8 || h264Type == 5 -> "h264"
+                detectedCodec == "h265" -> "h265"
+                detectedCodec == "h264" -> "h264"
+                looksH265 -> "h265"
+                h264Type == 1 || h264Type == 6 -> "h264"
+                else -> "unknown"
+            }
+
+            if (thisCodec == "h265") {
+                codec = "h265"
+                when (h265Type) {
+                    32 -> vps = nal
+                    33 -> sps = nal
+                    34 -> pps = nal
+                    19, 20, 21 -> { isIDR = true; containsPicture = true; nalTypeLabel = "IDR" }
+                    0, 1 -> { containsPicture = true; if (!isIDR) nalTypeLabel = "P-frame" }
+                }
+            } else if (thisCodec == "h264") {
+                codec = "h264"
+                when (h264Type) {
+                    7 -> sps264 = nal
+                    8 -> pps264 = nal
+                    5 -> { isIDR = true; containsPicture = true; nalTypeLabel = "IDR" }
+                    1 -> { containsPicture = true; if (!isIDR) nalTypeLabel = "P-frame" }
+                }
+            }
+        }
+
+        // If no Annex-B start code was found, keep the w42 refresh flag as a fallback.
+        if (nalStarts.isEmpty()) containsPicture = data.size > 4
+        if (!containsPicture) return
+
+        if (codec != "unknown") detectedCodec = codec
+        val resolvedCodec = if (codec == "unknown") detectedCodec else codec
+
+        var queuedData = data
+        if (isIDR) {
+            val init = getStreamInitBytes(resolvedCodec)
+            if (init.isNotEmpty()) queuedData = init + data
+            lastIdrSequence = queuedData
+        }
+
+        val nalUnit = NalUnit(
+            data = queuedData,
+            width = width,
+            height = height,
+            isIFrame = isIDR,
+            nalType = nalTypeLabel,
+            codec = resolvedCodec,
+        )
+        while (nalQueue.size >= 30) nalQueue.poll()
+        nalQueue.offer(nalUnit)
+
+        lastWidth = width
+        lastHeight = height
+        lastFrameTime = System.currentTimeMillis()
+        val count = framesExtracted.incrementAndGet()
+        if (isIDR) iFrames.incrementAndGet() else pFrames.incrementAndGet()
+
+        if (count <= 3 || count % 200 == 0 || isIDR) {
+            Log.i("[Video] #$count: ${width}x$height $nalTypeLabel codec=$resolvedCodec ${data.size}B crc=${if (crcOk) "OK" else "FAIL"} w42=${w42HeadersParsed.get()}")
+        }
+    }
+
+    private fun recordFeTraffic(feType: Int, packet: ByteArray, length: Int, payloadBytes: Int) {
         val now = System.currentTimeMillis()
         val counter = feTraffic.computeIfAbsent(feType) { FeTrafficCounter(windowStartedMs = now) }
         counter.packets.incrementAndGet()
@@ -100,221 +466,85 @@ class VideoExtractor {
             }
             if (counter.samples.size < 3) {
                 val sampleLen = minOf(length, 64)
-                val hex = usbPacket.take(sampleLen).joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
+                val hex = packet.take(sampleLen).joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
                 counter.samples += hex
                 Log.i("[FE-Diag] FE=0x${"%02X".format(feType)} sample#${counter.samples.size} len=$length payload=$payloadBytes: $hex")
             }
         }
     }
 
-    fun getFeTrafficSnapshot(): List<FeTrafficSnapshot> = feTraffic.entries.map { (feType, counter) ->
-        synchronized(counter) {
-            // If traffic stopped, don't keep displaying a stale non-zero instantaneous rate.
-            val active = System.currentTimeMillis() - counter.lastPacketMs < 2000
-            FeTrafficSnapshot(
-                feType = feType,
-                packets = counter.packets.get(),
-                bytes = counter.bytes.get(),
-                payloadBytes = counter.payloadBytes.get(),
-                bytesPerSecond = if (active) counter.bytesPerSecond else 0,
-                packetsPerSecond = if (active) counter.packetsPerSecond else 0,
-                lastPacketMs = counter.lastPacketMs,
-                samples = counter.samples.toList(),
-            )
-        }
-    }.sortedBy { it.feType }
-
-    data class NalUnit(
-        val data: ByteArray, val width: Int, val height: Int,
-        val isIFrame: Boolean, val nalType: String = "",
-        val timestamp: Long = System.currentTimeMillis(),
-    )
-
-    fun getStreamInitBytes(): ByteArray =
-        (vps ?: FALLBACK_VPS) + (sps ?: FALLBACK_SPS) + (pps ?: FALLBACK_PPS)
-
-    /**
-     * Feed ONE USB read result. Each USB read = one FE frame (atomic).
-     */
-    fun feed(usbPacket: ByteArray, length: Int) {
-        synchronized(lock) {
-            if (length < FE_HEADER_SIZE) return
-
-            // Verify FE header
-            val isFE = (usbPacket[0] == 0xFE.toByte() &&
-                usbPacket[1] == 0.toByte() && usbPacket[2] == 0.toByte() &&
-                usbPacket[3] == 0.toByte() && usbPacket[4] == 0.toByte() &&
-                usbPacket[5] == 0.toByte())
-
-            if (!isFE) {
-                // Raw data without FE header — skip (telemetry or noise, NOT video continuation)
-                return
-            }
-
-            // Parse FE header
-            val feType = usbPacket[7].toInt() and 0xFF
-            val plen = ((usbPacket[12].toInt() and 0xFF) shl 24) or
-                    ((usbPacket[13].toInt() and 0xFF) shl 16) or
-                    ((usbPacket[14].toInt() and 0xFF) shl 8) or
-                    (usbPacket[15].toInt() and 0xFF)
-
-            val availablePayload = (length - FE_HEADER_SIZE).coerceAtLeast(0)
-            recordFeTraffic(feType, usbPacket, length, minOf(plen.coerceAtLeast(0), availablePayload))
-
-            if (plen <= 0 || plen > 65536) return
-
-            // Parse telemetry from non-video FE types (0x21=flight, 0x41=remoter, etc)
-            if (feType != 0x06) {
-                val telSize = minOf(plen, length - FE_HEADER_SIZE)
-                if (telSize > 6) { // minimum FF FD + len(2) + short(2) = 6 bytes
-                    val telPayload = usbPacket.copyOfRange(FE_HEADER_SIZE, FE_HEADER_SIZE + telSize)
-                    TelemetryParser.parse(feType, telPayload)
-                }
-                return
-            }
-
-            val payloadSize = minOf(plen, length - FE_HEADER_SIZE)
-            if (payloadSize <= 0) return
-
-            val payload = usbPacket.copyOfRange(FE_HEADER_SIZE, FE_HEADER_SIZE + payloadSize)
-            feFramesParsed.incrementAndGet()
-
-            // Check if payload starts with CC BB AA FF (new video frame)
-            if (payload.size >= VIDEO_HEADER_SIZE &&
-                payload[0] == VIDEO_MAGIC[0] && payload[1] == VIDEO_MAGIC[1] &&
-                payload[2] == VIDEO_MAGIC[2] && payload[3] == VIDEO_MAGIC[3]) {
-
-                val w = readUShortLE(payload, 4)
-                val h = readUShortLE(payload, 6)
-                val dt = payload[10].toInt() and 0xFF
-                val pl = readIntLE(payload, 12)
-                val rl = readIntLE(payload, 16)
-
-                val validRes = (w == 1920 && h == 1080) || (w == 1280 && h == 720)
-                if (validRes && dt <= 2 && pl > 0 && pl < MAX_FRAME_SIZE && rl > 0 && rl <= pl) {
-                    // New video frame — flush previous
-                    flushCurrentFrame()
-
-                    currentHeader = payload.copyOfRange(0, VIDEO_HEADER_SIZE)
-                    expectedPayloadLen = rl
-                    currentFrame = ByteArrayOutputStream(rl.coerceAtMost(MAX_FRAME_SIZE))
-                    if (payload.size > VIDEO_HEADER_SIZE) {
-                        currentFrame!!.write(payload, VIDEO_HEADER_SIZE, payload.size - VIDEO_HEADER_SIZE)
-                    }
-                    checkFrameComplete()
-                    return
-                }
-            }
-
-            // Continuation data for current video frame
-            if (currentFrame != null) {
-                currentFrame!!.write(payload)
-                checkFrameComplete()
-            }
-        }
-    }
-
-    private fun checkFrameComplete() {
-        if (currentFrame != null && currentFrame!!.size() >= expectedPayloadLen) {
-            flushCurrentFrame()
-        }
-    }
-
-    private fun flushCurrentFrame() {
-        val frame = currentFrame ?: return
-        val header = currentHeader ?: return
-        val videoData = frame.toByteArray()
-        currentFrame = null
-        currentHeader = null
-
-        if (videoData.isEmpty()) return
-
-        val width = readUShortLE(header, 4)
-        val height = readUShortLE(header, 6)
-        val dataType = header[10].toInt() and 0xFF
-        if (dataType != 0 || width == 0 || height == 0) return
-
-        val data = if (videoData.size > expectedPayloadLen && expectedPayloadLen > 0)
-            videoData.copyOf(expectedPayloadLen) else videoData
-
-        // CRC32 validation — try both LE and BE
-        val expectedCrcLE = readIntLE(header, 20)
-        val expectedCrcBE = readIntBE(header, 20)
-        val actualCrc = crc32(data)
-        val crcOk = (expectedCrcLE == actualCrc || expectedCrcBE == actualCrc)
-        if (!crcOk) {
-            crcFailCount++
-            if (crcFailCount <= 3) {
-                Log.w("[Video] CRC: LE=0x${expectedCrcLE.toUInt().toString(16)} BE=0x${expectedCrcBE.toUInt().toString(16)} actual=0x${actualCrc.toUInt().toString(16)} size=${data.size}")
-            }
-            if (crcEnabled) return
-        } else {
-            crcPassCount++
-        }
-
-        // Scan NAL units
-        var isIDR = false
-        var nalType = "P-frame"
-        val nalPositions = findAllNalStartCodes(data)
-
-        for ((nalIdx, nalPos) in nalPositions.withIndex()) {
-            if (nalPos + 4 >= data.size) continue
-            val nalByte = data[nalPos + 4].toInt() and 0xFF
-            val nextPos = if (nalIdx + 1 < nalPositions.size) nalPositions[nalIdx + 1] else data.size
-            val singleNal = data.copyOfRange(nalPos, nextPos)
-
-            when (nalByte) {
-                0x40 -> { vps = singleNal }
-                0x42 -> { sps = singleNal }
-                0x44 -> { pps = singleNal }
-                0x26 -> {
-                    isIDR = true; nalType = "IDR"
-                    val v = vps; val s = sps; val p = pps
-                    lastIdrSequence = (v ?: FALLBACK_VPS) + (s ?: FALLBACK_SPS) + (p ?: FALLBACK_PPS) + data
-                }
-                0x4E -> { if (!isIDR) nalType = "SEI" }
-                0x02 -> { if (!isIDR) nalType = "P-frame" }
-            }
-        }
-
-        val nal = NalUnit(data = data, width = width, height = height, isIFrame = isIDR, nalType = nalType)
-        while (nalQueue.size >= 30) nalQueue.poll()
-        nalQueue.offer(nal)
-
-        lastWidth = width; lastHeight = height; lastFrameTime = System.currentTimeMillis()
-        framesExtracted.incrementAndGet()
-        if (isIDR) iFrames.incrementAndGet() else pFrames.incrementAndGet()
-
-        if (framesExtracted.get() <= 3 || framesExtracted.get() % 200 == 0 || isIDR) {
-            Log.i("[Video] #${framesExtracted.get()}: ${width}x${height} $nalType ${data.size}B crc=${if(crcOk) "OK" else "FAIL"} pass=$crcPassCount fail=$crcFailCount")
-        }
-    }
-
     fun reset() {
-        synchronized(lock) { currentFrame = null; currentHeader = null }
+        synchronized(lock) {
+            feStreamBuffer = ByteArray(0)
+            videoStreamBuffer = ByteArray(0)
+            feStreamBufferBytes = 0
+            videoStreamBufferBytes = 0
+        }
         nalQueue.clear()
+        vps = null; sps = null; pps = null; sps264 = null; pps264 = null
+        detectedCodec = "unknown"
+        lastIdrSequence = null
         framesExtracted.set(0); iFrames.set(0); pFrames.set(0); feFramesParsed.set(0)
+        usbChunksFed.set(0); w42MagicHits.set(0); w42HeadersParsed.set(0); w42InvalidHeaders.set(0)
+        w42IncompleteChunks.set(0); streamBytesDropped.set(0)
         feTraffic.clear()
-        crcPassCount = 0; crcFailCount = 0; lastIdrSequence = null
+        crcPassCount = 0; crcFailCount = 0
+        lastWidth = 0; lastHeight = 0; lastFrameTime = 0
+    }
+
+    private fun findFeHeader(data: ByteArray, start: Int): Int {
+        var i = start.coerceAtLeast(0)
+        while (i <= data.size - FE_HEADER_SIZE) {
+            if (data[i] == 0xFE.toByte() && data[i + 1] == 0.toByte() && data[i + 2] == 0.toByte() &&
+                data[i + 3] == 0.toByte() && data[i + 4] == 0.toByte() && data[i + 5] == 0.toByte()) return i
+            i++
+        }
+        return -1
+    }
+
+    private fun findMagic(data: ByteArray, start: Int): Int {
+        var i = start.coerceAtLeast(0)
+        while (i <= data.size - VIDEO_MAGIC.size) {
+            if (data[i] == VIDEO_MAGIC[0] && data[i + 1] == VIDEO_MAGIC[1] &&
+                data[i + 2] == VIDEO_MAGIC[2] && data[i + 3] == VIDEO_MAGIC[3]) return i
+            i++
+        }
+        return -1
+    }
+
+    private fun findLastMagic(data: ByteArray): Int {
+        var i = data.size - VIDEO_MAGIC.size
+        while (i >= 0) {
+            if (data[i] == VIDEO_MAGIC[0] && data[i + 1] == VIDEO_MAGIC[1] &&
+                data[i + 2] == VIDEO_MAGIC[2] && data[i + 3] == VIDEO_MAGIC[3]) return i
+            i--
+        }
+        return -1
+    }
+
+    private fun findNalStartCodes(data: ByteArray): List<NalStart> {
+        val starts = mutableListOf<NalStart>()
+        var i = 0
+        while (i < data.size - 2) {
+            if (i + 3 < data.size && data[i] == 0.toByte() && data[i + 1] == 0.toByte() &&
+                data[i + 2] == 0.toByte() && data[i + 3] == 1.toByte()) {
+                starts += NalStart(i, i + 4)
+                i += 4
+            } else if (data[i] == 0.toByte() && data[i + 1] == 0.toByte() && data[i + 2] == 1.toByte()) {
+                starts += NalStart(i, i + 3)
+                i += 3
+            } else i++
+        }
+        return starts
     }
 
     private fun crc32(data: ByteArray): Int {
-        var crc = -1
-        for (b in data) { crc = CRC32_TABLE[(crc xor b.toInt()) and 0xFF] xor (crc ushr 8) }
-        return crc.inv()
+        val crc = CRC32()
+        crc.update(data)
+        return crc.value.toInt()
     }
 
-    private val CRC32_TABLE = intArrayOf(0,1996959894,-301047508,-1727442502,124634137,1886057615,-379345611,-1637575261,249268274,2044508324,-522852066,-1747789432,162941995,2125561021,-407360249,-1866523247,498536548,1789927666,-205950648,-2067906082,450548861,1843258603,-187386543,-2083289657,325883990,1684777152,-43845254,-1973040660,335633487,1661365465,-99664541,-1928851979,997073096,1281953886,-715111964,-1570279054,1006888145,1258607687,-770865667,-1526024853,901097722,1119000684,-608450090,-1396901568,853044451,1172266101,-589951537,-1412350631,651767980,1373503546,-925412992,-1076862698,565507253,1454621731,-809855591,-1195530993,671266974,1594198024,-972236366,-1324619484,795835527,1483230225,-1050600021,-1234817731,1994146192,31158534,-1731059524,-271249366,1907459465,112637215,-1614814043,-390540237,2013776290,251722036,-1777751922,-519137256,2137656763,141376813,-1855689577,-429695999,1802195444,476864866,-2056965928,-228458418,1812370925,453092731,-2113342271,-183516073,1706088902,314042704,-1950435094,-54949764,1658658271,366619977,-1932296973,-69972891,1303535960,984961486,-1547960204,-725929758,1256170817,1037604311,-1529756563,-740887301,1131014506,879679996,-1385723834,-631195440,1141124467,855842277,-1442165665,-586318647,1342533948,654459306,-1106571248,-921952122,1466479909,544179635,-1184443383,-832445281,1591671054,702138776,-1328506846,-942167884,1504918807,783551873,-1212326853,-1061524307,-306674912,-1698712650,62317068,1957810842,-355121351,-1647151185,81470997,1943803523,-480048366,-1805370492,225274430,2053790376,-468791541,-1828061283,167816743,2097651377,-267414716,-2029476910,503444072,1762050814,-144550051,-2140837941,426522225,1852507879,-19653770,-1982649376,282753626,1742555852,-105259153,-1900089351,397917763,1622183637,-690576408,-1580100738,953729732,1340076626,-776247311,-1497606297,1068828381,1219638859,-670225446,-1358292148,906185462,1090812512,-547295293,-1469587627,829329135,1181335161,-882789492,-1134132454,628085408,1382605366,-871598187,-1156888829,570562233,1426400815,-977650754,-1296233688,733239954,1555261956,-1026031705,-1244606671,752459403,1541320221,-1687895376,-328994266,1969922972,40735498,-1677130071,-351390145,1913087877,83908371,-1782625662,-491226604,2075208622,213261112,-1831694693,-438977011,2094854071,198958881,-2032938284,-237706686,1759359992,534414190,-2118248755,-155638181,1873836001,414664567,-2012718362,-15766928,1711684554,285281116,-1889165569,-127750551,1634467795,376229701,-1609899400,-686959890,1308918612,956543938,-1486412191,-799009033,1231636301,1047427035,-1362007478,-640263460,1088359270,936918000,-1447252397,-558129467,1202900863,817233897,-1111625188,-893730166,1404277552,615818150,-1160759803,-841546093,1423857449,601450431,-1285129682,-1000256840,1567103746,711928724,-1274298825,-1022587231,1510334235,755167117)
-
-    private fun findAllNalStartCodes(data: ByteArray): List<Int> {
-        val positions = mutableListOf<Int>()
-        for (i in 0 until data.size - 3) {
-            if (data[i] == 0.toByte() && data[i+1] == 0.toByte() && data[i+2] == 0.toByte() && data[i+3] == 1.toByte()) positions.add(i)
-        }
-        return positions
-    }
-
-    private fun readUShortLE(a: ByteArray, o: Int) = (a[o].toInt() and 0xFF) or ((a[o+1].toInt() and 0xFF) shl 8)
-    private fun readIntLE(a: ByteArray, o: Int) = (a[o].toInt() and 0xFF) or ((a[o+1].toInt() and 0xFF) shl 8) or ((a[o+2].toInt() and 0xFF) shl 16) or ((a[o+3].toInt() and 0xFF) shl 24)
-    private fun readIntBE(a: ByteArray, o: Int) = ((a[o].toInt() and 0xFF) shl 24) or ((a[o+1].toInt() and 0xFF) shl 16) or ((a[o+2].toInt() and 0xFF) shl 8) or (a[o+3].toInt() and 0xFF)
+    private fun readUShortLE(a: ByteArray, o: Int) = (a[o].toInt() and 0xFF) or ((a[o + 1].toInt() and 0xFF) shl 8)
+    private fun readIntLE(a: ByteArray, o: Int) = (a[o].toInt() and 0xFF) or ((a[o + 1].toInt() and 0xFF) shl 8) or ((a[o + 2].toInt() and 0xFF) shl 16) or ((a[o + 3].toInt() and 0xFF) shl 24)
+    private fun readIntBE(a: ByteArray, o: Int) = ((a[o].toInt() and 0xFF) shl 24) or ((a[o + 1].toInt() and 0xFF) shl 16) or ((a[o + 2].toInt() and 0xFF) shl 8) or (a[o + 3].toInt() and 0xFF)
 }

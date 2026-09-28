@@ -46,6 +46,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     private var connectionSupervisorJob: Job? = null
     @Volatile private var liveViewActivationInProgress = false
     @Volatile private var officialInitSentForConnection = false
+    @Volatile private var lastLiveViewActivationMs = 0L
+    @Volatile private var preferredLiveViewH265 = true
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun onCreate() {
@@ -236,9 +238,10 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
                 // Use the same captured initialization/LiveView path as USB.
                 officialInitSentForConnection = false
+                lastLiveViewActivationMs = 0L
                 scope.launch {
                     delay(250)
-                    activateLiveView(true)
+                    activateLiveView(true, force = true)
                 }
 
                 startControlLoop()
@@ -282,6 +285,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     override fun onConnected() {
         Log.i("[Service] USB accessory opened - waiting for controller RX")
         officialInitSentForConnection = false
+        lastLiveViewActivationMs = 0L
         videoExtractor.reset()
 
         startControlLoop()
@@ -292,7 +296,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         // then perform one authoritative backend-side camera initialization.
         scope.launch {
             delay(250)
-            activateLiveView()
+            activateLiveView(preferredLiveViewH265, force = true)
         }
 
         // Broadcast telemetry to WebSocket every 200ms
@@ -313,6 +317,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         Log.w("[Service] USB Disconnected - stopping loops; supervisor will reconnect when accessory is present")
         liveViewActivationInProgress = false
         officialInitSentForConnection = false
+        lastLiveViewActivationMs = 0L
         controlJob?.cancel(); controlJob = null
         decoderJob?.cancel(); decoderJob = null
         extractorJob?.cancel(); extractorJob = null
@@ -389,17 +394,24 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
      * Video stream activation helper.
      * Tells drone camera to start encoding and transmitting H.265 video packets.
      */
-    fun activateLiveView(enableH265: Boolean = true): Boolean {
+    fun activateLiveView(enableH265: Boolean = true, force: Boolean = false): Boolean {
         if (!isAnyConnected) {
             Log.w("[Service] LiveView activation requested without an active drone transport")
             ensureUsbConnection()
             return false
+        }
+
+        val now = System.currentTimeMillis()
+        if (!force && preferredLiveViewH265 == enableH265 && now - lastLiveViewActivationMs < 10_000L) {
+            Log.d("[Service] LiveView activation suppressed by 10s debounce (codec=${if (enableH265) "H265" else "H264"})")
+            return true
         }
         if (liveViewActivationInProgress) {
             Log.d("[Service] LiveView activation already in progress")
             return true
         }
 
+        preferredLiveViewH265 = enableH265
         liveViewActivationInProgress = true
         scope.launch {
             try {
@@ -438,6 +450,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
                 Log.i("[Service] LiveView step 5/5: IDR request 0xD9")
                 sendDirectAny(DroneProtocol.buildIDRRequestD9())
+                lastLiveViewActivationMs = System.currentTimeMillis()
                 Log.i("[Service] Extended LiveView activation sent; waiting for FE traffic/video")
             } catch (e: Exception) {
                 Log.e("[Service] Error activating LiveView: ${e.message}")
@@ -459,6 +472,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             Log.i("[Service] Decoder loop started")
             var statsCounter = 0
             var gotFirstIdr = false
+            var decoderSyncCodec = "unknown"
             while (isActive && isAnyConnected) {
                 // If extractor reset, reset IDR sync
                 if (videoExtractor.framesExtracted.get() == 0) {
@@ -467,6 +481,10 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
                 val nal = videoExtractor.nalQueue.poll()
                 if (nal != null) {
+                    if (nal.codec != "unknown" && nal.codec != decoderSyncCodec) {
+                        decoderSyncCodec = nal.codec
+                        gotFirstIdr = false
+                    }
                     // Before the first IDR frame, discard P-frames (cannot be decoded without IDR)
                     if (!gotFirstIdr && !nal.isIFrame) {
                         delay(2)
@@ -476,14 +494,15 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                         gotFirstIdr = true
                     }
 
-                    // Start decoder on first frame once resolution is known
+                    // Start/restart Android hardware decoder for the codec actually detected in w42.
                     val w = if (nal.width > 0) nal.width else videoExtractor.lastWidth
                     val h = if (nal.height > 0) nal.height else videoExtractor.lastHeight
-                    if (videoDecoder.framesDecoded.get() == 0 && w > 0 && h > 0) {
-                        val v = videoExtractor.vps ?: VideoExtractor.FALLBACK_VPS
-                        val s = videoExtractor.sps ?: VideoExtractor.FALLBACK_SPS
-                        val p = videoExtractor.pps ?: VideoExtractor.FALLBACK_PPS
-                        videoDecoder.start(w, h, v, s, p)
+                    val codec = if (nal.codec == "h264") "h264" else "h265"
+                    if ((!videoDecoder.isRunning || videoDecoder.currentCodec != codec) && w > 0 && h > 0) {
+                        val v = if (codec == "h265") (videoExtractor.vps ?: VideoExtractor.FALLBACK_VPS) else null
+                        val s = if (codec == "h264") videoExtractor.sps264 else (videoExtractor.sps ?: VideoExtractor.FALLBACK_SPS)
+                        val p = if (codec == "h264") videoExtractor.pps264 else (videoExtractor.pps ?: VideoExtractor.FALLBACK_PPS)
+                        videoDecoder.start(w, h, codec, v, s, p)
                     }
 
                     videoDecoder.publishFrame = true
@@ -560,21 +579,31 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                         lastHeartbeat = now
                     }
 
-                    // Video watchdog: If no video frames received yet, or stream stalled > 5s,
-                    // automatically kickstart LiveView transmission
+                    // Video watchdog: do not restart the complete camera sequence while FE 0x06
+                    // is already flowing. In that state the transport is alive and repeated 0x16/0x73/0xD8
+                    // commands only risk resetting an encoder that has already started.
                     if (now - lastVideoWatchdog > 3000) {
                         lastVideoWatchdog = now
-                        if (videoExtractor.framesExtracted.get() == 0 ||
-                            (videoExtractor.lastFrameTime > 0 && now - videoExtractor.lastFrameTime > 5000)) {
-                            Log.i("[Service] Video watchdog: Drone online but no video, sending LiveView activation")
-                            activateLiveView()
+                        val fe06Active = videoExtractor.hasRecentFeTraffic(0x06, 3500L)
+                        val noFrames = videoExtractor.framesExtracted.get() == 0
+                        val stalled = videoExtractor.lastFrameTime > 0 && now - videoExtractor.lastFrameTime > 5000L
+
+                        if (!fe06Active && now - lastLiveViewActivationMs > 10_000L) {
+                            Log.i("[Service] Video watchdog: no FE 0x06 traffic; retrying LiveView activation")
+                            activateLiveView(preferredLiveViewH265, force = false)
+                        } else if (fe06Active && (noFrames || stalled)) {
+                            val parser = videoExtractor.getParserSnapshot()
+                            Log.d("[Service] FE 0x06 active but video parser has no fresh frame: w42=${parser.w42HeadersParsed} invalid=${parser.w42InvalidHeaders} buffer=${parser.videoStreamBufferBytes}B")
                         }
                     }
 
-                    // Periodic IDR request every 2000ms to repair any packet loss artifacts
-                    if (now - lastIdrRequest > 2000) {
-                        val idrCmd = DroneProtocol.buildIDRRequest()
-                        sendDirectAny(idrCmd)
+                    // Request a recovery IDR only when FE 0x06 is active but no usable frame has
+                    // appeared recently. Avoid the previous unconditional 2-second IDR storm.
+                    val fe06ActiveForIdr = videoExtractor.hasRecentFeTraffic(0x06, 3500L)
+                    val needsIdr = videoExtractor.framesExtracted.get() == 0 ||
+                        (videoExtractor.lastFrameTime > 0 && now - videoExtractor.lastFrameTime > 3000L)
+                    if (fe06ActiveForIdr && needsIdr && now - lastIdrRequest > 5000L) {
+                        sendDirectAny(DroneProtocol.buildIDRRequestD9())
                         lastIdrRequest = now
                     }
 

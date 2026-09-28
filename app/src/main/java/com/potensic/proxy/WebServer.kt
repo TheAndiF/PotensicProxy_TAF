@@ -476,7 +476,7 @@ class WebServer(
                     Log.i("[WebServer] POST /api/video/activate")
                     val codec = call.request.queryParameters["codec"]?.lowercase() ?: "h265"
                     val enableH265 = codec != "h264"
-                    val activated = ProxyService.instance?.activateLiveView(enableH265) == true
+                    val activated = ProxyService.instance?.activateLiveView(enableH265, force = true) == true
                     val json = JSONObject().apply {
                         put("success", activated)
                         put("activated", activated)
@@ -547,6 +547,21 @@ class WebServer(
                         put("height", videoExtractor.lastHeight)
                         put("queueSize", videoExtractor.nalQueue.size)
                         put("lastFrameMs", videoExtractor.lastFrameTime)
+                        put("detectedCodec", videoExtractor.detectedCodec)
+                        put("decoderCodec", videoDecoder.currentCodec)
+                        val parser = videoExtractor.getParserSnapshot()
+                        put("parser", JSONObject().apply {
+                            put("usbChunksFed", parser.usbChunksFed)
+                            put("fePacketsParsed", parser.fePacketsParsed)
+                            put("feStreamBufferBytes", parser.feStreamBufferBytes)
+                            put("videoStreamBufferBytes", parser.videoStreamBufferBytes)
+                            put("w42MagicHits", parser.w42MagicHits)
+                            put("w42HeadersParsed", parser.w42HeadersParsed)
+                            put("w42InvalidHeaders", parser.w42InvalidHeaders)
+                            put("w42IncompleteChunks", parser.w42IncompleteChunks)
+                            put("streamBytesDropped", parser.streamBytesDropped)
+                            put("detectedCodec", parser.detectedCodec)
+                        })
                         put("feTraffic", org.json.JSONArray().apply {
                             videoExtractor.getFeTrafficSnapshot().forEach { stat ->
                                 put(JSONObject().apply {

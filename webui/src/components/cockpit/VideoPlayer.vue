@@ -62,6 +62,14 @@
               </span>
             </span>
           </div>
+          <div class="diag-item" v-if="parserStats.fePacketsParsed > 0">
+            <span class="diag-label">FE/w42 Stream Parser:</span>
+            <span :class="parserStats.w42HeadersParsed > 0 ? 'diag-ok' : 'diag-muted'">
+              FE {{ parserStats.fePacketsParsed }} | w42 valid {{ parserStats.w42HeadersParsed }} / invalid {{ parserStats.w42InvalidHeaders }}
+              | pending {{ parserStats.videoStreamBufferBytes }} B
+              {{ parserStats.detectedCodec !== 'unknown' ? `| ${parserStats.detectedCodec.toUpperCase()}` : '' }}
+            </span>
+          </div>
           <div class="diag-item">
             <span class="diag-label">Browser Hardware Decode Support (WebCodecs):</span>
             <span :class="codecSupportOk ? 'diag-ok' : 'diag-warn'">
@@ -142,7 +150,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { DroneControlService } from '../../services/DroneControlService'
 import { VideoExtractor, ExtractedVideoFrame } from '../../protocol/VideoExtractor'
@@ -166,9 +174,7 @@ const h264Supported = ref(false)
 const videoExtractor = VideoExtractor.getInstance()
 let webCodecsPlayer: WebCodecsPlayer | null = null
 let unsubscribeExtractor: (() => void) | null = null
-let autoIdrTimer: any = null
 let backendStatsTimer: any = null
-let autoActivationSent = false
 let isDestroyed = false
 
 type FeTrafficStat = {
@@ -184,6 +190,32 @@ type FeTrafficStat = {
 }
 
 const feTraffic = ref<FeTrafficStat[]>([])
+
+type ParserStats = {
+  usbChunksFed: number
+  fePacketsParsed: number
+  feStreamBufferBytes: number
+  videoStreamBufferBytes: number
+  w42MagicHits: number
+  w42HeadersParsed: number
+  w42InvalidHeaders: number
+  w42IncompleteChunks: number
+  streamBytesDropped: number
+  detectedCodec: string
+}
+
+const parserStats = reactive<ParserStats>({
+  usbChunksFed: 0,
+  fePacketsParsed: 0,
+  feStreamBufferBytes: 0,
+  videoStreamBufferBytes: 0,
+  w42MagicHits: 0,
+  w42HeadersParsed: 0,
+  w42InvalidHeaders: 0,
+  w42IncompleteChunks: 0,
+  streamBytesDropped: 0,
+  detectedCodec: 'unknown'
+})
 
 const videoStats = reactive({
   packetsFed: 0,
@@ -280,6 +312,8 @@ async function refreshBackendVideoStats() {
     if (typeof stats.framesExtracted === 'number') videoStats.framesExtracted = stats.framesExtracted
     if (typeof stats.iFrames === 'number') videoStats.iFrames = stats.iFrames
     if (typeof stats.pFrames === 'number') videoStats.pFrames = stats.pFrames
+    if (typeof stats.detectedCodec === 'string') videoStats.detectedCodec = stats.detectedCodec
+    if (stats.parser && typeof stats.parser === 'object') Object.assign(parserStats, stats.parser)
     const traffic = Array.isArray(stats.feTraffic) ? stats.feTraffic as FeTrafficStat[] : []
     feTraffic.value = traffic
       .filter(item => item.packets > 0)
@@ -404,28 +438,12 @@ onMounted(async () => {
   // 1. Initialize WebCodecs
   await initWebCodecs()
 
-  // 2. Start LiveView once Android has opened the AOA accessory. The backend then
-  //    performs handshake/recovery until real RX traffic confirms the controller link.
-  watch(
-    () => store.connection.usbTransportOpen,
-    (open) => {
-      if (open && !autoActivationSent) {
-        autoActivationSent = true
-        setTimeout(() => activateLiveView(h265Supported.value), 300)
-      }
-      if (!open) autoActivationSent = false
-    },
-    { immediate: true }
-  )
+  // 2. LiveView activation and recovery are owned by the Android backend.
+  //    Avoid duplicate browser-side activation/IDR loops that can repeatedly reset
+  //    the camera encoder while FE 0x06 is already flowing. The buttons remain
+  //    available for explicit manual H.265/H.264 tests.
 
-  // 3. Auto-retry IDR only while the controller/drone transport is actually connected.
-  autoIdrTimer = setInterval(() => {
-    if (!hasFrame.value && store.connection.usbConnected) {
-      DroneControlService.requestIdr()
-    }
-  }, 5000)
-
-  // 4. Backend FE-channel diagnostics. This is intentionally independent from WebCodecs.
+  // 3. Backend FE/w42 diagnostics. This is intentionally independent from WebCodecs.
   await refreshBackendVideoStats()
   backendStatsTimer = setInterval(refreshBackendVideoStats, 1000)
 })
@@ -435,7 +453,6 @@ onUnmounted(() => {
   stopSnapshotLoop()
   if (unsubscribeExtractor) unsubscribeExtractor()
   if (webCodecsPlayer) webCodecsPlayer.destroy()
-  if (autoIdrTimer) clearInterval(autoIdrTimer)
   if (backendStatsTimer) clearInterval(backendStatsTimer)
 })
 </script>

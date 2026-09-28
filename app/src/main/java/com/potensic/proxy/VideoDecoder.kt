@@ -17,6 +17,8 @@ class VideoDecoder {
     private var codec: MediaCodec? = null
     private val running = AtomicBoolean(false)
     val framesDecoded = AtomicInteger(0)
+    @Volatile var currentCodec: String = "none"; private set
+    val isRunning: Boolean get() = running.get()
     val jpegQueue = ConcurrentLinkedQueue<ByteArray>()
 
     @Volatile var lastJpeg: ByteArray? = null; private set
@@ -28,54 +30,74 @@ class VideoDecoder {
         const val JPEG_QUALITY = 95
     }
 
-    fun start(width: Int, height: Int, vps: ByteArray?, sps: ByteArray?, pps: ByteArray?) {
-        if (running.get()) return
-        Log.i("[Decoder] Starting HEVC ${width}x${height}")
+    private var csdBuffers: List<ByteArray> = emptyList()
+
+    fun start(
+        width: Int,
+        height: Int,
+        codecType: String,
+        vps: ByteArray?,
+        sps: ByteArray?,
+        pps: ByteArray?,
+    ) {
+        val normalizedCodec = if (codecType == "h264") "h264" else "h265"
+        if (running.get() && currentCodec == normalizedCodec) return
+        if (running.get()) stop()
+
+        val mime = if (normalizedCodec == "h264") MediaFormat.MIMETYPE_VIDEO_AVC else MediaFormat.MIMETYPE_VIDEO_HEVC
+        Log.i("[Decoder] Starting ${normalizedCodec.uppercase()} ${width}x${height}")
         try {
-            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_HEVC, width, height)
+            val format = MediaFormat.createVideoFormat(mime, width, height)
             format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
-            // Low latency mode (Android 11+)
             try { format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1) } catch (_: Exception) {}
-            try { format.setInteger("low-latency", 1) } catch (_: Exception) {} // vendor-specific
-            if (vps != null && sps != null && pps != null) {
-                val csd = vps + sps + pps
-                csdData = csd
-                format.setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(csd))
+            try { format.setInteger("low-latency", 1) } catch (_: Exception) {}
+
+            csdBuffers = if (normalizedCodec == "h264") {
+                listOfNotNull(sps, pps)
+            } else {
+                val csd = listOfNotNull(vps, sps, pps).fold(ByteArray(0)) { acc, bytes -> acc + bytes }
+                if (csd.isNotEmpty()) listOf(csd) else emptyList()
             }
-            codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_HEVC)
+
+            if (normalizedCodec == "h264") {
+                sps?.let { format.setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(it)) }
+                pps?.let { format.setByteBuffer("csd-1", java.nio.ByteBuffer.wrap(it)) }
+            } else {
+                csdBuffers.firstOrNull()?.let { format.setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(it)) }
+            }
+
+            codec = MediaCodec.createDecoderByType(mime)
             codec!!.configure(format, null, null, 0)
             codec!!.start()
+            currentCodec = normalizedCodec
             running.set(true)
-            Log.i("[Decoder] Started: ${codec!!.name}")
+            Log.i("[Decoder] Started ${normalizedCodec.uppercase()}: ${codec!!.name}")
         } catch (e: Exception) {
-            Log.e("[Decoder] Failed", e)
+            Log.e("[Decoder] Failed to start $normalizedCodec", e)
+            try { codec?.release() } catch (_: Exception) {}
             codec = null
+            currentCodec = "none"
+            running.set(false)
         }
     }
 
-    private var csdData: ByteArray? = null
-
     /**
-     * Flush decoder and resubmit CSD (VPS+SPS+PPS).
-     * Required after flush per Android docs: "You must resubmit the data
-     * using buffers marked with BUFFER_FLAG_CODEC_CONFIG after such flush"
+     * Flush decoder and resubmit codec-specific CSD.
      */
     fun flush() {
         val c = codec ?: return
         try {
             c.flush()
-            // Resubmit CSD after flush
-            val csd = csdData
-            if (csd != null) {
+            for (csd in csdBuffers) {
                 val idx = c.dequeueInputBuffer(5000)
                 if (idx >= 0) {
-                    val buf = c.getInputBuffer(idx)!!
+                    val buf = c.getInputBuffer(idx) ?: continue
                     buf.clear()
                     buf.put(csd)
                     c.queueInputBuffer(idx, 0, csd.size, 0, MediaCodec.BUFFER_FLAG_CODEC_CONFIG)
                 }
             }
-            Log.i("[Decoder] Flushed + CSD resubmitted")
+            Log.i("[Decoder] Flushed $currentCodec + ${csdBuffers.size} CSD buffer(s) resubmitted")
         } catch (e: Exception) {
             Log.e("[Decoder] Flush failed: ${e.message}")
         }
@@ -99,7 +121,6 @@ class VideoDecoder {
             while (true) {
                 val outputIdx = c.dequeueOutputBuffer(info, 0)
                 if (outputIdx >= 0) {
-                    // Use Image API — handles stride/sliceHeight correctly
                     var jpeg: ByteArray? = null
                     try {
                         val image = c.getOutputImage(outputIdx)
@@ -108,7 +129,6 @@ class VideoDecoder {
                             image.close()
                         }
                     } catch (_: Exception) {
-                        // Fallback to buffer
                         val outBuf = c.getOutputBuffer(outputIdx)
                         if (outBuf != null && info.size > 0) {
                             jpeg = bufferToJpeg(outBuf, c.outputFormat)
@@ -117,7 +137,6 @@ class VideoDecoder {
 
                     if (jpeg != null) {
                         val count = framesDecoded.incrementAndGet()
-                        // Only publish clean frames (controlled by ProxyService)
                         if (publishFrame) {
                             lastJpeg = jpeg
                             lastJpegTime = System.currentTimeMillis()
@@ -125,7 +144,7 @@ class VideoDecoder {
                             jpegQueue.offer(jpeg)
                         }
                         if (count <= 3 || count % 100 == 0) {
-                            Log.i("[Decoder] #$count → ${jpeg.size / 1024}KB pub=$publishFrame")
+                            Log.i("[Decoder] #$count $currentCodec → ${jpeg.size / 1024}KB pub=$publishFrame")
                         }
                     }
                     c.releaseOutputBuffer(outputIdx, false)
@@ -136,7 +155,7 @@ class VideoDecoder {
                 }
             }
         } catch (e: Exception) {
-            if (running.get()) Log.e("[Decoder] ${e.message}")
+            if (running.get()) Log.e("[Decoder] $currentCodec: ${e.message}")
         }
     }
 
@@ -268,6 +287,9 @@ class VideoDecoder {
     fun stop() {
         running.set(false)
         try { codec?.stop(); codec?.release() } catch (_: Exception) {}
-        codec = null; jpegQueue.clear()
+        codec = null
+        currentCodec = "none"
+        csdBuffers = emptyList()
+        jpegQueue.clear()
     }
 }

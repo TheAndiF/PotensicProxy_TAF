@@ -109,7 +109,7 @@ export class DroneControlService {
 
     // The Android backend owns the initialization sequence. Sending the same camera
     // commands simultaneously from browser and backend can interleave USB writes.
-    fetch(`${httpProto}//${host}/api/video/activate`, { method: 'POST' })
+    fetch(`${httpProto}//${host}/api/video/activate?codec=${preferH265 ? 'h265' : 'h264'}`, { method: 'POST' })
       .then(async r => {
         const body = await r.json().catch(() => ({}))
         if (!r.ok || !body.activated) throw new Error(body.error || `HTTP ${r.status}`)
