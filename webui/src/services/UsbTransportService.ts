@@ -111,7 +111,9 @@ export class UsbTransportService {
     fetch(`${httpProto}//${host}/api/drone/profile`, { signal: AbortSignal.timeout(2500) })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(p => {
-        VideoExtractor.getInstance().setDroneModel(p.id === 'ATOM_2' ? 'ATOM_2' : 'ATOM')
+        const model = p.id === 'ATOM_2' ? 'ATOM_2' : 'ATOM'
+        VideoExtractor.getInstance().setDroneModel(model)
+        PacketParser.setDroneProfile(model)
         window.dispatchEvent(new CustomEvent('drone-profile-changed', { detail: p }))
         store.addLog('INFO', `Drone protocol profile: ${p.id} (${p.videoTransport})`)
       })

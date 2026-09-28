@@ -14,6 +14,9 @@ export interface TelemetryData {
   flightVoltage: number
   remoterVoltage: number
   heading: number
+  homeLatitude?: number
+  homeLongitude?: number
+  homeSynced?: boolean
   pitch: number
   roll: number
   windSpeed?: number

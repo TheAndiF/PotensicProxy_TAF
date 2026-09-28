@@ -270,7 +270,7 @@ class VideoExtractor {
         val payload = packet.copyOfRange(FE_HEADER_SIZE, FE_HEADER_SIZE + payloadLen)
         captureManager?.recordFePacket(feType, packet, payload)
         if (feType != 0x06) {
-            if (payload.size > 6) TelemetryParser.parse(feType, payload)
+            if (payload.size > 6) TelemetryParser.parse(feType, payload, protocolProfile?.id)
             return
         }
 

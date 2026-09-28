@@ -8,6 +8,12 @@ import { ByteUtils } from '../utils/ByteUtils'
 import { useDebugStore } from '../stores/useDebugStore'
 
 export class PacketParser {
+  private static droneProfile: 'ATOM' | 'ATOM_2' = 'ATOM'
+
+  static setDroneProfile(model: 'ATOM' | 'ATOM_2') {
+    this.droneProfile = model
+  }
+
   static parse(bytes: Uint8Array, dir: PacketDirection = 'RX'): ParsedPacket {
     const id = Math.random().toString(36).substring(2, 9)
     const time = new Date().toLocaleTimeString()
@@ -54,6 +60,70 @@ export class PacketParser {
       // Inner FF FD / FF FE Frame
       if (bytes.length >= 22 && bytes[16] === 0xFF && (bytes[17] === 0xFD || bytes[17] === 0xFE)) {
         const cmdShort = view.getUint16(20, true)
+
+
+        // Potensic ATOM v0.7 confirmed parser additions. Existing mappings below remain unchanged.
+        if (this.droneProfile === 'ATOM' && feType === 0x21) {
+          const dataOffset = 22
+          if (cmdShort === 0x0000 && bytes.length >= dataOffset + 15) {
+            const flightVoltage = view.getUint16(dataOffset, true) / 100.0
+            const remoterVoltage = view.getUint16(dataOffset + 2, true) / 100.0
+            const longitude = view.getInt32(dataOffset + 4, true) / 1e7
+            const latitude = view.getInt32(dataOffset + 8, true) / 1e7
+            const satellites = bytes[dataOffset + 12]
+            const heading = view.getUint16(dataOffset + 13, true)
+            res.category = 'telemetry'
+            res.categoryLabel = 'ATOM Flight Info'
+            res.telemetry = { flightVoltage, remoterVoltage, longitude, latitude, satellites, heading }
+            res.details = {
+              'Flight battery voltage': `${flightVoltage.toFixed(2)} V`,
+              'Controller voltage': `${remoterVoltage.toFixed(2)} V`,
+              'Longitude': longitude.toFixed(7),
+              'Latitude': latitude.toFixed(7),
+              'GPS satellite count': satellites,
+              'directToNorth raw': heading
+            }
+            res.summary = `ATOM Flight Info (0x0000): ${latitude.toFixed(6)}, ${longitude.toFixed(6)}, sat=${satellites}, headingRaw=${heading}`
+            return res
+          }
+          if (cmdShort === 0x0001 && bytes.length >= dataOffset + 19) {
+            const cell1 = view.getUint16(dataOffset + 1, true) / 100.0
+            const cell2 = view.getUint16(dataOffset + 3, true) / 100.0
+            const cell3 = view.getUint16(dataOffset + 5, true) / 100.0
+            const cell4 = view.getUint16(dataOffset + 7, true) / 100.0
+            res.category = 'telemetry'
+            res.categoryLabel = 'ATOM Battery'
+            res.details = {
+              'Battery type': bytes[dataOffset],
+              'Cell 1 voltage': `${cell1.toFixed(2)} V`,
+              'Cell 2 voltage': `${cell2.toFixed(2)} V`,
+              'Cell 3 voltage': `${cell3.toFixed(2)} V`,
+              'Cell 4 voltage': `${cell4.toFixed(2)} V`,
+              'Temperature raw': view.getInt16(dataOffset + 9, true),
+              'Cycle count': view.getUint16(dataOffset + 11, true),
+              'Current absolute raw': Math.abs(view.getInt16(dataOffset + 13, true)),
+              'Remaining flight time raw': view.getUint16(dataOffset + 15, true),
+              'Remaining capacity raw': view.getUint16(dataOffset + 17, true)
+            }
+            res.summary = `ATOM Battery (0x0001): cells=${cell1.toFixed(2)}/${cell2.toFixed(2)}/${cell3.toFixed(2)}/${cell4.toFixed(2)} V`
+            return res
+          }
+          if (cmdShort === 0x0005 && bytes.length >= dataOffset + 9) {
+            const homeLongitude = view.getInt32(dataOffset, true) / 1e7
+            const homeLatitude = view.getInt32(dataOffset + 4, true) / 1e7
+            const homeSynced = (bytes[dataOffset + 8] & 0x01) !== 0
+            res.category = 'telemetry'
+            res.categoryLabel = 'ATOM Home Point'
+            res.telemetry = { homeLongitude, homeLatitude, homeSynced }
+            res.details = {
+              'Home longitude': homeLongitude.toFixed(7),
+              'Home latitude': homeLatitude.toFixed(7),
+              'Home synchronized': homeSynced ? 'Yes' : 'No'
+            }
+            res.summary = `ATOM Home Point (0x0005): ${homeLatitude.toFixed(6)}, ${homeLongitude.toFixed(6)}, synced=${homeSynced}`
+            return res
+          }
+        }
 
         // FE 0x21: FlightRevGps Telemetry (vt1.java)
         if (feType === 0x21 && cmdShort === 0x0200 && bytes.length >= 48) {

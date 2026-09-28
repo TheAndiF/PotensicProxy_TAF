@@ -22,6 +22,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { DroneControlService } from '../../services/DroneControlService'
 import { VideoExtractor } from '../../protocol/VideoExtractor'
+import { PacketParser } from '../../protocol/PacketParser'
 import { useI18n } from '../../i18n'
 
 const { t } = useI18n()
@@ -37,6 +38,7 @@ async function load() {
     transport.value = p.videoTransport || 'unknown'
     codec.value = p.codec || 'auto'
     VideoExtractor.getInstance().setDroneModel(selected.value)
+    PacketParser.setDroneProfile(selected.value)
   } catch (_) {
     transport.value = 'unavailable'
   }
@@ -51,6 +53,7 @@ async function onChange(value: string | number | boolean | undefined) {
     transport.value = p.videoTransport || 'unknown'
     codec.value = p.codec || 'auto'
     VideoExtractor.getInstance().setDroneModel(model)
+    PacketParser.setDroneProfile(model)
     window.dispatchEvent(new CustomEvent('drone-profile-changed', { detail: p }))
     ElMessage.success(t('profile.switched', { model: model.replace('_', ' ') }))
   } catch (e: any) {
