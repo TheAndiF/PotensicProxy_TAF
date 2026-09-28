@@ -99,8 +99,23 @@ export class UsbTransportService {
   }
 
   start() {
+    this.loadDroneProfile()
     this.connect()
     this.startStatusPolling()
+  }
+
+  private loadDroneProfile() {
+    const store = useDroneStore()
+    const host = store.normalizedHost
+    const httpProto = window.location.protocol === 'https:' ? 'https:' : 'http:'
+    fetch(`${httpProto}//${host}/api/drone/profile`, { signal: AbortSignal.timeout(2500) })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then(p => {
+        VideoExtractor.getInstance().setDroneModel(p.id === 'ATOM_2' ? 'ATOM_2' : 'ATOM')
+        window.dispatchEvent(new CustomEvent('drone-profile-changed', { detail: p }))
+        store.addLog('INFO', `Drone protocol profile: ${p.id} (${p.videoTransport})`)
+      })
+      .catch(() => {})
   }
 
   connect() {

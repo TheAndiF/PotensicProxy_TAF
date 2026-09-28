@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<droneProfiles default="ATOM">
+    <profile id="ATOM" displayName="Potensic ATOM">
+        <video feType="0x06"
+               transport="atom_h264_fe06"
+               stripBytesPerPacket="3"
+               codec="h264"
+               width="1280"
+               height="720"
+               startMask="0x08"
+               endMask="0x04"
+               keyMask="0x01" />
+        <camera preferredCodec="h264"
+                liveViewStartCommand="0x73"
+                liveViewParamsCommand="0xD8"
+                idrCommand="0xD9" />
+    </profile>
+
+    <profile id="ATOM_2" displayName="Potensic ATOM 2">
+        <video feType="0x06"
+               transport="w42"
+               stripBytesPerPacket="0"
+               codec="auto"
+               width="1920"
+               height="1080"
+               magic="CCBBAAFF" />
+        <camera preferredCodec="h265"
+                liveViewStartCommand="0x73"
+                liveViewParamsCommand="0xD8"
+                idrCommand="0xD9" />
+    </profile>
+</droneProfiles>

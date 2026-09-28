@@ -36,6 +36,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     val videoExtractor = VideoExtractor()
     val videoDecoder = VideoDecoder()
     lateinit var transportCapture: TransportCaptureManager; private set
+    lateinit var droneProfileManager: DroneProfileManager; private set
 
     // WiFi Direct transport
     var wifiTransport: WifiTransport? = null; private set
@@ -60,6 +61,9 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
         transportCapture = TransportCaptureManager(filesDir)
         videoExtractor.captureManager = transportCapture
+        droneProfileManager = DroneProfileManager(applicationContext)
+        videoExtractor.setProtocolProfile(droneProfileManager.current())
+        preferredLiveViewH265 = droneProfileManager.current().preferredCodec == "h265"
         usbManager = UsbAccessoryManager(applicationContext)
         usbManager.listener = this
 
@@ -125,6 +129,20 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         super.onDestroy()
     }
 
+
+    fun getDroneProfile(): DroneProfileManager.Profile = droneProfileManager.current()
+
+    @Synchronized
+    fun selectDroneProfile(id: String): DroneProfileManager.Profile? {
+        val profile = droneProfileManager.select(id) ?: return null
+        preferredLiveViewH265 = profile.preferredCodec == "h265"
+        videoExtractor.setProtocolProfile(profile)
+        videoDecoder.stop()
+        lastLiveViewActivationMs = 0L
+        officialInitSentForConnection = false
+        Log.i("[Service] Drone protocol switched to ${profile.id}; parser/decoder reset")
+        return profile
+    }
 
     /**
      * Ensure that the Android process is actually connected to the Potensic USB accessory.
@@ -398,9 +416,15 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
     /**
      * Video stream activation helper.
-     * Tells drone camera to start encoding and transmitting H.265 video packets.
+     * Codec/transport details are constrained by the selected drone protocol profile.
      */
-    fun activateLiveView(enableH265: Boolean = true, force: Boolean = false): Boolean {
+    fun activateLiveView(enableH265: Boolean = preferredLiveViewH265, force: Boolean = false): Boolean {
+        val profile = droneProfileManager.current()
+        val effectiveH265 = when (profile.codec) {
+            "h264" -> false
+            "h265" -> true
+            else -> enableH265
+        }
         if (!isAnyConnected) {
             Log.w("[Service] LiveView activation requested without an active drone transport")
             ensureUsbConnection()
@@ -408,8 +432,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         }
 
         val now = System.currentTimeMillis()
-        if (!force && preferredLiveViewH265 == enableH265 && now - lastLiveViewActivationMs < 10_000L) {
-            Log.d("[Service] LiveView activation suppressed by 10s debounce (codec=${if (enableH265) "H265" else "H264"})")
+        if (!force && preferredLiveViewH265 == effectiveH265 && now - lastLiveViewActivationMs < 10_000L) {
+            Log.d("[Service] LiveView activation suppressed by 10s debounce (profile=${profile.id} codec=${if (effectiveH265) "H265" else "H264"})")
             return true
         }
         if (liveViewActivationInProgress) {
@@ -417,7 +441,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             return true
         }
 
-        preferredLiveViewH265 = enableH265
+        preferredLiveViewH265 = effectiveH265
         liveViewActivationInProgress = true
         scope.launch {
             try {
@@ -427,7 +451,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                     Log.i("[Service] Sending captured official initialization sequence (pre-LiveView)...")
                     // Keep the captured initialization, but hold its final 0x73 packet so the
                     // explicit FPV sync + camera-function setup happens before LIVEVIEW_START.
-                    val initSeq = DroneProtocol.buildInitSequence(enableH265, includeLiveViewStart = false)
+                    val initSeq = DroneProtocol.buildInitSequence(effectiveH265, includeLiveViewStart = false)
                     for ((i, cmd) in initSeq.withIndex()) {
                         sendDirectAny(cmd)
                         Log.i("[Service] Official init #${i + 1}/${initSeq.size} (${cmd.size}B)")
@@ -442,8 +466,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                 sendDirectAny(DroneProtocol.buildFpvSyncVersion())
                 delay(100)
 
-                Log.i("[Service] LiveView step 2/5: camera function preview=${true} codec=${if (enableH265) "H265" else "H264"}")
-                sendDirectAny(DroneProtocol.buildCameraFunction(enablePreview = true, enableH265 = enableH265))
+                Log.i("[Service] LiveView step 2/5: camera function preview=${true} profile=${profile.id} codec=${if (effectiveH265) "H265" else "H264"}")
+                sendDirectAny(DroneProtocol.buildCameraFunction(enablePreview = true, enableH265 = effectiveH265))
                 delay(100)
 
                 Log.i("[Service] LiveView step 3/5: LIVEVIEW_START 0x73")
@@ -451,7 +475,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
                 delay(100)
 
                 Log.i("[Service] LiveView step 4/5: LIVEVIEW_PARAMS 0xD8 (1080p/5000 captured payload)")
-                sendDirectAny(DroneProtocol.buildLiveViewParams(enableH265 = enableH265, bitrateKbps = 5000))
+                sendDirectAny(DroneProtocol.buildLiveViewParams(enableH265 = effectiveH265, bitrateKbps = 5000))
                 delay(100)
 
                 Log.i("[Service] LiveView step 5/5: IDR request 0xD9")

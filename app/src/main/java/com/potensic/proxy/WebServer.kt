@@ -474,12 +474,15 @@ class WebServer(
                 post("/api/video/activate") {
                     call.response.header("Access-Control-Allow-Origin", "*")
                     Log.i("[WebServer] POST /api/video/activate")
-                    val codec = call.request.queryParameters["codec"]?.lowercase() ?: "h265"
-                    val enableH265 = codec != "h264"
+                    val codec = call.request.queryParameters["codec"]?.lowercase() ?: "auto"
+                    val profile = ProxyService.instance?.getDroneProfile()
+                    val requestedH265 = codec != "h264"
+                    val enableH265 = when (profile?.codec) { "h264" -> false; "h265" -> true; else -> requestedH265 }
                     val activated = ProxyService.instance?.activateLiveView(enableH265, force = true) == true
                     val json = JSONObject().apply {
                         put("success", activated)
                         put("activated", activated)
+                        put("profile", profile?.id ?: "unknown")
                         put("codec", if (enableH265) "h265" else "h264")
                         put("connected", usbManager.isLinkReady || (ProxyService.instance?.wifiTransport?.isConnected == true))
                     }
@@ -533,6 +536,45 @@ class WebServer(
                     }
                 }
 
+                // Central drone model / protocol profile selection
+                get("/api/drone/profile") {
+                    call.response.header("Access-Control-Allow-Origin", "*")
+                    val profile = ProxyService.instance?.getDroneProfile()
+                    if (profile == null) {
+                        call.respondText(JSONObject().put("error", "service unavailable").toString(), ContentType.Application.Json, HttpStatusCode.ServiceUnavailable)
+                    } else {
+                        call.respondText(JSONObject().apply {
+                            put("id", profile.id)
+                            put("displayName", profile.displayName)
+                            put("videoTransport", profile.videoTransport)
+                            put("codec", profile.codec)
+                            put("width", profile.width)
+                            put("height", profile.height)
+                            put("stripBytesPerPacket", profile.stripBytesPerPacket)
+                            put("preferredCodec", profile.preferredCodec)
+                        }.toString(), ContentType.Application.Json)
+                    }
+                }
+                post("/api/drone/profile") {
+                    call.response.header("Access-Control-Allow-Origin", "*")
+                    val requested = call.request.queryParameters["model"] ?: ""
+                    val profile = ProxyService.instance?.selectDroneProfile(requested)
+                    if (profile == null) {
+                        call.respondText(JSONObject().put("changed", false).put("error", "unknown model; use ATOM or ATOM_2").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    } else {
+                        call.respondText(JSONObject().apply {
+                            put("changed", true)
+                            put("id", profile.id)
+                            put("displayName", profile.displayName)
+                            put("videoTransport", profile.videoTransport)
+                            put("codec", profile.codec)
+                            put("width", profile.width)
+                            put("height", profile.height)
+                            put("preferredCodec", profile.preferredCodec)
+                        }.toString(), ContentType.Application.Json)
+                    }
+                }
+
                 // Raw transport capture for ATOM/ATOM 2 protocol comparison
                 post("/api/capture/start") {
                     call.response.header("Access-Control-Allow-Origin", "*")
@@ -576,6 +618,9 @@ class WebServer(
                         put("lastFrameMs", videoExtractor.lastFrameTime)
                         put("detectedCodec", videoExtractor.detectedCodec)
                         put("decoderCodec", videoDecoder.currentCodec)
+                        put("droneProfile", videoExtractor.currentProfileId())
+                        put("videoTransport", videoExtractor.currentTransport())
+                        put("atomFramesParsed", videoExtractor.atomFramesParsed.get())
                         val parser = videoExtractor.getParserSnapshot()
                         put("parser", JSONObject().apply {
                             put("usbChunksFed", parser.usbChunksFed)

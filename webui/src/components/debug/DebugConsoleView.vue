@@ -25,6 +25,8 @@
       </div>
     </div>
 
+    <DroneProfilePanel />
+
     <!-- Main Content Area -->
     <div class="debug-body">
       <!-- ================= Sub-tab 1: 相机命令行终端 ================= -->
@@ -656,6 +658,7 @@ import { useDebugStore } from '../../stores/useDebugStore'
 import { DroneControlService } from '../../services/DroneControlService'
 import { ElMessage } from 'element-plus'
 import RemoteRelayPanel from './RemoteRelayPanel.vue'
+import DroneProfilePanel from './DroneProfilePanel.vue'
 import { MapService } from '../../services/MapService'
 import { FRONTEND_VERSION } from '../../version'
 

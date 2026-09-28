@@ -147,6 +147,26 @@ export class DroneControlService {
     this.transport.send(packet)
   }
 
+
+  static async getDroneProfile() {
+    const store = useDroneStore()
+    const host = store.normalizedHost
+    const httpProto = window.location.protocol === 'https:' ? 'https:' : 'http:'
+    const r = await fetch(`${httpProto}//${host}/api/drone/profile`, { signal: AbortSignal.timeout(2500) })
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    return r.json()
+  }
+
+  static async setDroneProfile(model: 'ATOM' | 'ATOM_2') {
+    const store = useDroneStore()
+    const host = store.normalizedHost
+    const httpProto = window.location.protocol === 'https:' ? 'https:' : 'http:'
+    const r = await fetch(`${httpProto}//${host}/api/drone/profile?model=${model}`, { method: 'POST' })
+    const body = await r.json().catch(() => ({}))
+    if (!r.ok || !body.changed) throw new Error(body.error || `HTTP ${r.status}`)
+    return body
+  }
+
   // === Engineering & Debug Actions ===
 
   /**

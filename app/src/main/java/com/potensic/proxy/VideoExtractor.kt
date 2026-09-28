@@ -20,6 +20,29 @@ import java.util.zip.CRC32
 class VideoExtractor {
 
     @Volatile var captureManager: TransportCaptureManager? = null
+    @Volatile private var protocolProfile: DroneProfileManager.Profile? = null
+    private var atomFrameBuffer = ByteArray(0)
+    private var atomFrameIsKey = false
+    val atomFramesParsed = AtomicLong(0)
+
+    fun setProtocolProfile(profile: DroneProfileManager.Profile) {
+        synchronized(lock) {
+            protocolProfile = profile
+            feStreamBuffer = ByteArray(0)
+            videoStreamBuffer = ByteArray(0)
+            atomFrameBuffer = ByteArray(0)
+            atomFrameIsKey = false
+            vps = null; sps = null; pps = null; sps264 = null; pps264 = null
+            detectedCodec = if (profile.codec == "h264") "h264" else "unknown"
+            lastWidth = profile.width
+            lastHeight = profile.height
+            while (nalQueue.poll() != null) {}
+            Log.i("[Video] Protocol profile=${profile.id} transport=${profile.videoTransport} codec=${profile.codec}")
+        }
+    }
+
+    fun currentProfileId(): String = protocolProfile?.id ?: "UNSET"
+    fun currentTransport(): String = protocolProfile?.videoTransport ?: "w42"
 
     companion object {
         val VIDEO_MAGIC = byteArrayOf(0xCC.toByte(), 0xBB.toByte(), 0xAA.toByte(), 0xFF.toByte())
@@ -251,8 +274,110 @@ class VideoExtractor {
             return
         }
 
-        appendVideoBytes(payload)
-        parseVideoStream()
+        val profile = protocolProfile
+        if (profile?.videoTransport == "atom_h264_fe06") {
+            processAtomPayload(payload, profile)
+        } else {
+            appendVideoBytes(payload)
+            parseVideoStream()
+        }
+    }
+
+    /**
+     * Potensic ATOM FE06 transport discovered from a real controller capture.
+     * Each FE06 payload carries a 3-byte transport prefix:
+     *   byte 0 sequence, byte 1 flags, byte 2 frame class.
+     * Flag 0x08 starts an access unit, 0x04 ends it and 0x01 marks the keyframe class.
+     * The bytes after the prefix form a normal H.264 Annex-B stream.
+     */
+    private fun processAtomPayload(payload: ByteArray, profile: DroneProfileManager.Profile) {
+        val strip = profile.stripBytesPerPacket
+        if (payload.size <= strip) return
+        val flags = if (payload.size > 1) payload[1].toInt() and 0xFF else 0
+        val frameClass = if (payload.size > 2) payload[2].toInt() and 0xFF else 0
+        val start = (flags and profile.startMask) != 0
+        val end = (flags and profile.endMask) != 0
+        val keyHint = (flags and profile.keyMask) != 0 || frameClass == 0x05
+        val video = payload.copyOfRange(strip, payload.size)
+
+        if (start) {
+            if (atomFrameBuffer.isNotEmpty()) {
+                streamBytesDropped.addAndGet(atomFrameBuffer.size.toLong())
+            }
+            atomFrameBuffer = video
+            atomFrameIsKey = keyHint
+        } else if (atomFrameBuffer.isNotEmpty()) {
+            atomFrameBuffer += video
+            atomFrameIsKey = atomFrameIsKey || keyHint
+        } else {
+            // Ignore a continuation seen before the first start marker.
+            return
+        }
+
+        videoStreamBufferBytes = atomFrameBuffer.size
+        if (atomFrameBuffer.size > MAX_VIDEO_STREAM_BUFFER) {
+            streamBytesDropped.addAndGet(atomFrameBuffer.size.toLong())
+            atomFrameBuffer = ByteArray(0)
+            atomFrameIsKey = false
+            videoStreamBufferBytes = 0
+            return
+        }
+
+        if (end) {
+            val frame = atomFrameBuffer
+            val key = atomFrameIsKey
+            atomFrameBuffer = ByteArray(0)
+            atomFrameIsKey = false
+            videoStreamBufferBytes = 0
+            processAtomAccessUnit(frame, profile, key)
+        }
+    }
+
+    private fun processAtomAccessUnit(data: ByteArray, profile: DroneProfileManager.Profile, keyHint: Boolean) {
+        if (data.size < 5) return
+        val starts = findNalStartCodes(data)
+        var containsPicture = false
+        var isIdr = keyHint
+        var containsSps = false
+        var containsPps = false
+
+        for ((index, start) in starts.withIndex()) {
+            if (start.header >= data.size) continue
+            val nextStart = if (index + 1 < starts.size) starts[index + 1].start else data.size
+            if (nextStart <= start.start) continue
+            val nal = data.copyOfRange(start.start, nextStart)
+            when (data[start.header].toInt() and 0x1F) {
+                7 -> { sps264 = nal; containsSps = true }
+                8 -> { pps264 = nal; containsPps = true }
+                5 -> { isIdr = true; containsPicture = true }
+                1 -> containsPicture = true
+            }
+        }
+        if (!containsPicture) return
+
+        detectedCodec = "h264"
+        var queued = data
+        if (isIdr && !(containsSps && containsPps)) {
+            val init = getStreamInitBytes("h264")
+            if (init.isNotEmpty()) queued = init + data
+        }
+
+        val nalUnit = NalUnit(
+            data = queued,
+            width = profile.width,
+            height = profile.height,
+            isIFrame = isIdr,
+            nalType = if (isIdr) "IDR" else "P-frame",
+            codec = "h264",
+        )
+        while (nalQueue.size >= 30) nalQueue.poll()
+        nalQueue.offer(nalUnit)
+        lastWidth = profile.width
+        lastHeight = profile.height
+        lastFrameTime = System.currentTimeMillis()
+        framesExtracted.incrementAndGet()
+        atomFramesParsed.incrementAndGet()
+        if (isIdr) { iFrames.incrementAndGet(); lastIdrSequence = queued } else pFrames.incrementAndGet()
     }
 
     private fun appendVideoBytes(payload: ByteArray) {

@@ -63,9 +63,11 @@
             </span>
           </div>
           <div class="diag-item" v-if="parserStats.fePacketsParsed > 0">
-            <span class="diag-label">FE/w42 Stream Parser:</span>
-            <span :class="parserStats.w42HeadersParsed > 0 ? 'diag-ok' : 'diag-muted'">
-              FE {{ parserStats.fePacketsParsed }} | w42 valid {{ parserStats.w42HeadersParsed }} / invalid {{ parserStats.w42InvalidHeaders }}
+            <span class="diag-label">Video Parser:</span>
+            <span :class="videoStats.framesExtracted > 0 ? 'diag-ok' : 'diag-muted'">
+              {{ currentDroneProfile }} / {{ currentVideoTransport }} | FE {{ parserStats.fePacketsParsed }}
+              <template v-if="currentVideoTransport === 'w42'"> | w42 valid {{ parserStats.w42HeadersParsed }} / invalid {{ parserStats.w42InvalidHeaders }}</template>
+              <template v-else> | ATOM frames {{ atomFramesParsed }}</template>
               | pending {{ parserStats.videoStreamBufferBytes }} B
               {{ parserStats.detectedCodec !== 'unknown' ? `| ${parserStats.detectedCodec.toUpperCase()}` : '' }}
             </span>
@@ -85,11 +87,8 @@
         </div>
 
         <div class="placeholder-actions">
-          <button class="taf-btn taf-btn--primary" @click="() => activateLiveView(true)">
-            ⚡ Activate Stream (H.265)
-          </button>
-          <button class="taf-btn taf-btn--success" @click="() => activateLiveView(false)">
-            ⚡ Activate Stream (H.264 Compatible)
+          <button class="taf-btn taf-btn--primary" @click="activateSelectedLiveView">
+            ⚡ Activate Stream ({{ currentDroneProfile }})
           </button>
           <button class="taf-btn" @click="requestIdr">
             🔄 Request Keyframe (IDR)
@@ -128,11 +127,8 @@
         </div>
 
         <div class="osd-right">
-          <button class="osd-action-btn" @click="() => activateLiveView(true)" title="Send full initialization sequence for H.265">
-            ⚡ H.265 Stream
-          </button>
-          <button class="osd-action-btn success" @click="() => activateLiveView(false)" title="Send full initialization sequence for H.264 compatibility">
-            ⚡ H.264 Stream
+          <button class="osd-action-btn success" @click="activateSelectedLiveView" title="Activate stream using the selected drone protocol profile">
+            ⚡ {{ currentDroneProfile }} Stream
           </button>
           <button class="osd-action-btn" @click="requestIdr" title="Request Keyframe (IDR)">
             🔄 Request I-Frame
@@ -169,6 +165,9 @@ const retryCounter = ref(0)
 const webCodecsSupported = ref(WebCodecsPlayer.isSupported())
 const h265Supported = ref(false)
 const h264Supported = ref(false)
+const currentDroneProfile = ref('ATOM')
+const currentVideoTransport = ref('atom_h264_fe06')
+const atomFramesParsed = ref(0)
 
 // Video Extraction & Decoding State
 const videoExtractor = VideoExtractor.getInstance()
@@ -285,9 +284,9 @@ function toggleNextMode() {
   }
 }
 
-function activateLiveView(preferH265 = true) {
-  const codecName = preferH265 ? 'H.265' : 'H.264 兼容模式'
-  store.addLog('INFO', `正在下发无人机相机推流激活序列 (${codecName})...`)
+function activateSelectedLiveView() {
+  const preferH265 = videoExtractor.getDroneModel() === 'ATOM_2'
+  store.addLog('INFO', `Activating LiveView for ${videoExtractor.getDroneModel()}...`)
   DroneControlService.activateLiveView(preferH265)
 }
 
@@ -313,6 +312,9 @@ async function refreshBackendVideoStats() {
     if (typeof stats.iFrames === 'number') videoStats.iFrames = stats.iFrames
     if (typeof stats.pFrames === 'number') videoStats.pFrames = stats.pFrames
     if (typeof stats.detectedCodec === 'string') videoStats.detectedCodec = stats.detectedCodec
+    if (typeof stats.droneProfile === 'string') currentDroneProfile.value = stats.droneProfile
+    if (typeof stats.videoTransport === 'string') currentVideoTransport.value = stats.videoTransport
+    if (typeof stats.atomFramesParsed === 'number') atomFramesParsed.value = stats.atomFramesParsed
     if (stats.parser && typeof stats.parser === 'object') Object.assign(parserStats, stats.parser)
     const traffic = Array.isArray(stats.feTraffic) ? stats.feTraffic as FeTrafficStat[] : []
     feTraffic.value = traffic
@@ -352,9 +354,11 @@ async function initWebCodecs() {
   }
 
   webCodecsPlayer.setCanvas(canvasRef.value)
-  // If H.265 is supported, prefer it; otherwise start in H.264
-  const preferH265 = probe.h265
-  await webCodecsPlayer.init(1920, 1080, preferH265)
+  // Follow the central drone protocol selection. ATOM capture is H.264 1280x720;
+  // ATOM 2 keeps the existing H.265-first behavior.
+  const atom = videoExtractor.getDroneModel() === 'ATOM'
+  const preferH265 = !atom && probe.h265
+  await webCodecsPlayer.init(atom ? 1280 : 1920, atom ? 720 : 1080, preferH265)
 
   webCodecsPlayer.onStats((stats: VideoPlayerStats) => {
     Object.assign(decoderStats, stats)
@@ -434,7 +438,16 @@ function stopSnapshotLoop() {
   isSnapshotLoopActive = false
 }
 
+function onDroneProfileChanged() {
+  hasFrame.value = false
+  videoStats.framesExtracted = 0
+  videoStats.iFrames = 0
+  videoStats.pFrames = 0
+  if (mode.value === 'webcodecs') initWebCodecs()
+}
+
 onMounted(async () => {
+  window.addEventListener('drone-profile-changed', onDroneProfileChanged)
   // 1. Initialize WebCodecs
   await initWebCodecs()
 
@@ -449,6 +462,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('drone-profile-changed', onDroneProfileChanged)
   isDestroyed = true
   stopSnapshotLoop()
   if (unsubscribeExtractor) unsubscribeExtractor()
