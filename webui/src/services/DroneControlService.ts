@@ -59,6 +59,91 @@ export class DroneControlService {
     this.sendPacketWithRepeats(packet, 30, 30)
   }
 
+  // === PotensicPro flight settings, calibration and intelligent modes ===
+
+  static applyFlightSettings(values: { limitHeight:number; limitDistance:number; returnHeight:number; beginnerMode:boolean; americaRockerMode:boolean; surroundRadius:number; clockwise:boolean; surroundSpeed:number; speedMode:number }) {
+    const store = useDroneStore()
+    store.addLog('INFO', `Apply flight settings: H=${values.limitHeight}m D=${values.limitDistance}m RTH=${values.returnHeight}m`)
+    this.sendPacketWithRepeats(PacketBuilder.buildFlightSettings(values), 3, 80)
+  }
+
+  static setFollowMode() {
+    useDroneStore().addLog('INFO', 'Toggle Follow mode (Potensic ctrl type 7)')
+    this.transport.send(PacketBuilder.buildFollowToggle())
+  }
+
+  static setCircleMode() {
+    useDroneStore().addLog('INFO', 'Toggle Circle mode (Potensic ctrl type 6)')
+    this.transport.send(PacketBuilder.buildCircleToggle())
+  }
+
+  static setPointFlyMode() {
+    useDroneStore().addLog('INFO', 'Toggle Point Fly mode (Potensic ctrl type 5)')
+    this.transport.send(PacketBuilder.buildPointFlyToggle())
+  }
+
+  static cancelAutoFly() {
+    useDroneStore().addLog('INFO', 'Cancel intelligent flight mode (Potensic ctrl type 99)')
+    this.transport.send(PacketBuilder.buildCancelAutoFly())
+  }
+
+  static uploadMultiPoint(points: Array<{lat:number; lng:number}>) {
+    const store = useDroneStore()
+    store.addLog('INFO', `Upload ${points.length} waypoint(s) using Potensic function 6`)
+    this.transport.send(PacketBuilder.buildMultiPoint(points))
+  }
+
+  static requestGimbalSettings() {
+    useDroneStore().addLog('INFO', 'Request current gimbal settings (general command 8)')
+    this.transport.send(PacketBuilder.buildGeneralCommand(8, 0))
+  }
+
+  static calibrateGimbal() {
+    const store = useDroneStore()
+    const t = store.telemetry
+    if (!t.gimbalSettingsValid) {
+      store.addLog('WARN', 'Gimbal calibration not sent: current gimbal settings have not been received yet')
+      this.requestGimbalSettings()
+      return false
+    }
+    const packet = PacketBuilder.buildGimbalSettings({
+      pitchControl: t.gimbalPitchControl || 0,
+      pitchSpeed: t.gimbalPitchSpeed || 0,
+      stableMode: t.gimbalStableMode !== false,
+      fpvSmooth: t.gimbalFpvSmooth || 0,
+      calibration: 1,
+      tuningRoll: t.gimbalTuningRoll || 0,
+      tuningYaw: t.gimbalTuningYaw || 0,
+      reset: 0
+    })
+    store.addLog('INFO', 'Start gimbal auto calibration using synchronized gimbal settings')
+    this.transport.send(packet)
+    return true
+  }
+
+  static setImuCalibrationOfficial(start: boolean) {
+    useDroneStore().addLog('INFO', `${start ? 'Start' : 'Stop'} IMU calibration (Potensic general command 6)`)
+    this.sendPacketWithRepeats(PacketBuilder.buildImuCalibrationOfficial(start), 3, 100)
+  }
+
+  static setRemoteCalibration(open: boolean) {
+    useDroneStore().addLog('INFO', `${open ? 'Enter' : 'Exit'} RC calibration (Potensic remoter function 113)`)
+    this.sendPacketWithRepeats(PacketBuilder.buildRemoteCalibration(open), 3, 100)
+  }
+
+  static setCompassCalibrationSession(enter: boolean) {
+    const store = useDroneStore()
+    // PotensicPro's Mini/ATOM magnetometer workflow enters/quits with function 24.
+    // The actual calibration solution is calculated by the manufacturer's JNI code and cannot be recreated byte-for-byte here.
+    store.addLog('INFO', `${enter ? 'Enter' : 'Exit'} compass calibration session (Potensic function 24)`)
+    this.sendPacketWithRepeats(PacketBuilder.buildEnterCalibration(enter), 3, 100)
+  }
+
+  static setFindDroneBeep(start: boolean) {
+    useDroneStore().addLog('INFO', `${start ? 'Start' : 'Stop'} Find My Drone beeper (Potensic general command 2)`)
+    this.transport.send(PacketBuilder.buildFindDroneBeep(start))
+  }
+
   // === Camera Actions ===
 
   static takePhoto() {

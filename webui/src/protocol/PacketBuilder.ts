@@ -45,6 +45,86 @@ export class PacketBuilder {
     return this.buildFlightCommand(0x01, 0x00)
   }
 
+  // === PotensicPro-compatible flight settings / intelligent modes ===
+
+  static buildFlightData(functionCode: number, payload: Uint8Array): Uint8Array {
+    return FeTransport.wrap(FfFdCommand.buildWithShort(functionCode & 0xffff, payload), 0x14)
+  }
+
+  static buildFlightSettings(v: { limitHeight:number; limitDistance:number; returnHeight:number; beginnerMode:boolean; americaRockerMode:boolean; surroundRadius:number; clockwise:boolean; surroundSpeed:number; speedMode:number }): Uint8Array {
+    // New-FC SendFlightSetData layout (function code 3). Last GPS fields are intentionally omitted exactly as PotensicPro does.
+    const data = new Uint8Array(13)
+    const view = new DataView(data.buffer)
+    view.setUint16(0, v.limitHeight & 0xffff, true)
+    view.setUint16(2, v.limitDistance & 0xffff, true)
+    view.setUint16(4, v.returnHeight & 0xffff, true)
+    data[6] = v.beginnerMode ? 0xff : 0x00
+    data[7] = v.americaRockerMode ? 0x00 : 0x01
+    view.setUint16(8, v.surroundRadius & 0xffff, true)
+    data[10] = v.clockwise ? 1 : 0
+    data[11] = v.surroundSpeed & 0xff
+    data[12] = v.speedMode & 0xff
+    return this.buildFlightData(3, data)
+  }
+
+  static buildCtrlType(command: number, resultParam2 = 0): Uint8Array {
+    const data = new Uint8Array(32)
+    const view = new DataView(data.buffer)
+    view.setUint16(2, command & 0xffff, true)
+    view.setInt32(20, resultParam2 | 0, true)
+    return this.buildFlightData(20, data)
+  }
+  static buildFollowToggle(): Uint8Array { return this.buildCtrlType(7) }
+  static buildCircleToggle(): Uint8Array { return this.buildCtrlType(6) }
+  static buildPointFlyToggle(): Uint8Array { return this.buildCtrlType(5) }
+  static buildCancelAutoFly(): Uint8Array { return this.buildCtrlType(99) }
+
+  static buildMultiPoint(points: Array<{lat:number; lng:number}>): Uint8Array {
+    const pts = points.slice(0, 31)
+    const data = new Uint8Array(1 + pts.length * 8)
+    const view = new DataView(data.buffer)
+    data[0] = pts.length
+    pts.forEach((p, idx) => {
+      view.setInt32(1 + idx*8, Math.round(p.lat * 1e7), true)
+      view.setInt32(5 + idx*8, Math.round(p.lng * 1e7), true)
+    })
+    return this.buildFlightData(6, data)
+  }
+
+  static buildCompassCalibrationPulse(): Uint8Array { return this.buildFlightData(18, new Uint8Array([1,1,0,0])) }
+  static buildEnterCalibration(enter: boolean): Uint8Array { return this.buildFlightData(24, new Uint8Array([enter ? 1 : 2])) }
+  static buildGeneralCommand(command: number, param = 0): Uint8Array {
+    const data = new Uint8Array(21)
+    const view = new DataView(data.buffer)
+    view.setUint16(0, command & 0xffff, true)
+    data[2] = param & 0xff
+    return this.buildFlightData(27, data)
+  }
+  static buildImuCalibrationOfficial(start: boolean): Uint8Array { return this.buildGeneralCommand(6, start ? 1 : 0) }
+  static buildFindDroneBeep(start: boolean): Uint8Array { return this.buildGeneralCommand(2, start ? 2 : 0) }
+
+  static buildGimbalSettings(v: { pitchControl:number; pitchSpeed:number; stableMode:boolean; fpvSmooth:number; calibration:number; tuningRoll:number; tuningYaw:number; reset:number }): Uint8Array {
+    const data = new Uint8Array(11)
+    const view = new DataView(data.buffer)
+    data[0] = v.pitchControl & 0xff
+    view.setInt16(1, v.pitchSpeed, true)
+    data[3] = v.stableMode ? 0 : 1
+    data[4] = v.fpvSmooth & 0xff
+    data[5] = v.calibration & 0xff
+    view.setInt16(6, v.tuningRoll, true)
+    view.setInt16(8, v.tuningYaw, true)
+    data[10] = v.reset & 0xff
+    return this.buildFlightData(26, data)
+  }
+
+  static buildRemoteCalibration(open: boolean): Uint8Array {
+    // SendOthersData: remoter channel function 113. PotensicPro uses FlightConfig.P1_SELF = 0xA0 to enter calibration; 0xF0 exits.
+    // FE type 0x17 + FF FE inner marker matches the manufacturer remoter path.
+    const inner = FfFdCommand.buildWithShort(113, new Uint8Array([open ? 0xa0 : 0xf0]))
+    inner[1] = 0xfe
+    return FeTransport.wrap(inner, 0x17)
+  }
+
   // === Camera Commands ===
 
   static buildTakePhoto(): Uint8Array {
@@ -55,6 +135,87 @@ export class PacketBuilder {
   static buildToggleRecord(): Uint8Array {
     const inner = FfFdCommand.buildWithCmdByte(CAMERA_CMDS.TOGGLE_RECORD, null, CMD_SHORTS.CAMERA)
     return FeTransport.wrap(inner, 0x15)
+  }
+
+  /**
+   * PotensicPro USB camera protocol (2022/new FC):
+   * outer FE type 0x15 + inner FF FD frame with message short 0x0020.
+   * This is byte-compatible with UsbPayloadWrapper.wrap((short) 32, payload)
+   * followed by UsbDataWrapper.wrap(..., USB_TYPE_APP_TO_CAMERA).
+   */
+  static buildLegacyCameraUsb(payload: Uint8Array): Uint8Array {
+    const inner = FfFdCommand.buildWithShort(0x0020, payload)
+    return FeTransport.wrap(inner, 0x15)
+  }
+
+  static buildCameraGetConfigMenu(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([17])) }
+  static buildCameraGetSdStatus(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([23])) }
+  static buildCameraFormatSd(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([4])) }
+  static buildCameraGetVideoSizes(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([8])) }
+  static buildCameraGetPhotoSizes(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([9])) }
+  static buildCameraGetCurrentVideoSize(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([10])) }
+  static buildCameraSetVideoSize(index: number): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([11, index & 0xff])) }
+  static buildCameraGetCurrentPhotoSize(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([12])) }
+  static buildCameraSetPhotoSize(index: number): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([13, index & 0xff])) }
+  static buildCameraGetEv(mode: 0 | 1): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([16, mode])) }
+  static buildCameraGetManualModeInfo(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([52])) }
+  static buildCameraGetExposureInfo(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([54])) }
+  static buildCameraSetRaw(enable: boolean): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([36, enable ? 1 : 0])) }
+  static buildCameraSetPhotoOsd(enable: boolean): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([38, 2, enable ? 1 : 0])) }
+  static buildCameraSetPhotoGps(enable: boolean): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([59, enable ? 1 : 0])) }
+  static buildCameraGetPhotoGps(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([60])) }
+  static buildCameraSetManualMode(info: { manual: boolean; shutterDen: number; iso: number; manualWb: boolean; wb: number }): Uint8Array {
+    const data = new Uint8Array(32)
+    const view = new DataView(data.buffer)
+    data[0] = 53
+    data[1] = info.manual ? 1 : 0
+    view.setUint16(2, 1, true)
+    view.setUint16(4, Math.max(1, info.shutterDen) & 0xffff, true)
+    view.setUint16(6, Math.max(0, info.iso) & 0xffff, true)
+    data[8] = info.manualWb ? 1 : 0
+    view.setUint16(9, Math.max(0, info.wb) & 0xffff, true)
+    return this.buildLegacyCameraUsb(data)
+  }
+  static buildCameraSetEv(mode: 0 | 1, ev: number): Uint8Array {
+    const encoded = Math.max(0, Math.min(255, Math.round(ev * 2 + 4)))
+    return this.buildLegacyCameraUsb(new Uint8Array([15, mode, encoded]))
+  }
+  static buildCameraEnterGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([33])) }
+  static buildCameraQuitGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([34])) }
+  static buildCameraGetFileCount(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([24])) }
+  static buildCameraGetFileList(type: 0 | 1 | 2, offset = 0, count = 50): Uint8Array {
+    const data = new Uint8Array(6)
+    const view = new DataView(data.buffer)
+    data[0] = 25
+    data[1] = type
+    view.setUint16(2, offset & 0xffff, true)
+    view.setUint16(4, count & 0xffff, true)
+    return this.buildLegacyCameraUsb(data)
+  }
+  static buildCameraGetFileInfo(fileName: string): Uint8Array {
+    const name = new TextEncoder().encode(fileName)
+    const data = new Uint8Array(1 + name.length)
+    data[0] = 26
+    data.set(name, 1)
+    return this.buildLegacyCameraUsb(data)
+  }
+  static buildCameraDeleteFile(fileName: string): Uint8Array {
+    const name = new TextEncoder().encode(fileName)
+    const data = new Uint8Array(2 + name.length)
+    data[0] = 29
+    data[1] = 0
+    data.set(name, 2)
+    return this.buildLegacyCameraUsb(data)
+  }
+  static buildCameraDownloadChunk(fileName: string, offset: bigint, length: bigint): Uint8Array {
+    const name = new TextEncoder().encode(fileName)
+    const data = new Uint8Array(17 + name.length)
+    const view = new DataView(data.buffer)
+    data[0] = 27
+    view.setBigUint64(1, offset, true)
+    view.setBigUint64(9, length, true)
+    data.set(name, 17)
+    return this.buildLegacyCameraUsb(data)
   }
 
   static buildIdrRequest(): Uint8Array {

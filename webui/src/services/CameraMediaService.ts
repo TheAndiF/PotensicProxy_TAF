@@ -1,0 +1,396 @@
+import { PacketBuilder } from '../protocol/PacketBuilder'
+import { useCameraStore } from '../stores/useCameraStore'
+import { useDroneStore } from '../stores/useDroneStore'
+
+export class CameraMediaService {
+  private static sender: ((bytes: Uint8Array) => void) | null = null
+  private static photoCount = 0
+  private static videoCount = 0
+  private static photoNames: string[] = []
+  private static videoNames: string[] = []
+  private static listQueue: Array<{ type: 1 | 2; offset: number; count: number }> = []
+  private static pendingInfo = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; timer: any }>()
+  private static activeDownload: null | {
+    fileName: string
+    outputName: string
+    total: bigint
+    received: bigint
+    chunks: Uint8Array[]
+  } = null
+
+  static setSender(sender: (bytes: Uint8Array) => void) {
+    this.sender = sender
+  }
+
+  private static send(packet: Uint8Array) {
+    const store = useDroneStore()
+    if (!this.sender) {
+      store.addLog('ERROR', 'Camera command not sent: transport is not initialized')
+      return
+    }
+    this.sender(packet)
+  }
+
+  static refreshSettings() {
+    const store = useDroneStore()
+    store.addLog('INFO', 'Read camera configuration, resolutions, EV and SD-card state')
+    ;[
+      PacketBuilder.buildCameraGetConfigMenu(),
+      PacketBuilder.buildCameraGetVideoSizes(),
+      PacketBuilder.buildCameraGetPhotoSizes(),
+      PacketBuilder.buildCameraGetCurrentVideoSize(),
+      PacketBuilder.buildCameraGetCurrentPhotoSize(),
+      PacketBuilder.buildCameraGetManualModeInfo(),
+      PacketBuilder.buildCameraGetExposureInfo(),
+      PacketBuilder.buildCameraGetPhotoGps(),
+      PacketBuilder.buildCameraGetSdStatus()
+    ].forEach((p, i) => setTimeout(() => this.send(p), i * 70))
+  }
+
+  static setVideoResolution(index: number) {
+    useDroneStore().addLog('INFO', `Set recording resolution index=${index} (Potensic camera cmd 0x0B)`)
+    this.send(PacketBuilder.buildCameraSetVideoSize(index))
+  }
+
+  static setPhotoResolution(index: number) {
+    useDroneStore().addLog('INFO', `Set photo resolution index=${index} (Potensic camera cmd 0x0D)`)
+    this.send(PacketBuilder.buildCameraSetPhotoSize(index))
+  }
+
+  static setVideoEv(ev: number) {
+    useDroneStore().addLog('INFO', `Set video EV=${ev.toFixed(1)} (Potensic camera cmd 0x0F, mode 0)`)
+    this.send(PacketBuilder.buildCameraSetEv(0, ev))
+  }
+
+  static setPhotoEv(ev: number) {
+    useDroneStore().addLog('INFO', `Set photo EV=${ev.toFixed(1)} (Potensic camera cmd 0x0F, mode 1)`)
+    this.send(PacketBuilder.buildCameraSetEv(1, ev))
+  }
+
+  static getVideoEv() { this.send(PacketBuilder.buildCameraGetEv(0)) }
+  static getPhotoEv() { this.send(PacketBuilder.buildCameraGetEv(1)) }
+
+  static getSdStatus() {
+    this.send(PacketBuilder.buildCameraGetSdStatus())
+  }
+
+  static setManualMode(manual: boolean, shutterDen: number, iso: number, manualWb: boolean, wb: number) {
+    useDroneStore().addLog('INFO', `Set camera manual mode=${manual} shutter=1/${shutterDen} ISO=${iso} WB=${wb}`)
+    this.send(PacketBuilder.buildCameraSetManualMode({ manual, shutterDen, iso, manualWb, wb }))
+  }
+
+  static setRaw(enable: boolean) {
+    useDroneStore().addLog('INFO', `Set RAW photo=${enable}`)
+    this.send(PacketBuilder.buildCameraSetRaw(enable))
+  }
+
+  static setPhotoOsd(enable: boolean) {
+    useDroneStore().addLog('INFO', `Set photo OSD=${enable}`)
+    this.send(PacketBuilder.buildCameraSetPhotoOsd(enable))
+  }
+
+  static setPhotoGps(enable: boolean) {
+    useDroneStore().addLog('INFO', `Set photo GPS metadata=${enable}`)
+    this.send(PacketBuilder.buildCameraSetPhotoGps(enable))
+  }
+
+  static formatSd() {
+    useDroneStore().addLog('WARN', 'Formatting SD card requested (Potensic camera cmd 0x04)')
+    this.send(PacketBuilder.buildCameraFormatSd())
+  }
+
+  static enterGallery() {
+    const cam = useCameraStore()
+    cam.galleryLoading = true
+    useDroneStore().addLog('INFO', 'Enter camera gallery (cmd 0x21)')
+    this.send(PacketBuilder.buildCameraEnterGallery())
+  }
+
+  static quitGallery() {
+    this.send(PacketBuilder.buildCameraQuitGallery())
+  }
+
+  static refreshGallery() {
+    const cam = useCameraStore()
+    cam.galleryLoading = true
+    this.photoNames = []
+    this.videoNames = []
+    this.send(PacketBuilder.buildCameraGetFileCount())
+  }
+
+  static deleteFile(fileName: string) {
+    useDroneStore().addLog('WARN', `Delete camera file: ${fileName}`)
+    this.send(PacketBuilder.buildCameraDeleteFile(fileName))
+  }
+
+  static async downloadFile(fileName: string) {
+    const cam = useCameraStore()
+    if (this.activeDownload) throw new Error('Another camera download is already active')
+    cam.download.fileName = fileName
+    cam.download.progress = 0
+    cam.download.active = true
+    cam.download.error = ''
+    try {
+      const info = await this.getFileInfo(fileName)
+      const isVideo = /\.(mp4|mov)$/i.test(fileName)
+      // PotensicPro's USB gallery downloads the low-resolution LRV proxy for videos.
+      // Photos are transferred using their original filename.
+      const remoteName = isVideo ? fileName.replace(/[^.]{3}$/i, 'LRV') : fileName
+      const totalNum = Number(isVideo ? (info.lrv_filesize ?? info.lrv_len ?? 0) : (info.filesize ?? info.len ?? 0))
+      if (!Number.isFinite(totalNum) || totalNum <= 0) throw new Error('Camera returned no usable file size')
+      const total = BigInt(Math.trunc(totalNum))
+      const outputName = fileName.split('/').pop() || (isVideo ? 'camera-video.mp4' : 'camera-photo.jpg')
+      this.activeDownload = { fileName: remoteName, outputName, total, received: 0n, chunks: [] }
+      this.requestNextDownloadChunk()
+    } catch (e: any) {
+      cam.download.active = false
+      cam.download.error = e?.message || String(e)
+      throw e
+    }
+  }
+
+  private static getFileInfo(fileName: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const old = this.pendingInfo.get(fileName)
+      if (old) clearTimeout(old.timer)
+      const timer = setTimeout(() => {
+        this.pendingInfo.delete(fileName)
+        reject(new Error('Timed out waiting for camera file metadata'))
+      }, 5000)
+      this.pendingInfo.set(fileName, { resolve, reject, timer })
+      this.send(PacketBuilder.buildCameraGetFileInfo(fileName))
+    })
+  }
+
+  private static requestNextDownloadChunk() {
+    const dl = this.activeDownload
+    if (!dl) return
+    const remaining = dl.total - dl.received
+    if (remaining <= 0n) {
+      this.finishDownload()
+      return
+    }
+    const length = remaining > 102400n ? 102400n : remaining
+    this.send(PacketBuilder.buildCameraDownloadChunk(dl.fileName, dl.received, length))
+  }
+
+  private static finishDownload() {
+    const dl = this.activeDownload
+    if (!dl) return
+    const cam = useCameraStore()
+    const blobParts = dl.chunks.map(chunk => chunk.slice().buffer as ArrayBuffer)
+    const blob = new Blob(blobParts, { type: 'application/octet-stream' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = dl.outputName
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    cam.download.progress = 100
+    cam.download.active = false
+    useDroneStore().addLog('INFO', `Camera download completed: ${dl.fileName} (${blob.size} bytes)`)
+    this.activeDownload = null
+  }
+
+  /**
+   * Handle FE 0x05 camera responses whose inner message short is 0x0020.
+   * Returns true when the packet belongs to this PotensicPro-compatible camera path.
+   */
+  static handleIncoming(feType: number, payload: Uint8Array): boolean {
+    if (feType !== 0x05 || payload.length < 8 || payload[0] !== 0xff || payload[1] !== 0xfd) return false
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
+    const msgShort = view.getUint16(4, true)
+    if (msgShort !== 0x0020) return false
+
+    const cam = useCameraStore()
+    const drone = useDroneStore()
+    const cmd = payload[6]
+    const status = payload[7]
+    const data = payload.subarray(8, Math.max(8, payload.length - 1))
+    cam.lastResponse = `cmd=0x${cmd.toString(16).padStart(2, '0')} status=${status} data=${data.length}B`
+
+    if (status !== 0) {
+      drone.addLog('WARN', `Camera command 0x${cmd.toString(16).padStart(2, '0')} failed with status ${status}`)
+      if (this.activeDownload && cmd === 27) {
+        cam.download.active = false
+        cam.download.error = `Camera download failed with status ${status}`
+        this.activeDownload = null
+      }
+      return true
+    }
+
+    switch (cmd) {
+      case 4: // format SD response: card state in data[0]
+        if (data.length) cam.sd.state = data[0]
+        cam.sd.lastStatus = 'Format command acknowledged'
+        this.getSdStatus()
+        break
+      case 11:
+        if (data.length) cam.videoResolutionIndex = data[0]
+        break
+      case 13:
+        if (data.length) cam.photoResolutionIndex = data[0]
+        break
+      case 15: {
+        if (data.length >= 2) {
+          const encoded = data[0]
+          const mode = data[1]
+          const ev = (encoded - 4) / 2
+          if (mode === 0) cam.videoEv = ev
+          else if (mode === 1) cam.photoEv = ev
+        }
+        break
+      }
+      case 16:
+        if (data.length) {
+          const ev = (data[0] - 4) / 2
+          // PotensicPro returns current-mode EV here; keep both synchronized when mode is unknown.
+          cam.videoEv = ev
+          cam.photoEv = ev
+        }
+        break
+      case 36:
+        if (data.length) cam.manualMode.raw = data[0] === 1
+        break
+      case 38:
+        if (data.length) cam.manualMode.photoOsd = data[data.length - 1] === 1
+        break
+      case 52:
+      case 53:
+        if (data.length >= 10) {
+          const dv = new DataView(data.buffer, data.byteOffset, data.byteLength)
+          cam.manualMode.manual = data[0] === 1
+          const up = Math.max(1, dv.getUint16(1, true))
+          const down = dv.getUint16(3, true)
+          cam.manualMode.shutterDen = Math.max(1, Math.round(down / up))
+          cam.manualMode.iso = dv.getUint16(5, true)
+          cam.manualMode.manualWb = data[7] === 1
+          cam.manualMode.wb = dv.getUint16(8, true)
+          cam.manualMode.loaded = true
+        }
+        break
+      case 59:
+      case 60:
+        if (data.length) cam.manualMode.photoGps = data[data.length - 1] === 1
+        break
+      case 23:
+        if (data.length >= 7) {
+          cam.sd.state = data[0]
+          cam.sd.freeMb = data[1] | (data[2] << 8) | (data[3] << 16)
+          cam.sd.totalMb = data[4] | (data[5] << 8) | (data[6] << 16)
+          cam.sd.lastStatus = 'SD status received'
+        }
+        break
+      case 33:
+        cam.galleryEntered = true
+        this.refreshGallery()
+        break
+      case 34:
+        cam.galleryEntered = false
+        cam.galleryLoading = false
+        break
+      case 24:
+        if (data.length >= 4) {
+          this.photoCount = data[0] | (data[1] << 8)
+          this.videoCount = data[2] | (data[3] << 8)
+          this.photoNames = []
+          this.videoNames = []
+          this.buildGalleryQueue()
+          this.requestNextGalleryPage()
+        }
+        break
+      case 25:
+        this.parseGalleryNames(data)
+        this.requestNextGalleryPage()
+        break
+      case 26: {
+        const text = new TextDecoder('ascii').decode(data).replace(/\0+$/g, '').trim()
+        try {
+          const info = JSON.parse(text)
+          const name = String(info.filename || info.file || '')
+          const pending = this.pendingInfo.get(name) || (this.pendingInfo.size === 1 ? [...this.pendingInfo.values()][0] : null)
+          if (pending) {
+            clearTimeout(pending.timer)
+            for (const [k, v] of this.pendingInfo) if (v === pending) this.pendingInfo.delete(k)
+            pending.resolve(info)
+          }
+        } catch (e) {
+          drone.addLog('WARN', `Camera file metadata could not be parsed: ${text.slice(0, 120)}`)
+        }
+        break
+      }
+      case 27:
+        this.handleDownloadData(payload)
+        break
+      case 29:
+        drone.addLog('INFO', 'Camera file delete acknowledged')
+        this.refreshGallery()
+        break
+    }
+    return true
+  }
+
+  private static buildGalleryQueue() {
+    this.listQueue = []
+    const add = (type: 1 | 2, count: number) => {
+      for (let offset = 0; offset < count; offset += 50) {
+        this.listQueue.push({ type, offset, count: Math.min(50, count - offset) })
+      }
+    }
+    add(2, this.videoCount)
+    add(1, this.photoCount)
+    if (this.listQueue.length === 0) useCameraStore().setGalleryFiles([], [])
+  }
+
+  private static requestNextGalleryPage() {
+    if (!this.listQueue.length) {
+      useCameraStore().setGalleryFiles(this.photoNames, this.videoNames)
+      return
+    }
+    const page = this.listQueue.shift()!
+    this.send(PacketBuilder.buildCameraGetFileList(page.type, page.offset, page.count))
+  }
+
+  private static parseGalleryNames(data: Uint8Array) {
+    // PotensicPro responses carry page bookkeeping before the NUL-separated ASCII names.
+    // Search the response body for printable filenames instead of relying on one firmware offset.
+    const text = new TextDecoder('ascii').decode(data).replace(/[\x00-\x1f]+/g, '\0')
+    const names = text.split('\0').map(s => s.trim()).filter(Boolean)
+    for (const name of names) {
+      const lower = name.toLowerCase()
+      if (/\.(jpg|jpeg|dng)$/.test(lower) && !this.photoNames.includes(name)) this.photoNames.push(name)
+      if (/\.(mp4|mov|lrv)$/.test(lower) && !this.videoNames.includes(name)) this.videoNames.push(name)
+    }
+  }
+
+  private static handleDownloadData(inner: Uint8Array) {
+    const dl = this.activeDownload
+    if (!dl || inner.length < 22) return
+    const cam = useCameraStore()
+    const flag = inner[8]
+    const fileEnd = flag === 2
+    const base = fileEnd ? 41 : 9 // cmd/status/flag + optional 32-byte trailer before offset
+    if (inner.length < base + 10) return
+    const view = new DataView(inner.buffer, inner.byteOffset, inner.byteLength)
+    const offset = view.getBigUint64(base, true)
+    const payloadLen = view.getUint16(base + 8, true)
+    const start = base + 10
+    if (start + payloadLen > inner.length) return
+    const chunk = inner.slice(start, start + payloadLen)
+
+    if (offset !== dl.received) {
+      cam.download.active = false
+      cam.download.error = `Unexpected camera file offset ${offset}; expected ${dl.received}`
+      this.activeDownload = null
+      return
+    }
+    dl.chunks.push(chunk)
+    dl.received += BigInt(chunk.length)
+    cam.download.progress = Number((dl.received * 100n) / dl.total)
+
+    if (fileEnd || dl.received >= dl.total) this.finishDownload()
+    else if (flag === 1) this.requestNextDownloadChunk()
+  }
+}

@@ -50,6 +50,65 @@ data class TelemetryData(
     val windDirection: Float = 0f,
     val gpsAccuracy: Int = 0,
     val altitude: Float = 0f,
+    val remainedFlyTime: Int = 0,
+    val gpsUtcTime: Long = 0L,
+    val tofHeight: Int = 0,
+    // ATOM state block (0x0002)
+    val unlocked: Boolean = false,
+    val flying: Boolean = false,
+    val receiveGps: Boolean = false,
+    val following: Boolean = false,
+    val circleMode: Boolean = false,
+    val pointFly: Boolean = false,
+    val returning: Boolean = false,
+    val landing: Boolean = false,
+    val gyroCalibrating: Boolean = false,
+    val magHorizontalCalibrating: Boolean = false,
+    val magVerticalCalibrating: Boolean = false,
+    val remoterConnected: Boolean = false,
+    val takingOff: Boolean = false,
+    val flightMode: Int = 2,
+    val speedMode: Int = -1,
+    val lowPowerMode: Boolean = false,
+    val needCalibration: Boolean = false,
+    val geomagneticFault: Boolean = false,
+    val emergencyStop: Boolean = false,
+    val opticalFlow: Boolean = false,
+    val gpsInterference: Boolean = false,
+    val gpsLocationValid: Boolean = false,
+    val gpsSpeedValid: Boolean = false,
+    val gimbalNotReady: Boolean = false,
+    val flightInNoFlyZone: Boolean = false,
+    val findingDrone: Boolean = false,
+    val escBeep: Boolean = false,
+    // ATOM no-fly status block (0x001E / 30)
+    val locatedNoFlyZone: Boolean = false,
+    val restrictedZone: Boolean = false,
+    val nearNoFlyZone: Boolean = false,
+    val nearRestrictedZone: Boolean = false,
+    val noFlyHeightLimit: Int = 0,
+    val noFlyDistance: Int = 0,
+    // ATOM flight setting block (0x0003)
+    val limitHeight: Int = 0,
+    val limitDistance: Int = 0,
+    val returnHeight: Int = 0,
+    val beginnerMode: Boolean = false,
+    val americaRockerMode: Boolean = true,
+    val surroundRadius: Int = 0,
+    val surroundClockwise: Boolean = true,
+    val surroundSpeed: Int = 0,
+    val settingSpeedMode: Int = -1,
+    val settingsValid: Boolean = false,
+    // ATOM gimbal settings block (0x001A / 26)
+    val gimbalPitchControl: Int = 0,
+    val gimbalPitchSpeed: Int = 0,
+    val gimbalStableMode: Boolean = true,
+    val gimbalFpvSmooth: Int = 0,
+    val gimbalCalibration: Int = 0,
+    val gimbalTuningRoll: Int = 0,
+    val gimbalTuningYaw: Int = 0,
+    val gimbalReset: Int = 0,
+    val gimbalSettingsValid: Boolean = false,
     // Confirmed ATOM Home Point (0x0005)
     val homeLongitude: Double = 0.0,
     val homeLatitude: Double = 0.0,
@@ -101,6 +160,61 @@ data class TelemetryData(
         put("windDirection", windDirection)
         put("gpsAccuracy", gpsAccuracy)
         put("altitude", altitude)
+        put("remainedFlyTime", remainedFlyTime)
+        put("gpsUtcTime", gpsUtcTime)
+        put("tofHeight", tofHeight)
+        put("unlocked", unlocked)
+        put("flying", flying)
+        put("receiveGps", receiveGps)
+        put("following", following)
+        put("circleMode", circleMode)
+        put("pointFly", pointFly)
+        put("returning", returning)
+        put("landing", landing)
+        put("gyroCalibrating", gyroCalibrating)
+        put("magHorizontalCalibrating", magHorizontalCalibrating)
+        put("magVerticalCalibrating", magVerticalCalibrating)
+        put("remoterConnected", remoterConnected)
+        put("takingOff", takingOff)
+        put("flightMode", flightMode)
+        put("speedMode", speedMode)
+        put("lowPowerMode", lowPowerMode)
+        put("needCalibration", needCalibration)
+        put("geomagneticFault", geomagneticFault)
+        put("emergencyStop", emergencyStop)
+        put("opticalFlow", opticalFlow)
+        put("gpsInterference", gpsInterference)
+        put("gpsLocationValid", gpsLocationValid)
+        put("gpsSpeedValid", gpsSpeedValid)
+        put("gimbalNotReady", gimbalNotReady)
+        put("flightInNoFlyZone", flightInNoFlyZone)
+        put("findingDrone", findingDrone)
+        put("escBeep", escBeep)
+        put("locatedNoFlyZone", locatedNoFlyZone)
+        put("restrictedZone", restrictedZone)
+        put("nearNoFlyZone", nearNoFlyZone)
+        put("nearRestrictedZone", nearRestrictedZone)
+        put("noFlyHeightLimit", noFlyHeightLimit)
+        put("noFlyDistance", noFlyDistance)
+        put("limitHeight", limitHeight)
+        put("limitDistance", limitDistance)
+        put("returnHeight", returnHeight)
+        put("beginnerMode", beginnerMode)
+        put("americaRockerMode", americaRockerMode)
+        put("surroundRadius", surroundRadius)
+        put("surroundClockwise", surroundClockwise)
+        put("surroundSpeed", surroundSpeed)
+        put("settingSpeedMode", settingSpeedMode)
+        put("settingsValid", settingsValid)
+        put("gimbalPitchControl", gimbalPitchControl)
+        put("gimbalPitchSpeed", gimbalPitchSpeed)
+        put("gimbalStableMode", gimbalStableMode)
+        put("gimbalFpvSmooth", gimbalFpvSmooth)
+        put("gimbalCalibration", gimbalCalibration)
+        put("gimbalTuningRoll", gimbalTuningRoll)
+        put("gimbalTuningYaw", gimbalTuningYaw)
+        put("gimbalReset", gimbalReset)
+        put("gimbalSettingsValid", gimbalSettingsValid)
         put("homeLongitude", homeLongitude)
         put("homeLatitude", homeLatitude)
         put("homeSynced", homeSynced)
@@ -184,7 +298,11 @@ object TelemetryParser {
                     // They are profile-gated so ATOM 2 and existing legacy mappings stay untouched.
                     0x0000 -> if (profileId == "ATOM") return parseAtomFlightInfo(payload, dataStart, dataLen)
                     0x0001 -> if (profileId == "ATOM") parseAtomBattery(payload, dataStart, dataLen)
+                    0x0002 -> if (profileId == "ATOM") parseAtomState(payload, dataStart, dataLen)
+                    0x0003 -> if (profileId == "ATOM") parseAtomSettings(payload, dataStart, dataLen)
                     0x0005 -> if (profileId == "ATOM") parseAtomHomePoint(payload, dataStart, dataLen)
+                    0x001A -> if (profileId == "ATOM") parseAtomGimbalSettings(payload, dataStart, dataLen)
+                    0x001E -> if (profileId == "ATOM") parseAtomNoFly(payload, dataStart, dataLen)
                     0x0200 -> return parseFlightGps(payload, dataStart, dataLen)
                     0x0211 -> parseRcValues(payload, dataStart, dataLen)
                 }
@@ -210,6 +328,7 @@ object TelemetryParser {
      */
     private fun parseAtomFlightInfo(payload: ByteArray, i: Int, dataLen: Int): TelemetryData? {
         if (dataLen < 15) return null
+        val fullLayout = dataLen >= 48
         val tel = latest.copy(
             flightVoltage = readUShortLE(payload, i) / 100f,
             remoterVoltage = readUShortLE(payload, i + 2) / 100f,
@@ -217,6 +336,19 @@ object TelemetryParser {
             latitude = readIntLE(payload, i + 8) / 1.0E7,
             satellites = payload[i + 12].toInt() and 0xFF,
             heading = readUShortLE(payload, i + 13),
+            horizontalDistance = if (dataLen >= 19) { if (fullLayout) readIntLE(payload, i + 15) / 10f else readUShortLE(payload, i + 15) / 10f } else latest.horizontalDistance,
+            verticalDistance = if (dataLen >= 19) readShortLE(payload, i + 17) / 10f else latest.verticalDistance,
+            horizontalSpeed = if (dataLen >= 21) readUShortLE(payload, i + 19) / 10f else latest.horizontalSpeed,
+            verticalSpeed = if (dataLen >= 23) readShortLE(payload, i + 21) / 10f else latest.verticalSpeed,
+            battery = if (dataLen >= 24) payload[i + 23].toInt() and 0xFF else latest.battery,
+            remainedFlyTime = if (dataLen >= 25) payload[i + 24].toInt() and 0xFF else latest.remainedFlyTime,
+            pitch = if (dataLen >= 27) readShortLE(payload, i + 25) else latest.pitch,
+            roll = if (dataLen >= 29) readShortLE(payload, i + 27) else latest.roll,
+            windSpeed = if (dataLen >= 33) readShortLE(payload, i + 31) / 100f else latest.windSpeed,
+            windDirection = if (dataLen >= 35) readShortLE(payload, i + 33) / 100f else latest.windDirection,
+            gpsUtcTime = if (dataLen >= 43) readLongLE(payload, i + 35) else latest.gpsUtcTime,
+            altitude = if (dataLen >= 47) readIntLE(payload, i + 43) / 1000f else latest.altitude,
+            tofHeight = if (dataLen >= 48) payload[i + 47].toInt() else latest.tofHeight,
             remoterBatteryVoltage = remoterBatVoltage,
             remoterBatteryPercent = remoterBatPercent,
             rcThrottle = rcThrottle, rcYaw = rcYaw, rcPitch = rcPitch, rcRoll = rcRoll,
@@ -226,6 +358,89 @@ object TelemetryParser {
         )
         latest = tel
         return tel
+    }
+
+
+    /** ATOM 0x0002 FlightRevStateData bit layout from PotensicPro. */
+    private fun parseAtomState(payload: ByteArray, i: Int, dataLen: Int) {
+        if (dataLen < 6) return
+        fun bit(v: Int, b: Int) = ((v ushr b) and 1) == 1
+        val b0 = payload[i].toInt() and 0xFF
+        val b1 = payload[i + 1].toInt() and 0xFF
+        val b2 = payload[i + 2].toInt() and 0xFF
+        val b3 = payload[i + 3].toInt() and 0xFF
+        val b5 = payload[i + 5].toInt() and 0xFF
+        val mode = when { bit(b2,3) && !bit(b2,4) -> 2; !bit(b2,3) && bit(b2,4) -> 1; else -> 0 }
+        val speed = when ((b2 ushr 6) and 0x03) { 0 -> 0; 1 -> 1; 2 -> 2; else -> -1 }
+        val low = ((b2 and 0x03) != 0)
+        val b7 = if (dataLen >= 8) payload[i + 7].toInt() and 0xFF else 0
+        val b11 = if (dataLen >= 12) payload[i + 11].toInt() and 0xFF else 0
+        val b13 = if (dataLen >= 14) payload[i + 13].toInt() and 0xFF else 0
+        val b14 = if (dataLen >= 15) payload[i + 14].toInt() and 0xFF else 0
+        latest = latest.copy(
+            unlocked = bit(b0,0), flying = bit(b0,1), receiveGps = bit(b0,2), following = bit(b0,3),
+            circleMode = bit(b0,4), pointFly = bit(b0,5), returning = bit(b0,6), landing = bit(b0,7),
+            gyroCalibrating = bit(b1,0), magHorizontalCalibrating = bit(b1,1), magVerticalCalibrating = bit(b1,2),
+            remoterConnected = bit(b1,3), takingOff = bit(b1,4), flightMode = mode, speedMode = speed, lowPowerMode = low,
+            needCalibration = bit(b3,7), geomagneticFault = bit(b5,0), emergencyStop = bit(b5,5), opticalFlow = bit(b5,7),
+            gpsInterference = bit(b7,6), gpsSpeedValid = bit(b11,2), gpsLocationValid = bit(b11,3),
+            gimbalNotReady = bit(b13,4), flightInNoFlyZone = bit(b13,6), findingDrone = bit(b14,7),
+            escBeep = (dataLen >= 16 && payload[i+15].toInt() != 0) || (dataLen >= 17 && payload[i+16].toInt() != 0),
+            timestamp = System.currentTimeMillis(),
+        )
+    }
+
+    /** ATOM 0x0003 FlightRevSettingData layout from PotensicPro/new FC. */
+    private fun parseAtomSettings(payload: ByteArray, i: Int, dataLen: Int) {
+        if (dataLen < 10) return
+        val newFc = dataLen >= 13
+        var o = i
+        val limitHeight = if (newFc) readUShortLE(payload, o).also { o += 2 } else (payload[o++].toInt() and 0xFF)
+        val limitDistance = readUShortLE(payload, o); o += 2
+        val returnHeight = if (newFc) readUShortLE(payload, o).also { o += 2 } else (payload[o++].toInt() and 0xFF)
+        val beginner = (payload[o++].toInt() and 0xFF) == 0xFF
+        val america = (payload[o++].toInt() and 0xFF) == 0
+        val radius = readUShortLE(payload, o); o += 2
+        val clockwise = if (o < i + dataLen) payload[o++].toInt() == 1 else latest.surroundClockwise
+        val surroundSpeed = if (o < i + dataLen) payload[o++].toInt() and 0xFF else latest.surroundSpeed
+        val settingSpeed = if (o < i + dataLen) payload[o].toInt() and 0xFF else latest.settingSpeedMode
+        latest = latest.copy(limitHeight=limitHeight, limitDistance=limitDistance, returnHeight=returnHeight, beginnerMode=beginner,
+            americaRockerMode=america, surroundRadius=radius, surroundClockwise=clockwise, surroundSpeed=surroundSpeed,
+            settingSpeedMode=settingSpeed, settingsValid=true, timestamp=System.currentTimeMillis())
+    }
+
+
+
+    /** ATOM 0x001E FlightRevNoFlyZone layout from PotensicPro. */
+    private fun parseAtomNoFly(payload: ByteArray, i: Int, dataLen: Int) {
+        if (dataLen < 12) return
+        val flags = payload[i].toInt() and 0xFF
+        latest = latest.copy(
+            locatedNoFlyZone = (flags and 0x01) != 0,
+            restrictedZone = (flags and 0x02) != 0,
+            nearNoFlyZone = (flags and 0x04) != 0,
+            nearRestrictedZone = (flags and 0x08) != 0,
+            noFlyHeightLimit = readIntLE(payload, i + 4),
+            noFlyDistance = readIntLE(payload, i + 8),
+            timestamp = System.currentTimeMillis(),
+        )
+    }
+
+    /** ATOM 0x001A FlightRevGimbalSettingData layout from PotensicPro. */
+    private fun parseAtomGimbalSettings(payload: ByteArray, i: Int, dataLen: Int) {
+        if (dataLen < 11) return
+        latest = latest.copy(
+            gimbalPitchControl = payload[i].toInt() and 0xFF,
+            gimbalPitchSpeed = readUShortLE(payload, i + 1),
+            gimbalStableMode = (payload[i + 3].toInt() and 0xFF) == 0,
+            gimbalFpvSmooth = payload[i + 4].toInt() and 0xFF,
+            gimbalCalibration = payload[i + 5].toInt() and 0xFF,
+            gimbalTuningRoll = readShortLE(payload, i + 6),
+            gimbalTuningYaw = readShortLE(payload, i + 8),
+            gimbalReset = payload[i + 10].toInt() and 0xFF,
+            gimbalSettingsValid = true,
+            timestamp = System.currentTimeMillis(),
+        )
     }
 
     /** Confirmed ATOM 0x0005 Home Point layout. */
@@ -401,4 +616,10 @@ object TelemetryParser {
 
     private fun readFloatLE(a: ByteArray, o: Int): Float =
         Float.fromBits(readIntLE(a, o))
+
+    private fun readLongLE(a: ByteArray, o: Int): Long {
+        var v = 0L
+        for (n in 0 until 8) v = v or ((a[o+n].toLong() and 0xFFL) shl (8*n))
+        return v
+    }
 }

@@ -7,6 +7,7 @@ import { PacketParser } from '../protocol/PacketParser'
 import { PacketBuilder } from '../protocol/PacketBuilder'
 import { ByteUtils } from '../utils/ByteUtils'
 import { VideoExtractor } from '../protocol/VideoExtractor'
+import { CameraMediaService } from './CameraMediaService'
 
 class UsbStreamDemuxer {
   private buffer: Uint8Array = new Uint8Array(0)
@@ -99,6 +100,7 @@ export class UsbTransportService {
   }
 
   start() {
+    CameraMediaService.setSender((bytes) => this.send(bytes))
     this.loadDroneProfile()
     this.connect()
     this.startStatusPolling()
@@ -203,6 +205,8 @@ export class UsbTransportService {
               // Pass video payload directly into video extractor
               VideoExtractor.getInstance().feed(payload)
             } else {
+              // PotensicPro-compatible camera/media responses use FE 0x05 + inner short 0x0020.
+              CameraMediaService.handleIncoming(feType, payload)
               const parsed = PacketParser.parse(fullPacket, 'RX')
               store.addPacket(parsed)
             }

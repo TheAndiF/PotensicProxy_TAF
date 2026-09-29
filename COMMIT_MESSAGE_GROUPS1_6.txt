@@ -1,0 +1,27 @@
+BL_Integrate camera telemetry flight and safety features 1-6
+Date: 2026-09-29
+
+Summary:
+- Integrated confirmed PotensicPro camera controls for manual exposure, shutter, ISO, white balance, RAW, photo OSD and photo GPS.
+- Extended ATOM telemetry and state parsing for flight information, flight state, flight settings, gimbal settings and no-fly status.
+- Added RTH height, altitude/distance limits, beginner/stick/speed settings and circle parameters using the confirmed New-FC path.
+- Added RC, IMU, gimbal and confirmed compass calibration session commands while leaving the unverified native compass solver unchanged.
+- Added Follow, Circle, Point Fly, MultiPoint route upload and cancel-auto-flight commands.
+- Added no-fly/geofence status and Find My Drone coordinates/beeper support without copying unverified regional zone geometry datasets.
+- Preserved the existing project/root folder structure.
+
+Changed files:
+- COMMIT_MESSAGE_GROUPS1_6.txt
+- GROUP2_CAMERA_MEDIA_INTEGRATION.md
+- GROUPS1_6_INTEGRATION.md
+- app/src/main/java/com/potensic/proxy/Telemetry.kt
+- webui/src/components/cockpit/AdvancedFlightPanel.vue
+- webui/src/components/cockpit/CameraMediaPanel.vue
+- webui/src/components/cockpit/CockpitView.vue
+- webui/src/protocol/PacketBuilder.ts
+- webui/src/services/CameraMediaService.ts
+- webui/src/services/DroneControlService.ts
+- webui/src/services/UsbTransportService.ts
+- webui/src/stores/useCameraStore.ts
+- webui/src/stores/useDroneStore.ts
+- webui/src/types/drone.ts

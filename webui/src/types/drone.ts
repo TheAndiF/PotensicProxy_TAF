@@ -20,6 +20,61 @@ export interface TelemetryData {
   homeLongitude?: number
   homeSynced?: boolean
   windSpeed?: number
+  remainedFlyTime?: number
+  gpsUtcTime?: number
+  tofHeight?: number
+  unlocked?: boolean
+  flying?: boolean
+  receiveGps?: boolean
+  following?: boolean
+  circleMode?: boolean
+  pointFly?: boolean
+  returning?: boolean
+  landing?: boolean
+  gyroCalibrating?: boolean
+  magHorizontalCalibrating?: boolean
+  magVerticalCalibrating?: boolean
+  remoterConnected?: boolean
+  takingOff?: boolean
+  flightMode?: number
+  speedMode?: number
+  lowPowerMode?: boolean
+  needCalibration?: boolean
+  geomagneticFault?: boolean
+  emergencyStop?: boolean
+  opticalFlow?: boolean
+  gpsInterference?: boolean
+  gpsLocationValid?: boolean
+  gpsSpeedValid?: boolean
+  gimbalNotReady?: boolean
+  flightInNoFlyZone?: boolean
+  findingDrone?: boolean
+  escBeep?: boolean
+  locatedNoFlyZone?: boolean
+  restrictedZone?: boolean
+  nearNoFlyZone?: boolean
+  nearRestrictedZone?: boolean
+  noFlyHeightLimit?: number
+  noFlyDistance?: number
+  limitHeight?: number
+  limitDistance?: number
+  returnHeight?: number
+  beginnerMode?: boolean
+  americaRockerMode?: boolean
+  surroundRadius?: number
+  surroundClockwise?: boolean
+  surroundSpeed?: number
+  settingSpeedMode?: number
+  settingsValid?: boolean
+  gimbalPitchControl?: number
+  gimbalPitchSpeed?: number
+  gimbalStableMode?: boolean
+  gimbalFpvSmooth?: number
+  gimbalCalibration?: number
+  gimbalTuningRoll?: number
+  gimbalTuningYaw?: number
+  gimbalReset?: number
+  gimbalSettingsValid?: boolean
   rcThrottle?: number
   rcYaw?: number
   rcPitch?: number

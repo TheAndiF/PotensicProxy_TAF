@@ -29,6 +29,8 @@
       </div>
       <GimbalControl/>
       <FlightActions/>
+      <CameraMediaPanel/>
+      <AdvancedFlightPanel/>
 
       <div
         v-show="pipVisible && pipPosition === 'controls'"
@@ -68,6 +70,8 @@ import TelemetryBar from './TelemetryBar.vue'
 import VirtualJoystick from './VirtualJoystick.vue'
 import GimbalControl from './GimbalControl.vue'
 import FlightActions from './FlightActions.vue'
+import CameraMediaPanel from './CameraMediaPanel.vue'
+import AdvancedFlightPanel from './AdvancedFlightPanel.vue'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { DroneControlService } from '../../services/DroneControlService'
 import { useCockpitViewSettings } from '../../composables/useCockpitViewSettings'
