@@ -655,6 +655,7 @@ class WebServer(
                         put("videoFrames", videoExtractor.framesExtracted.get())
                         put("videoLastFrameMs", videoExtractor.lastFrameTime)
                         put("videoStreaming", videoExtractor.lastFrameTime > 0L && (System.currentTimeMillis() - videoExtractor.lastFrameTime) < 3000L)
+                        ProxyService.instance?.getPhoneBatteryPercent()?.let { put("phoneBatteryPercent", it) }
                         put("wsClients", wsClients.size)
                         put("usbWsClients", usbWsClients.size)
                         put("joystick", controlCoordinator.current().toJson())

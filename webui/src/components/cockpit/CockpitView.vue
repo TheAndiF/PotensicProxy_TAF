@@ -12,13 +12,17 @@
           @click="swapViews"
         ></div>
 
-        <div class="view-toolbar">
-          <button :class="{ active: mainView === 'video' }" @click="mainView = 'video'">LIVE</button>
-          <button :class="{ active: mainView === 'map' }" @click="mainView = 'map'">MAP</button>
-          <button :class="{ active: pipVisible }" @click="pipVisible = !pipVisible">PIP</button>
+        <div class="view-drawer" :class="{ open: viewMenuOpen }">
+          <button class="view-drawer-toggle" type="button" :title="viewMenuOpen ? 'Hide view controls' : 'Show view controls'" @click="viewMenuOpen = !viewMenuOpen">{{ viewMenuOpen ? '›' : '‹' }}</button>
+          <div v-if="viewMenuOpen" class="view-toolbar">
+            <button :class="{ active: mainView === 'video' }" @click="mainView = 'video'">LIVE</button>
+            <button :class="{ active: mainView === 'map' }" @click="mainView = 'map'">MAP</button>
+            <button :class="{ active: pipVisible }" @click="pipVisible = !pipVisible">PIP</button>
+          </div>
         </div>
+
+        <TelemetryBar class="stage-status-overlay" />
       </div>
-      <TelemetryBar />
     </div>
 
     <div class="right-panel">
@@ -27,27 +31,27 @@
         <VirtualJoystick label="Throttle / Yaw" :value-labels="['Throttle', 'Yaw']" v-model="leftStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.yaw, y: store.rcHardwareJoysticks.throttle }" @change="onJoystickChange"/>
         <VirtualJoystick label="Pitch / Roll" :value-labels="['Pitch', 'Roll']" v-model="rightStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.roll, y: store.rcHardwareJoysticks.pitch }" @change="onRightStickChange"/>
       </div>
-      <GimbalControl/>
       <FlightActions/>
-      <CameraMediaPanel/>
 
-      <div
-        v-show="pipVisible && pipPosition === 'controls'"
-        class="controls-pip-section"
-      >
+      <section class="camera-section ui-card">
+        <button class="camera-section-header" type="button" @click="cameraOpen = !cameraOpen" :aria-expanded="cameraOpen">
+          <span>📷 Camera</span><span>{{ cameraOpen ? '▾' : '▸' }}</span>
+        </button>
+        <div v-if="cameraOpen" class="camera-section-body">
+          <GimbalControl/>
+          <CameraMediaPanel/>
+        </div>
+      </section>
+
+      <div v-show="pipVisible && pipPosition === 'controls'" class="controls-pip-section">
         <div class="panel-title">{{ secondaryLabel }} preview</div>
-        <div
-          id="pip-controls-slot"
-          class="pip-slot pip-controls-slot"
-          title="Swap Liveview and map"
-          @click="swapViews"
-        ></div>
+        <div id="pip-controls-slot" class="pip-slot pip-controls-slot" title="Swap Liveview and map" @click="swapViews"></div>
       </div>
     </div>
 
     <Teleport v-if="teleportsReady" :to="videoTarget">
       <div :class="['teleported-view', { 'small-view': mainView !== 'video' }]">
-        <VideoPlayer/>
+        <VideoPlayer :compact="mainView !== 'video'" />
         <span v-if="mainView !== 'video'" class="small-view-label">VIDEO</span>
       </div>
     </Teleport>
@@ -77,6 +81,9 @@ import { useCockpitViewSettings } from '../../composables/useCockpitViewSettings
 const store = useDroneStore()
 const { mainView, pipVisible, pipPosition, swapViews } = useCockpitViewSettings()
 const teleportsReady = ref(false)
+const viewMenuOpen = ref(false)
+const cameraOpen = ref(localStorage.getItem('potensic-camera-panel-open') !== 'false')
+watch(cameraOpen, value => localStorage.setItem('potensic-camera-panel-open', String(value)))
 
 const secondaryTarget = computed(() => pipPosition.value === 'controls' ? '#pip-controls-slot' : '#pip-overlay-slot')
 const hiddenTarget = '#hidden-view-slot'
@@ -84,15 +91,8 @@ const videoTarget = computed(() => mainView.value === 'video' ? '#main-stage-slo
 const mapTarget = computed(() => mainView.value === 'map' ? '#main-stage-slot' : (pipVisible.value ? secondaryTarget.value : hiddenTarget))
 const secondaryLabel = computed(() => mainView.value === 'video' ? 'Map' : 'Liveview')
 
-onMounted(async () => {
-  await nextTick()
-  teleportsReady.value = true
-})
-
-async function notifyViewResize() {
-  await nextTick()
-  requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('cockpit-view-resized')))
-}
+onMounted(async () => { await nextTick(); teleportsReady.value = true })
+async function notifyViewResize() { await nextTick(); requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('cockpit-view-resized'))) }
 watch([mainView, pipVisible, pipPosition], notifyViewResize, { flush: 'post' })
 
 const leftStickModel = computed({
@@ -103,40 +103,30 @@ const rightStickModel = computed({
   get: () => ({ x: store.userJoysticks.roll, y: store.userJoysticks.pitch }),
   set: v => { store.userJoysticks.roll = v.x; store.userJoysticks.pitch = v.y },
 })
-
 let lastSend = 0
 function onJoystickChange() { throttleSend() }
-function onRightStickChange(v: { x: number; y: number }) {
-  store.userJoysticks.roll = v.x
-  store.userJoysticks.pitch = v.y
-  throttleSend()
-}
-function throttleSend() {
-  const now = Date.now()
-  if (now - lastSend >= 20) {
-    lastSend = now
-    DroneControlService.sendJoysticks()
-  }
-}
+function onRightStickChange(v: { x: number; y: number }) { store.userJoysticks.roll = v.x; store.userJoysticks.pitch = v.y; throttleSend() }
+function throttleSend() { const now = Date.now(); if (now - lastSend >= 20) { lastSend = now; DroneControlService.sendJoysticks() } }
 </script>
 
 <style scoped>
 .cockpit-layout{display:grid;grid-template-columns:1fr 340px;height:100%}
 .left-section{display:flex;flex-direction:column;height:100%;background:var(--ui-bg-stage);position:relative;overflow:hidden}
-.flight-stage{position:relative;flex:1;min-height:0;background:var(--ui-bg-stage)}
+.flight-stage{position:relative;flex:1;min-height:0;background:var(--ui-bg-stage);overflow:hidden}
 .main-stage-slot{position:absolute;inset:0;z-index:1;overflow:hidden}
 .hidden-view-slot{position:absolute;left:-100000px;top:0;width:1px;height:1px;overflow:hidden;pointer-events:none}
-.pip-slot{overflow:hidden;border:2px solid #60708d;border-radius:8px;background:var(--ui-bg-stage);box-shadow:0 4px 18px rgba(0, 0, 0, 0.67);cursor:pointer}
-.pip-overlay-slot{position:absolute;right:16px;bottom:16px;width:230px;height:150px;z-index:20}
-.teleported-view{position:relative;width:100%;height:100%;overflow:hidden}
-.teleported-view>*:first-child{width:100%;height:100%}
-.small-view>*:first-child{pointer-events:none}
-.small-view-label{position:absolute;left:7px;bottom:6px;z-index:30;background:rgba(13, 16, 26, 0.87);color:var(--ui-text-strong);font-size:10px;font-weight:700;padding:3px 6px;border-radius:3px;pointer-events:none}
-.view-toolbar{position:absolute;left:10px;top:10px;z-index:35;display:flex;gap:5px;background:rgba(13, 16, 26, 0.80);border:1px solid var(--ui-border-control);border-radius:6px;padding:4px}
-.view-toolbar button{width:46px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--ui-border-strong);background:var(--ui-bg-control);color:#cbd5e1;border-radius:4px;font-size:10px;font-weight:700;padding:0;cursor:pointer}
-.view-toolbar button.active{color:var(--ui-text-strong);border-color:var(--cyan);box-shadow:inset 0 0 0 1px var(--cyan)}
+.pip-slot{overflow:hidden;border:2px solid #60708d;border-radius:8px;background:var(--ui-bg-stage);box-shadow:var(--ui-shadow-pip);cursor:pointer}
+.pip-overlay-slot{position:absolute;right:16px;bottom:54px;width:230px;height:150px;z-index:20}
+.teleported-view{position:relative;width:100%;height:100%;overflow:hidden}.teleported-view>*:first-child{width:100%;height:100%}.small-view>*:first-child{pointer-events:none}
+.small-view-label{position:absolute;left:7px;bottom:6px;z-index:30;background:rgba(13,16,26,.52);color:#fff;font-size:10px;font-weight:700;padding:3px 6px;border-radius:3px;pointer-events:none}
+.view-drawer{position:absolute;right:0;top:86px;z-index:42;display:flex;align-items:center}.view-drawer.open{gap:4px}
+.view-drawer-toggle{width:24px;height:48px;border:1px solid rgba(255,255,255,.18);border-right:0;border-radius:7px 0 0 7px;background:rgba(7,10,16,.44);color:#fff;cursor:pointer;backdrop-filter:blur(4px)}
+.view-toolbar{display:flex;flex-direction:column;gap:5px;padding:6px;background:rgba(7,10,16,.44);border:1px solid rgba(255,255,255,.16);border-right:0;border-radius:7px 0 0 7px;backdrop-filter:blur(4px)}
+.view-toolbar button{width:52px;height:30px;border:1px solid rgba(255,255,255,.20);background:rgba(16,20,30,.62);color:#dbe4ee;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer}.view-toolbar button.active{color:#fff;border-color:var(--cyan);box-shadow:inset 0 0 0 1px var(--cyan)}
+.stage-status-overlay{position:absolute;left:10px;right:10px;bottom:9px;z-index:38}
 .right-panel{background:var(--panel-bg);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;padding:14px;gap:12px}
 .joysticks-container{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;padding:10px;background:var(--card-bg);border-radius:8px;border:1px solid var(--border)}
-.controls-pip-section{display:flex;flex-direction:column;gap:7px;margin-top:2px}
-.pip-controls-slot{position:relative;width:100%;height:190px;flex:0 0 190px}
+.camera-section{padding:0;overflow:hidden}.camera-section-header{width:100%;height:36px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;border:0;background:var(--ui-bg-card);color:var(--ui-text);font-weight:700;cursor:pointer}.camera-section-body{display:flex;flex-direction:column;gap:9px;padding:9px}
+.controls-pip-section{display:flex;flex-direction:column;gap:7px;margin-top:2px}.pip-controls-slot{position:relative;width:100%;height:190px;flex:0 0 190px}
+@media(max-width:900px){.cockpit-layout{grid-template-columns:1fr 300px}.stage-status-overlay{right:8px;left:8px}}
 </style>

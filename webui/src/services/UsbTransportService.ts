@@ -260,6 +260,7 @@ export class UsbTransportService {
           store.connection.usbTransportOpen = Boolean(d.usbOpen ?? d.usbConnected ?? d.connected)
           store.connection.usbConnected = Boolean(d.usbConnected ?? d.connected ?? ((d.packetsReceived ?? 0) > 0))
           store.connection.videoStreaming = Boolean(d.videoStreaming)
+          if (typeof d.phoneBatteryPercent === 'number') store.telemetry.phoneBatteryPercent = d.phoneBatteryPercent
           // Cockpit values use the backend-owned interpreted state; raw WS parsing remains diagnostic-only.
           if (d.state) store.applyBackendState(d.state)
 

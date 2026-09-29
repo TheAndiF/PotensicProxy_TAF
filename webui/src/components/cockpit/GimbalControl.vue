@@ -38,7 +38,14 @@
       <div class="control-column">
         <div class="sub-title">Zoom</div>
         <div class="control-body">
-          <div class="vertical-dial">
+          <div
+            ref="zoomDialRef"
+            class="vertical-dial"
+            @pointerdown="onZoomPointerDown"
+            @pointermove="onZoomPointerMove"
+            @pointerup="onZoomPointerUp"
+            @pointercancel="onZoomPointerUp"
+          >
             <div class="axis-line"></div>
             <div class="limit-mark top">{{ MAX_ZOOM.toFixed(2) }}x</div>
             <div class="limit-mark bottom">{{ MIN_ZOOM.toFixed(2) }}x</div>
@@ -51,8 +58,9 @@
             <button class="taf-btn taf-btn--compact" type="button" @click="setZoom(2)">2.0x</button>
           </div>
         </div>
+        <input class="zoom-range" type="range" :min="MIN_ZOOM" :max="MAX_ZOOM" step="0.01" v-model.number="targetZoom" aria-label="Continuous zoom setpoint" />
         <div class="value-grid">
-          <div><span class="value-label">Soll</span><strong>{{ targetZoom.toFixed(2) }}x</strong></div>
+          <div><span class="value-label">Soll</span><input class="zoom-number" type="number" :min="MIN_ZOOM" :max="MAX_ZOOM" step="0.01" :value="targetZoom.toFixed(2)" @change="onZoomNumberChange" /></div>
           <div><span class="value-label">Ist</span><strong>{{ actualZoomText }}</strong></div>
         </div>
         <div class="feedback-state">{{ zoomStatus }}</div>
@@ -77,7 +85,9 @@ const actualGimbal = ref<number | null>(null)
 const actualZoom = ref<number | null>(null)
 
 const dialRef = ref<HTMLElement | null>(null)
+const zoomDialRef = ref<HTMLElement | null>(null)
 let dragging = false
+let zoomDragging = false
 
 const gimbalKnobStyle = computed(() => {
   const normalized = (MAX_ANGLE - targetAngle.value) / (MAX_ANGLE - MIN_ANGLE)
@@ -103,8 +113,10 @@ function setAngle(value: number) {
 }
 
 function setZoom(value: number) {
+  if (!Number.isFinite(value)) return
   targetZoom.value = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(value * 100) / 100))
 }
+function onZoomNumberChange(e: Event) { setZoom(Number((e.target as HTMLInputElement).value)) }
 
 function onPointerDown(e: PointerEvent) {
   dragging = true
@@ -125,6 +137,25 @@ function updateFromPointer(e: PointerEvent) {
   const ratio = (y - 15) / usable
   setAngle(MAX_ANGLE - ratio * (MAX_ANGLE - MIN_ANGLE))
 }
+function onZoomPointerDown(e: PointerEvent) {
+  zoomDragging = true
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  updateZoomFromPointer(e)
+}
+function onZoomPointerMove(e: PointerEvent) { if (zoomDragging) updateZoomFromPointer(e) }
+function onZoomPointerUp(e: PointerEvent) {
+  if (!zoomDragging) return
+  zoomDragging = false
+  try { ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch (_) {}
+}
+function updateZoomFromPointer(e: PointerEvent) {
+  if (!zoomDialRef.value) return
+  const rect = zoomDialRef.value.getBoundingClientRect()
+  const usable = Math.max(1, rect.height - 30)
+  const y = Math.max(15, Math.min(rect.height - 15, e.clientY - rect.top))
+  const ratio = (y - 15) / usable
+  setZoom(MAX_ZOOM - ratio * (MAX_ZOOM - MIN_ZOOM))
+}
 </script>
 
 <style scoped>
@@ -142,4 +173,5 @@ function updateFromPointer(e: PointerEvent) {
 .presets{display:flex;flex-direction:column;gap:5px}.preset-label{color:var(--text-muted);font-size:8px;text-transform:uppercase;letter-spacing:.4px}
 .value-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:8px}.value-grid>div{min-height:31px;border:1px solid var(--ui-border-control);border-radius:5px;background:var(--ui-bg-control-strong);display:flex;align-items:center;justify-content:space-between;padding:0 6px;font-family:var(--mono);font-size:9px}.value-grid strong{color:var(--cyan);font-size:10px}.value-label{color:var(--text-muted)}
 .feedback-state{margin-top:5px;text-align:center;color:var(--text-muted);font-size:8px;font-family:var(--mono)}
+.zoom-range{width:100%;margin-top:7px;accent-color:var(--ui-primary)}.zoom-number{width:64px;height:23px;border:1px solid var(--ui-border-control);border-radius:4px;background:var(--ui-bg-control);color:var(--ui-text);font-family:var(--mono);font-size:9px;padding:0 4px;text-align:right}
 </style>

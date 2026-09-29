@@ -297,7 +297,7 @@ export class PacketParser {
           if (cmdShort === 0x1131 && bytes.length >= 24) {
             const remoterVoltage = view.getUint16(22, true) / 100.0
             const remoterBatPercent = bytes.length >= 28 ? view.getFloat32(24, true) : 0
-            res.telemetry = { remoterVoltage }
+            res.telemetry = { remoterVoltage, ...(remoterBatPercent > 0 ? { remoterBatteryPercent: remoterBatPercent } : {}) }
             res.details = {
               'Controller battery voltage': `${remoterVoltage.toFixed(2)} V`,
               ...(remoterBatPercent > 0 ? { 'Controller battery remaining': `${remoterBatPercent.toFixed(0)} %` } : {})

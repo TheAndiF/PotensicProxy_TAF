@@ -1,0 +1,56 @@
+BL_Complete cockpit UI detail changes and update README
+Date: 2026-09-29
+
+Summary:
+- Added selectable Dark, Light and Gray application backgrounds with persistent UI theme selection.
+- Added separate phone, controller and drone power indicators to the cockpit status overlay.
+- Added Android phone-battery reporting through the existing backend status API.
+- Exposed the already parsed controller battery percentage when available, with controller voltage as fallback.
+- Moved the cockpit telemetry/status bar into the main flight stage and changed it to a transparent overlay.
+- Changed fullscreen handling to include the complete flight stage so the status overlay remains visible in fullscreen.
+- Made the Camera area collapsible and grouped camera-control and camera-media functions together.
+- Added continuous camera zoom setpoint adjustment by drag, range input and direct numeric entry in 0.01 steps.
+- Kept the camera zoom implementation UI-only because no confirmed ATOM / ATOM 2 zoom command or measured zoom-feedback field exists in the current project.
+- Moved LiveView action buttons into a collapsible side drawer and moved LIVE / MAP / PIP selection into a separate collapsible side control.
+- Hid LiveView action controls in the small PIP preview to keep the preview unobstructed.
+- Kept map zoom + / - controls and added direct numeric zoom entry.
+- Confirmed the previously implemented Engineering -> System rename and the relocation of Calibration and Flight / Calibration / Smart Modes under System.
+- Preserved the frontend/backend separation.
+- Preserved confirmed protocol handling and did not modify or invent unconfirmed protocol commands.
+- Audited the repository README, removed or qualified outdated claims and updated it to the current navigation, video profiles, APIs, map/mission modules and build structure.
+- Added README audit and implementation documentation.
+- Added project documentation in DOCX and PDF format.
+
+Verification:
+- Vue / TypeScript validation with vue-tsc --noEmit: PASS.
+- Vite bundling could not be completed in the execution environment because the provided node_modules contains Windows Rollup native packages and the missing Linux optional dependency could not be downloaded without network access.
+- Android / Kotlin Gradle compilation could not be completed in the execution environment because the Gradle wrapper attempted to download Gradle 8.11.1 and network access was unavailable.
+- No source-code error was reported by vue-tsc.
+
+Changed files:
+- COMMIT_MESSAGE_SYSTEM_UI.txt
+- COMMIT_MESSAGE_UI_DETAIL_2026-09-29.txt
+- DOCUMENTATION/2026-09-29_PotensicProxy_TAF_Projektdokumentation_UI-Detailaenderungen_v1.0.docx
+- DOCUMENTATION/2026-09-29_PotensicProxy_TAF_Projektdokumentation_UI-Detailaenderungen_v1.0.pdf
+- README.md
+- README_AUDIT_2026-09-29.md
+- SYSTEM_UI_REORGANIZATION.md
+- UI_DETAIL_IMPLEMENTATION_2026-09-29.md
+- app/src/main/java/com/potensic/proxy/ProxyService.kt
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- webui/src/components/cockpit/CockpitView.vue
+- webui/src/components/cockpit/GimbalControl.vue
+- webui/src/components/cockpit/MapView.vue
+- webui/src/components/cockpit/TelemetryBar.vue
+- webui/src/components/cockpit/VideoPlayer.vue
+- webui/src/components/debug/DebugConsoleView.vue
+- webui/src/components/header/HeaderBar.vue
+- webui/src/composables/useUiTheme.ts
+- webui/src/i18n/index.ts
+- webui/src/protocol/PacketParser.ts
+- webui/src/services/UsbTransportService.ts
+- webui/src/stores/useDebugStore.ts
+- webui/src/stores/useDroneStore.ts
+- webui/src/styles/tokens.css
+- webui/src/types/drone.ts
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-09-29.md

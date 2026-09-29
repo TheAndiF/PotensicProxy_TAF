@@ -6,7 +6,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.Context
 import android.os.Build
+import android.os.BatteryManager
 import android.os.IBinder
 import android.os.PowerManager
 import kotlinx.coroutines.*
@@ -138,6 +140,12 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         super.onDestroy()
     }
 
+
+    fun getPhoneBatteryPercent(): Int? {
+        val manager = getSystemService(Context.BATTERY_SERVICE) as? BatteryManager ?: return null
+        val value = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        return value.takeIf { it in 0..100 }
+    }
 
     fun getDroneProfile(): DroneProfileManager.Profile = droneProfileManager.current()
 

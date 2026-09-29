@@ -13,8 +13,9 @@
       <span>Z{{ zoom }}</span>
     </div>
     <div class="map-controls">
-      <button @click.stop="zoom = Math.min(19, zoom + 1)">+</button>
-      <button @click.stop="zoom = Math.max(1, zoom - 1)">−</button>
+      <button @click.stop="setZoom(zoom + 1)">+</button>
+      <input class="map-zoom-input" type="number" min="1" max="19" step="1" :value="zoom" aria-label="Map zoom" @click.stop @change="onZoomInput" />
+      <button @click.stop="setZoom(zoom - 1)">−</button>
     </div>
     <div class="attribution">{{ config?.attribution || '' }}</div>
   </div>
@@ -50,7 +51,9 @@ const tiles = computed(() => {
   for(let tx=x0;tx<=x1;tx++) for(let ty=y0;ty<=y1;ty++){ if(ty<0||ty>=n) continue; const x=((tx%n)+n)%n; out.push({key:`${z}/${x}/${ty}`,url:MapService.tileUrl(z,x,ty),left:tx*256-c.x+size.value.w/2,top:ty*256-c.y+size.value.h/2}) }
   return out
 })
-function onWheel(e:WheelEvent){ zoom.value=Math.max(1,Math.min(19,zoom.value+(e.deltaY<0?1:-1))) }
+function setZoom(value:number){ zoom.value=Math.max(1,Math.min(19,Math.round(value))) }
+function onZoomInput(e:Event){ setZoom(Number((e.target as HTMLInputElement).value)) }
+function onWheel(e:WheelEvent){ setZoom(zoom.value+(e.deltaY<0?1:-1)) }
 async function refreshSize(){
   await nextTick()
   const measure=()=>{ if(!root.value)return; const r=root.value.getBoundingClientRect(); if(r.width>0&&r.height>0) size.value={w:r.width,h:r.height} }
@@ -64,5 +67,5 @@ watch(()=>config.value?.defaultZoom,z=>{if(z)zoom.value=z})
 </script>
 
 <style scoped>
-.map-view{position:relative;width:100%;height:100%;overflow:hidden;background:#18202b;user-select:none}.tiles{position:absolute;inset:0}.tile{position:absolute;width:256px;height:256px}.home-line{position:absolute;inset:0;z-index:4;pointer-events:none}.home-line line{stroke:var(--ui-warning);stroke-width:1.5;stroke-dasharray:5 4;opacity:.8}.home-marker{position:absolute;z-index:5;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--ui-warning);color:#111;font-size:11px;font-weight:800;border:2px solid var(--ui-text-strong);box-shadow:0 1px 5px var(--ui-bg-stage)}.drone-marker{position:absolute;left:50%;top:50%;z-index:5;color:var(--ui-success);font-size:30px;line-height:1;text-shadow:0 1px 5px var(--ui-bg-stage)}.map-osd{position:absolute;top:10px;left:10px;z-index:6;display:flex;gap:8px}.map-osd span,.attribution{background:rgba(13, 16, 26, 0.80);color:#e6edf7;border:1px solid var(--ui-border-control);border-radius:4px;padding:4px 7px;font-size:10px}.map-controls{position:absolute;right:10px;top:10px;z-index:6;display:flex;flex-direction:column}.map-controls button{width:32px;height:30px;background:var(--ui-bg-control);color:var(--ui-text-strong);border:1px solid var(--ui-border-strong);font-size:18px}.attribution{position:absolute;right:8px;bottom:7px;z-index:6;padding:2px 5px;font-size:9px}
+.map-view{position:relative;width:100%;height:100%;overflow:hidden;background:#18202b;user-select:none}.tiles{position:absolute;inset:0}.tile{position:absolute;width:256px;height:256px}.home-line{position:absolute;inset:0;z-index:4;pointer-events:none}.home-line line{stroke:var(--ui-warning);stroke-width:1.5;stroke-dasharray:5 4;opacity:.8}.home-marker{position:absolute;z-index:5;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--ui-warning);color:#111;font-size:11px;font-weight:800;border:2px solid var(--ui-text-strong);box-shadow:0 1px 5px var(--ui-bg-stage)}.drone-marker{position:absolute;left:50%;top:50%;z-index:5;color:var(--ui-success);font-size:30px;line-height:1;text-shadow:0 1px 5px var(--ui-bg-stage)}.map-osd{position:absolute;top:10px;left:10px;z-index:6;display:flex;gap:8px}.map-osd span,.attribution{background:rgba(13, 16, 26, 0.80);color:#e6edf7;border:1px solid var(--ui-border-control);border-radius:4px;padding:4px 7px;font-size:10px}.map-controls{position:absolute;right:10px;top:10px;z-index:6;display:flex;flex-direction:column}.map-controls button{width:38px;height:30px;background:var(--ui-bg-control);color:var(--ui-text-strong);border:1px solid var(--ui-border-strong);font-size:18px}.map-zoom-input{width:38px;height:30px;border:1px solid var(--ui-border-strong);border-top:0;border-bottom:0;background:var(--ui-bg-control);color:var(--ui-text-strong);font:10px var(--mono);text-align:center;padding:0 2px}.map-zoom-input::-webkit-inner-spin-button{display:none}.attribution{position:absolute;right:8px;bottom:7px;z-index:6;padding:2px 5px;font-size:9px}
 </style>

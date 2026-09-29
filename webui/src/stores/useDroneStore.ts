@@ -53,6 +53,8 @@ export const useDroneStore = defineStore('drone', () => {
     longitude: 0,
     flightVoltage: 0,
     remoterVoltage: 0,
+    remoterBatteryPercent: undefined,
+    phoneBatteryPercent: undefined,
     heading: 0,
     pitch: 0,
     roll: 0,

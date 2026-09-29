@@ -13,6 +13,8 @@ export interface TelemetryData {
   longitude: number
   flightVoltage: number
   remoterVoltage: number
+  remoterBatteryPercent?: number
+  phoneBatteryPercent?: number
   heading: number
   pitch: number
   roll: number

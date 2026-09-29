@@ -84,3 +84,40 @@
   --text-muted: var(--ui-text-muted);
   --mono: var(--ui-font-mono);
 }
+
+/* Selectable application backgrounds. The live video stage remains dark for contrast. */
+:root[data-ui-theme="light"] {
+  --ui-bg-app: #f4f6f8;
+  --ui-bg-header: #ffffff;
+  --ui-bg-panel: rgba(255, 255, 255, 0.96);
+  --ui-bg-card: rgba(255, 255, 255, 0.92);
+  --ui-bg-control: #f2f4f7;
+  --ui-bg-control-strong: #e9edf2;
+  --ui-bg-hover: #e4e9f0;
+  --ui-border: #d4dae2;
+  --ui-border-control: #c8d0da;
+  --ui-border-hover: #aeb9c7;
+  --ui-border-strong: #9ba7b7;
+  --ui-text: #202834;
+  --ui-text-strong: #111827;
+  --ui-text-muted: #667085;
+  --ui-text-subtle: #7b8797;
+}
+
+:root[data-ui-theme="gray"] {
+  --ui-bg-app: #d9dde2;
+  --ui-bg-header: #eceff2;
+  --ui-bg-panel: rgba(230, 233, 237, 0.97);
+  --ui-bg-card: rgba(242, 244, 246, 0.94);
+  --ui-bg-control: #dfe4e9;
+  --ui-bg-control-strong: #d4dae1;
+  --ui-bg-hover: #cbd2da;
+  --ui-border: #b8c0ca;
+  --ui-border-control: #aeb8c3;
+  --ui-border-hover: #909cab;
+  --ui-border-strong: #7e8b9b;
+  --ui-text: #242b34;
+  --ui-text-strong: #101418;
+  --ui-text-muted: #596574;
+  --ui-text-subtle: #6b7683;
+}

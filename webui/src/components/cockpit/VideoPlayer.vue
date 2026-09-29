@@ -98,46 +98,26 @@
         </div>
       </div>
 
-      <!-- Video OSD Header Overlay -->
-      <div class="video-osd">
+      <!-- Transparent status overlay; controls live in the collapsible side drawer. -->
+      <div v-if="!compact" class="video-osd">
         <div class="osd-left">
           <span class="osd-tag" :class="hasFrame ? 'live' : 'waiting'">
             {{ hasFrame ? '● Live Video' : '○ Waiting for Stream' }}
           </span>
-          <span
-            class="osd-tag mode-tag"
-            @click="toggleNextMode"
-            :title="'Click to change render mode (Current: ' + mode.toUpperCase() + ')'"
-          >
-            Render: {{ mode.toUpperCase() }}
-          </span>
-          <span v-if="resolution" class="osd-tag">
-            {{ resolution }}
-          </span>
-          <span v-if="fps > 0" class="osd-tag">
-            {{ fps }} FPS
-          </span>
-          <span v-if="hasFrame && mode === 'webcodecs'" class="osd-tag highlight-tag">
-            {{ (decoderStats.codecType || 'h265').toUpperCase() }} HW Decode
-          </span>
-          <span v-if="hasFrame && decoderStats.framesDecoded > 0" class="osd-tag">
-            {{ decoderStats.framesDecoded }} {{ t('video.frames') }}
-          </span>
+          <span class="osd-tag">Render: {{ mode.toUpperCase() }}</span>
+          <span v-if="resolution" class="osd-tag">{{ resolution }}</span>
+          <span v-if="fps > 0" class="osd-tag">{{ fps }} FPS</span>
+          <span v-if="hasFrame && mode === 'webcodecs'" class="osd-tag highlight-tag">{{ (decoderStats.codecType || 'h265').toUpperCase() }} HW Decode</span>
         </div>
+      </div>
 
-        <div class="osd-right">
-          <button class="osd-action-btn success" @click="activateSelectedLiveView" title="Activate stream using the selected drone protocol profile">
-            ⚡ {{ currentDroneProfile }} Stream
-          </button>
-          <button class="osd-action-btn" @click="requestIdr" title="Request Keyframe (IDR)">
-            🔄 Request I-Frame
-          </button>
-          <button class="osd-action-btn" @click="toggleFullscreen" :title="t('video.fullscreenTitle')">
-            ⛶ {{ t('video.fullscreen') }}
-          </button>
-          <span class="osd-item">
-            {{ t('video.battery') }}: {{ store.telemetry.battery }}% ({{ store.telemetry.flightVoltage?.toFixed(1) || '--' }}V)
-          </span>
+      <div v-if="!compact" class="video-control-drawer" :class="{ open: controlsOpen }">
+        <button class="drawer-toggle" type="button" :title="controlsOpen ? 'Hide LiveView controls' : 'Show LiveView controls'" @click="controlsOpen = !controlsOpen">{{ controlsOpen ? '›' : '‹' }}</button>
+        <div v-if="controlsOpen" class="drawer-actions">
+          <button class="osd-action-btn success" @click="activateSelectedLiveView">⚡ Stream</button>
+          <button class="osd-action-btn" @click="requestIdr">🔄 I-Frame</button>
+          <button class="osd-action-btn" @click="toggleNextMode">🔀 {{ mode.toUpperCase() }}</button>
+          <button class="osd-action-btn" @click="toggleFullscreen" :title="t('video.fullscreenTitle')">⛶ {{ t('video.fullscreen') }}</button>
         </div>
       </div>
     </div>
@@ -152,6 +132,9 @@ import { VideoExtractor, ExtractedVideoFrame } from '../../protocol/VideoExtract
 import { WebCodecsPlayer, VideoPlayerStats } from '../../video/WebCodecsPlayer'
 import { useI18n } from '../../i18n'
 
+const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
+const compact = computed(() => props.compact)
+const controlsOpen = ref(false)
 const store = useDroneStore()
 const { t } = useI18n()
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -330,7 +313,8 @@ async function refreshBackendVideoStats() {
 function toggleFullscreen() {
   if (!containerRef.value) return
   if (!document.fullscreenElement) {
-    containerRef.value.requestFullscreen?.().catch(() => {})
+    const target = containerRef.value.closest('.flight-stage') as HTMLElement | null
+    ;(target || containerRef.value).requestFullscreen?.().catch(() => {})
   } else {
     document.exitFullscreen?.().catch(() => {})
   }
@@ -600,15 +584,15 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
-.osd-left, .osd-right {
+.osd-left {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
 .osd-tag, .osd-item {
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(3px);
   height: 30px;
   min-height: 30px;
   display: inline-flex;
@@ -634,16 +618,6 @@ onUnmounted(() => {
   border-color: rgba(0, 255, 136, 0.4);
 }
 
-.mode-tag {
-  cursor: pointer;
-  pointer-events: auto;
-  user-select: none;
-}
-
-.mode-tag:hover {
-  border-color: #00e5ff;
-  color: #00e5ff;
-}
 
 .osd-action-btn {
   pointer-events: auto;
@@ -689,5 +663,11 @@ onUnmounted(() => {
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+
+.video-control-drawer{position:absolute;right:0;top:50%;z-index:25;display:flex;align-items:center;transform:translateY(-50%)}
+.drawer-toggle{width:24px;height:50px;border:1px solid rgba(255,255,255,.18);border-right:0;border-radius:7px 0 0 7px;background:rgba(4,7,12,.42);color:#fff;cursor:pointer;backdrop-filter:blur(4px)}
+.drawer-actions{display:flex;flex-direction:column;gap:6px;padding:7px;background:rgba(4,7,12,.42);border:1px solid rgba(255,255,255,.16);border-right:0;border-radius:7px 0 0 7px;backdrop-filter:blur(4px)}
+.drawer-actions .osd-action-btn{width:94px;background:rgba(0,0,0,.35)}
+:fullscreen .video-osd{top:14px;left:14px;right:14px}
 
 </style>

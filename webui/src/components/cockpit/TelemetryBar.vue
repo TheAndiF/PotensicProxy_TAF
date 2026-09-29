@@ -1,6 +1,8 @@
 <template>
-  <div class="hud-bar">
-    <div class="hud-item"><span class="lbl">{{ t('telemetry.battery') }}</span><span class="val hi">{{ store.telemetry.battery }}%</span></div>
+  <div class="hud-bar" aria-label="Flight status overlay">
+    <div class="hud-item power"><span class="lbl">{{ t('telemetry.phoneBattery') }}</span><span class="val hi">{{ percent(store.telemetry.phoneBatteryPercent) }}</span></div>
+    <div class="hud-item power"><span class="lbl">{{ t('telemetry.controllerBattery') }}</span><span class="val hi">{{ controllerBattery }}</span></div>
+    <div class="hud-item power"><span class="lbl">{{ t('telemetry.droneBattery') }}</span><span class="val hi">{{ percent(store.telemetry.battery) }}</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.altitude') }}</span><span class="val">{{ store.telemetry.altitude?.toFixed(1) || 0 }}m</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.horizontalSpeed') }}</span><span class="val">{{ store.telemetry.horizontalSpeed?.toFixed(1) || 0 }}m/s</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.verticalSpeed') }}</span><span class="val">{{ store.telemetry.verticalSpeed?.toFixed(1) || 0 }}m/s</span></div>
@@ -9,47 +11,46 @@
     <div class="hud-item"><span class="lbl">{{ t('telemetry.heading') }}</span><span class="val">{{ store.telemetry.heading || 0 }}°</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.pitch') }}</span><span class="val">{{ store.telemetry.pitch || 0 }}°</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.roll') }}</span><span class="val">{{ store.telemetry.roll || 0 }}°</span></div>
-    <div class="hud-item"><span class="lbl">{{ t('telemetry.controllerVoltage') }}</span><span class="val">{{ store.telemetry.remoterVoltage?.toFixed(1) || '--' }}V</span></div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { useI18n } from '../../i18n'
 
 const store = useDroneStore()
 const { t } = useI18n()
+
+function percent(value: number | undefined) {
+  return value != null && Number.isFinite(value) && value >= 0 ? `${Math.round(value)}%` : '--'
+}
+
+const controllerBattery = computed(() => {
+  const pct = store.telemetry.remoterBatteryPercent
+  if (pct != null && Number.isFinite(pct) && pct > 0) return `${Math.round(pct)}%`
+  const voltage = store.telemetry.remoterVoltage
+  return voltage && voltage > 0 ? `${voltage.toFixed(1)}V` : '--'
+})
 </script>
 
 <style scoped>
 .hud-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 16px;
-  padding: 8px 16px;
-  background: rgba(14, 17, 28, 0.95);
-  border-top: 1px solid var(--border);
+  gap: 6px 14px;
+  padding: 7px 12px;
+  background: rgba(5, 8, 13, 0.28);
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 7px;
+  backdrop-filter: blur(3px);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10px;
+  pointer-events: none;
+  color: #eef3f8;
+  text-shadow: 0 1px 3px rgba(0,0,0,.95);
 }
-
-.hud-item {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.lbl {
-  color: var(--text-muted);
-}
-
-.val {
-  color: var(--ui-text-strong);
-  font-weight: bold;
-}
-
-.val.hi {
-  color: var(--accent);
-}
+.hud-item{display:flex;gap:5px;align-items:center;white-space:nowrap}
+.lbl{color:#c3ccd8}.val{color:#fff;font-weight:700}.val.hi{color:#83ffc0}.power{padding-right:3px}
+@media (max-width:760px){.hud-bar{font-size:9px;gap:5px 9px;padding:5px 8px}.hud-item:nth-child(n+9){display:none}}
 </style>
-

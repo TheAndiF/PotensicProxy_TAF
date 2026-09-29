@@ -19,6 +19,14 @@
     </nav>
 
     <div class="status-tags">
+      <label class="theme-picker" :title="t('theme.title')">
+        <span>{{ t('theme.title') }}</span>
+        <select v-model="theme">
+          <option value="dark">{{ t('theme.dark') }}</option>
+          <option value="light">{{ t('theme.light') }}</option>
+          <option value="gray">{{ t('theme.gray') }}</option>
+        </select>
+      </label>
       <el-tag
         :type="store.connection.usbConnected ? 'success' : 'danger'"
         effect="dark"
@@ -42,9 +50,11 @@
 import { Compass } from '@element-plus/icons-vue'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { useI18n } from '../../i18n'
+import { useUiTheme } from '../../composables/useUiTheme'
 
 const store = useDroneStore()
 const { t } = useI18n()
+const { theme } = useUiTheme()
 </script>
 
 <style scoped>
@@ -113,6 +123,9 @@ const { t } = useI18n()
   gap: 6px;
   white-space: nowrap;
 }
+
+.theme-picker{height:30px;display:flex;align-items:center;gap:6px;padding:0 7px;border:1px solid var(--ui-border-control);border-radius:6px;background:var(--ui-bg-control);color:var(--ui-text-muted);font-size:10px}
+.theme-picker select{border:0;background:transparent;color:var(--ui-text);outline:none;font-size:10px}
 
 .status-tags :deep(.el-tag) {
   height: 30px;
