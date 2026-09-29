@@ -69,19 +69,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useCameraStore } from '../../stores/useCameraStore'
+import { CameraMediaService } from '../../services/CameraMediaService'
 
 const MIN_ANGLE = -90
 const MAX_ANGLE = 30
 const MIN_ZOOM = 1
-const MAX_ZOOM = 2
+const camera = useCameraStore()
+const MAX_ZOOM = computed(() => Math.max(MIN_ZOOM, camera.zoomMax || 4))
 const targetAngle = ref(0)
-const targetZoom = ref(1)
+const targetZoom = computed(() => camera.zoomTarget)
 
-// No confirmed measured Gimbal/Zoom feedback field exists in the current project data model.
-// Keep the actual value empty until a real telemetry source is wired in.
+// Gimbal measured feedback is still not confirmed in the current data model.
 const actualGimbal = ref<number | null>(null)
-const actualZoom = ref<number | null>(null)
+const actualZoom = computed(() => camera.zoomActual)
 
 const dialRef = ref<HTMLElement | null>(null)
 const zoomDialRef = ref<HTMLElement | null>(null)
@@ -96,7 +98,7 @@ const gimbalKnobStyle = computed(() => {
 })
 
 const zoomKnobStyle = computed(() => {
-  const normalized = (targetZoom.value - MIN_ZOOM) / (MAX_ZOOM - MIN_ZOOM)
+  const normalized = (targetZoom.value - MIN_ZOOM) / Math.max(0.01, MAX_ZOOM.value - MIN_ZOOM)
   const travel = 70
   const y = travel / 2 - normalized * travel
   return { transform: `translate(-50%, calc(-50% + ${y}px))` }
@@ -105,17 +107,33 @@ const zoomKnobStyle = computed(() => {
 const actualGimbalText = computed(() => actualGimbal.value == null ? '--' : `${actualGimbal.value.toFixed(0)}°`)
 const actualZoomText = computed(() => actualZoom.value == null ? '--' : `${actualZoom.value.toFixed(2)}x`)
 const gimbalStatus = computed(() => actualGimbal.value == null ? 'Keine Rückmeldung' : Math.abs(actualGimbal.value - targetAngle.value) <= 1 ? 'Erreicht' : 'Fährt')
-const zoomStatus = computed(() => actualZoom.value == null ? 'Keine Rückmeldung' : Math.abs(actualZoom.value - targetZoom.value) <= 0.02 ? 'Erreicht' : 'Fährt')
+const zoomStatus = computed(() => camera.zoomPending ? 'Warte auf Kamera …' : actualZoom.value == null ? 'Keine Rückmeldung' : Math.abs(actualZoom.value - targetZoom.value) <= 0.02 ? 'Erreicht' : 'Abweichung')
 
 function setAngle(value: number) {
   targetAngle.value = Math.max(MIN_ANGLE, Math.min(MAX_ANGLE, Math.round(value)))
 }
 
-function setZoom(value: number) {
+let lastZoomSend = 0
+let queuedZoomTimer: ReturnType<typeof setTimeout> | null = null
+function setZoom(value: number, immediate = false) {
   if (!Number.isFinite(value)) return
-  targetZoom.value = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(value * 100) / 100))
+  const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM.value, Math.round(value * 100) / 100))
+  camera.zoomTarget = clamped
+  const now = Date.now()
+  const due = immediate || now - lastZoomSend >= 33
+  if (due) {
+    if (queuedZoomTimer) { clearTimeout(queuedZoomTimer); queuedZoomTimer = null }
+    lastZoomSend = now
+    CameraMediaService.setZoom(clamped)
+  } else if (!queuedZoomTimer) {
+    queuedZoomTimer = setTimeout(() => {
+      queuedZoomTimer = null
+      lastZoomSend = Date.now()
+      CameraMediaService.setZoom(camera.zoomTarget)
+    }, Math.max(1, 33 - (now - lastZoomSend)))
+  }
 }
-function onZoomNumberChange(e: Event) { setZoom(Number((e.target as HTMLInputElement).value)) }
+function onZoomNumberChange(e: Event) { setZoom(Number((e.target as HTMLInputElement).value), true) }
 
 function onPointerDown(e: PointerEvent) {
   dragging = true
@@ -146,6 +164,7 @@ function onZoomPointerUp(e: PointerEvent) {
   if (!zoomDragging) return
   zoomDragging = false
   try { ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch (_) {}
+  setZoom(camera.zoomTarget, true)
 }
 function updateZoomFromPointer(e: PointerEvent) {
   if (!zoomDialRef.value) return
@@ -153,8 +172,11 @@ function updateZoomFromPointer(e: PointerEvent) {
   const usable = Math.max(1, rect.height - 30)
   const y = Math.max(15, Math.min(rect.height - 15, e.clientY - rect.top))
   const ratio = (y - 15) / usable
-  setZoom(MAX_ZOOM - ratio * (MAX_ZOOM - MIN_ZOOM))
+  setZoom(MAX_ZOOM.value - ratio * (MAX_ZOOM.value - MIN_ZOOM))
 }
+onMounted(() => {
+  CameraMediaService.getZoom()
+})
 </script>
 
 <style scoped>

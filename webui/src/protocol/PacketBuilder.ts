@@ -164,6 +164,16 @@ export class PacketBuilder {
   static buildCameraSetPhotoOsd(enable: boolean): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([38, 2, enable ? 1 : 0])) }
   static buildCameraSetPhotoGps(enable: boolean): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([59, enable ? 1 : 0])) }
   static buildCameraGetPhotoGps(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([60])) }
+  static buildCameraSetZoom(zoom: number): Uint8Array {
+    const clamped = Math.max(1, Math.min(255, Number.isFinite(zoom) ? zoom : 1))
+    const encoded = Math.round(clamped * 100)
+    const data = new Uint8Array(5)
+    const view = new DataView(data.buffer)
+    data[0] = 0x3e
+    view.setUint32(1, encoded >>> 0, true)
+    return this.buildLegacyCameraUsb(data)
+  }
+  static buildCameraGetZoom(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([0x3f])) }
   static buildCameraSetManualMode(info: { manual: boolean; shutterDen: number; iso: number; manualWb: boolean; wb: number }): Uint8Array {
     const data = new Uint8Array(32)
     const view = new DataView(data.buffer)

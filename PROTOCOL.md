@@ -268,6 +268,19 @@ FF FD [len_LE] [00 12] [cmd_byte] [data...] [xor]
 | 0xD9 | Request IDR frame |
 | 0xD2 | WifiDirectSwitch (data: 0x01=enter + 16 bytes phoneId) |
 
+### PotensicPro-compatible USB camera control path (short `0x0020`)
+
+The camera settings/gallery/zoom path uses FE `0x15` for APP_TO_CAMERA and FE `0x05` for CAMERA_TO_APP. The inner FF/FD message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
+
+| Cmd | Direction | Description |
+|-----|-----------|-------------|
+| `0x3E` | TX/RX | Set zoom ratio. TX data is `round(zoom * 100)` as uint32 little-endian. Successful RX returns the applied zoom value in the same integer format. |
+| `0x3F` | TX/RX | Get current zoom ratio. TX has no data. Successful RX returns `zoom * 100` as uint32 little-endian. |
+
+Example: `1.50x` is encoded as decimal `150`, bytes `96 00 00 00`, so the inner request payload is `3E 96 00 00 00`.
+
+Zoom capability is not a universal fixed constant. The camera config-menu response (`0x11`) contains resolution/max-zoom pairs for supported video and photo sizes; the current video-resolution entry is used by the cockpit as the active upper zoom limit.
+
 ---
 
 ## Video Stream (RX)

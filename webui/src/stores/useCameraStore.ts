@@ -11,6 +11,12 @@ export const useCameraStore = defineStore('camera', () => {
   const photoResolutionIndex = ref<number | null>(null)
   const videoEv = ref<number | null>(null)
   const photoEv = ref<number | null>(null)
+  const zoomTarget = ref(1)
+  const zoomActual = ref<number | null>(null)
+  const zoomMax = ref(4)
+  const zoomMaxSource = ref<'fallback' | 'camera'>('fallback')
+  const zoomPending = ref(false)
+  const zoomLastUpdate = ref<number | null>(null)
   const manualMode = reactive({
     loaded: false,
     manual: false,
@@ -55,6 +61,12 @@ export const useCameraStore = defineStore('camera', () => {
     photoResolutionIndex,
     videoEv,
     photoEv,
+    zoomTarget,
+    zoomActual,
+    zoomMax,
+    zoomMaxSource,
+    zoomPending,
+    zoomLastUpdate,
     manualMode,
     sd,
     galleryEntered,

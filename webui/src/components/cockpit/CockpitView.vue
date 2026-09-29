@@ -31,9 +31,9 @@
         <VirtualJoystick label="Throttle / Yaw" :value-labels="['Throttle', 'Yaw']" v-model="leftStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.yaw, y: store.rcHardwareJoysticks.throttle }" @change="onJoystickChange"/>
         <VirtualJoystick label="Pitch / Roll" :value-labels="['Pitch', 'Roll']" v-model="rightStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.roll, y: store.rcHardwareJoysticks.pitch }" @change="onRightStickChange"/>
       </div>
-      <FlightActions/>
-
       <GimbalControl/>
+
+      <FlightActions/>
 
       <section class="camera-section ui-card">
         <button class="camera-section-header" type="button" @click="cameraOpen = !cameraOpen" :aria-expanded="cameraOpen">
@@ -127,7 +127,7 @@ function throttleSend() { const now = Date.now(); if (now - lastSend >= 20) { la
 .stage-status-overlay{position:absolute;left:10px;right:10px;bottom:9px;z-index:38}
 .right-panel{background:var(--panel-bg);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;padding:14px;gap:12px}
 .joysticks-container{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;padding:10px;background:var(--card-bg);border-radius:8px;border:1px solid var(--border)}
-.camera-section{padding:0;overflow:hidden}.camera-section-header{width:100%;height:36px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;border:0;background:var(--ui-bg-card);color:var(--ui-text);font-weight:700;cursor:pointer}.camera-section-body{display:flex;flex-direction:column;gap:9px;padding:9px}
+.camera-section{padding:0;overflow:visible;flex:0 0 auto}.camera-section-header{width:100%;height:36px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;border:0;background:var(--ui-bg-card);color:var(--ui-text);font-weight:700;cursor:pointer}.camera-section-body{display:flex;flex-direction:column;gap:9px;padding:9px;overflow:visible;max-height:none}
 .controls-pip-section{display:flex;flex-direction:column;gap:7px;margin-top:2px}.pip-controls-slot{position:relative;width:100%;height:190px;flex:0 0 190px}
 @media(max-width:900px){.cockpit-layout{grid-template-columns:1fr 300px}.stage-status-overlay{right:8px;left:8px}}
 </style>

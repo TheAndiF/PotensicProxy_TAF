@@ -43,18 +43,21 @@ export class CameraMediaService {
       PacketBuilder.buildCameraGetManualModeInfo(),
       PacketBuilder.buildCameraGetExposureInfo(),
       PacketBuilder.buildCameraGetPhotoGps(),
-      PacketBuilder.buildCameraGetSdStatus()
+      PacketBuilder.buildCameraGetSdStatus(),
+      PacketBuilder.buildCameraGetZoom()
     ].forEach((p, i) => setTimeout(() => this.send(p), i * 70))
   }
 
   static setVideoResolution(index: number) {
     useDroneStore().addLog('INFO', `Set recording resolution index=${index} (Potensic camera cmd 0x0B)`)
     this.send(PacketBuilder.buildCameraSetVideoSize(index))
+    setTimeout(() => this.send(PacketBuilder.buildCameraGetConfigMenu()), 120)
   }
 
   static setPhotoResolution(index: number) {
     useDroneStore().addLog('INFO', `Set photo resolution index=${index} (Potensic camera cmd 0x0D)`)
     this.send(PacketBuilder.buildCameraSetPhotoSize(index))
+    setTimeout(() => this.send(PacketBuilder.buildCameraGetConfigMenu()), 120)
   }
 
   static setVideoEv(ev: number) {
@@ -69,6 +72,21 @@ export class CameraMediaService {
 
   static getVideoEv() { this.send(PacketBuilder.buildCameraGetEv(0)) }
   static getPhotoEv() { this.send(PacketBuilder.buildCameraGetEv(1)) }
+
+  static setZoom(zoom: number) {
+    const cam = useCameraStore()
+    const maxZoom = Math.max(1, cam.zoomMax || 4)
+    const value = Math.max(1, Math.min(maxZoom, Math.round(zoom * 100) / 100))
+    cam.zoomTarget = value
+    cam.zoomPending = true
+    useDroneStore().addLog('INFO', `Set camera zoom=${value.toFixed(2)}x (Potensic camera cmd 0x3E)`)
+    this.send(PacketBuilder.buildCameraSetZoom(value))
+  }
+
+  static getZoom() {
+    useDroneStore().addLog('INFO', 'Read camera zoom (Potensic camera cmd 0x3F)')
+    this.send(PacketBuilder.buildCameraGetZoom())
+  }
 
   static getSdStatus() {
     this.send(PacketBuilder.buildCameraGetSdStatus())
@@ -194,6 +212,62 @@ export class CameraMediaService {
     this.activeDownload = null
   }
 
+  private static parseConfigZoomCapabilities(data: Uint8Array) {
+    // PotensicPro UsbCameraHandler.parseAllParams(): data here starts at original response i+2.
+    // Layout: 4B camera state, model length+model, SD state, free/total 3B, then
+    // current+count+values for video/photo/recordEV/photoEV/split, six option bytes,
+    // followed by [videoZoomPairCount][resolution,maxZoom]... and the photo equivalent.
+    const cam = useCameraStore()
+    let pos = 0
+    if (data.length < 12) return
+    pos += 4
+    const modelLen = data[pos++] ?? 0
+    if (pos + modelLen + 7 > data.length) return
+    pos += modelLen
+    pos += 1 + 3 + 3
+
+    const readSupport = () => {
+      if (pos + 2 > data.length) return null
+      const current = data[pos++]
+      const count = data[pos++]
+      if (pos + count > data.length) return null
+      const values = Array.from(data.subarray(pos, pos + count))
+      pos += count
+      return { current, values }
+    }
+
+    const video = readSupport(); if (!video) return
+    const photo = readSupport(); if (!photo) return
+    if (!readSupport() || !readSupport() || !readSupport()) return
+
+    // Newer PotensicPro config-menu responses include RAW/video-OSD/photo-OSD/remain-capture (6 bytes).
+    if (pos + 6 > data.length) return
+    pos += 6
+    if (pos >= data.length) return
+
+    const videoPairCount = data[pos++]
+    const videoZoom = new Map<number, number>()
+    for (let n = 0; n < videoPairCount && pos + 1 < data.length; n++) {
+      videoZoom.set(data[pos++], data[pos++])
+    }
+    if (pos >= data.length) return
+    const photoPairCount = data[pos++]
+    const photoZoom = new Map<number, number>()
+    for (let n = 0; n < photoPairCount && pos + 1 < data.length; n++) {
+      photoZoom.set(data[pos++], data[pos++])
+    }
+
+    // The cockpit currently controls the live/video camera path. Use the current video resolution
+    // capability exactly as PotensicPro does for record mode. Fall back only when no capability is reported.
+    const reported = videoZoom.get(video.current)
+    if (reported != null && reported >= 1) {
+      cam.zoomMax = reported
+      cam.zoomMaxSource = 'camera'
+      if (cam.zoomTarget > reported) cam.zoomTarget = reported
+      useDroneStore().addLog('INFO', `Camera max zoom=${reported}x for current video resolution id=${video.current}`)
+    }
+  }
+
   /**
    * Handle FE 0x05 camera responses whose inner message short is 0x0020.
    * Returns true when the packet belongs to this PotensicPro-compatible camera path.
@@ -269,6 +343,22 @@ export class CameraMediaService {
           cam.manualMode.manualWb = data[7] === 1
           cam.manualMode.wb = dv.getUint16(8, true)
           cam.manualMode.loaded = true
+        }
+        break
+      case 17:
+        this.parseConfigZoomCapabilities(data)
+        break
+      case 62:
+      case 63:
+        if (data.length >= 4) {
+          const dv = new DataView(data.buffer, data.byteOffset, data.byteLength)
+          const zoom = dv.getUint32(0, true) / 100
+          if (zoom >= 1) {
+            cam.zoomActual = zoom
+            cam.zoomLastUpdate = Date.now()
+            cam.zoomPending = false
+            if (cmd === 63 && Math.abs(cam.zoomTarget - zoom) > 0.01) cam.zoomTarget = zoom
+          }
         }
         break
       case 59:
