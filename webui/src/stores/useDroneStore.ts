@@ -43,7 +43,8 @@ export const useDroneStore = defineStore('drone', () => {
 
   // Telemetry
   const telemetry = reactive<TelemetryData>({
-    battery: 0,
+    battery: -1,
+    verticalDistance: 0,
     altitude: 0,
     horizontalDistance: 0,
     horizontalSpeed: 0,

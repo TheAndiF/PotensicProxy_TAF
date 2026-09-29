@@ -43,7 +43,7 @@ data class TelemetryData(
     val verticalDistance: Float = 0f,
     val horizontalSpeed: Float = 0f,
     val verticalSpeed: Float = 0f,
-    val battery: Int = 0,
+    val battery: Int = -1,
     val pitch: Int = 0,
     val roll: Int = 0,
     val windSpeed: Float = 0f,
@@ -329,6 +329,23 @@ object TelemetryParser {
     private fun parseAtomFlightInfo(payload: ByteArray, i: Int, dataLen: Int): TelemetryData? {
         if (dataLen < 15) return null
         val fullLayout = dataLen >= 48
+        // PotensicPro FlightRevFlightInfoData advances its parser index by two bytes
+        // after the 32-bit horizontal-distance field in the long layout. All fields
+        // following horizontalDistance therefore move by +2 in that layout.
+        val postDistanceShift = if (fullLayout) 2 else 0
+        fun hasField(offset: Int, size: Int = 1) = dataLen >= offset + size
+        val verticalDistanceOffset = 17 + postDistanceShift
+        val horizontalSpeedOffset = 19 + postDistanceShift
+        val verticalSpeedOffset = 21 + postDistanceShift
+        val batteryOffset = 23 + postDistanceShift
+        val remainedFlyTimeOffset = 24 + postDistanceShift
+        val pitchOffset = 25 + postDistanceShift
+        val rollOffset = 27 + postDistanceShift
+        val windSpeedOffset = 31 + postDistanceShift
+        val windDirectionOffset = 33 + postDistanceShift
+        val gpsUtcOffset = 35 + postDistanceShift
+        val altitudeOffset = 43 + postDistanceShift
+        val tofHeightOffset = 47 + postDistanceShift
         val tel = latest.copy(
             flightVoltage = readUShortLE(payload, i) / 100f,
             remoterVoltage = readUShortLE(payload, i + 2) / 100f,
@@ -336,19 +353,21 @@ object TelemetryParser {
             latitude = readIntLE(payload, i + 8) / 1.0E7,
             satellites = payload[i + 12].toInt() and 0xFF,
             heading = readUShortLE(payload, i + 13),
-            horizontalDistance = if (dataLen >= 19) { if (fullLayout) readIntLE(payload, i + 15) / 10f else readUShortLE(payload, i + 15) / 10f } else latest.horizontalDistance,
-            verticalDistance = if (dataLen >= 19) readShortLE(payload, i + 17) / 10f else latest.verticalDistance,
-            horizontalSpeed = if (dataLen >= 21) readUShortLE(payload, i + 19) / 10f else latest.horizontalSpeed,
-            verticalSpeed = if (dataLen >= 23) readShortLE(payload, i + 21) / 10f else latest.verticalSpeed,
-            battery = if (dataLen >= 24) payload[i + 23].toInt() and 0xFF else latest.battery,
-            remainedFlyTime = if (dataLen >= 25) payload[i + 24].toInt() and 0xFF else latest.remainedFlyTime,
-            pitch = if (dataLen >= 27) readShortLE(payload, i + 25) else latest.pitch,
-            roll = if (dataLen >= 29) readShortLE(payload, i + 27) else latest.roll,
-            windSpeed = if (dataLen >= 33) readShortLE(payload, i + 31) / 100f else latest.windSpeed,
-            windDirection = if (dataLen >= 35) readShortLE(payload, i + 33) / 100f else latest.windDirection,
-            gpsUtcTime = if (dataLen >= 43) readLongLE(payload, i + 35) else latest.gpsUtcTime,
-            altitude = if (dataLen >= 47) readIntLE(payload, i + 43) / 1000f else latest.altitude,
-            tofHeight = if (dataLen >= 48) payload[i + 47].toInt() else latest.tofHeight,
+            horizontalDistance = if (hasField(15, if (fullLayout) 4 else 2)) { if (fullLayout) readIntLE(payload, i + 15) / 10f else readUShortLE(payload, i + 15) / 10f } else latest.horizontalDistance,
+            verticalDistance = if (hasField(verticalDistanceOffset, 2)) readShortLE(payload, i + verticalDistanceOffset) / 10f else latest.verticalDistance,
+            horizontalSpeed = if (hasField(horizontalSpeedOffset, 2)) readUShortLE(payload, i + horizontalSpeedOffset) / 10f else latest.horizontalSpeed,
+            verticalSpeed = if (hasField(verticalSpeedOffset, 2)) readShortLE(payload, i + verticalSpeedOffset) / 10f else latest.verticalSpeed,
+            // remainedBattery is an explicit 0..100 value supplied by the aircraft.
+            // It is not calculated from flightVoltage.
+            battery = if (hasField(batteryOffset)) (payload[i + batteryOffset].toInt() and 0xFF).takeIf { it <= 100 } ?: latest.battery else latest.battery,
+            remainedFlyTime = if (hasField(remainedFlyTimeOffset)) payload[i + remainedFlyTimeOffset].toInt() and 0xFF else latest.remainedFlyTime,
+            pitch = if (hasField(pitchOffset, 2)) readShortLE(payload, i + pitchOffset) else latest.pitch,
+            roll = if (hasField(rollOffset, 2)) readShortLE(payload, i + rollOffset) else latest.roll,
+            windSpeed = if (hasField(windSpeedOffset, 2)) readShortLE(payload, i + windSpeedOffset) / 100f else latest.windSpeed,
+            windDirection = if (hasField(windDirectionOffset, 2)) readShortLE(payload, i + windDirectionOffset) / 100f else latest.windDirection,
+            gpsUtcTime = if (hasField(gpsUtcOffset, 8)) readLongLE(payload, i + gpsUtcOffset) else latest.gpsUtcTime,
+            altitude = if (hasField(altitudeOffset, 4)) readIntLE(payload, i + altitudeOffset) / 1000f else latest.altitude,
+            tofHeight = if (hasField(tofHeightOffset)) payload[i + tofHeightOffset].toInt() else latest.tofHeight,
             remoterBatteryVoltage = remoterBatVoltage,
             remoterBatteryPercent = remoterBatPercent,
             rcThrottle = rcThrottle, rcYaw = rcYaw, rcPitch = rcPitch, rcRoll = rcRoll,
@@ -493,7 +512,7 @@ object TelemetryParser {
             verticalDistance = if (dataLen >= 21) readShortLE(payload, i + 19) / 10f else 0f,
             horizontalSpeed = if (dataLen >= 23) readUShortLE(payload, i + 21) / 10f else 0f,
             verticalSpeed = if (dataLen >= 25) readShortLE(payload, i + 23) / 10f else 0f,
-            battery = if (dataLen >= 26) payload[i + 25].toInt() and 0xFF else 0,
+            battery = if (dataLen >= 26) (payload[i + 25].toInt() and 0xFF).takeIf { it <= 100 } ?: latest.battery else latest.battery,
             pitch = if (dataLen >= 29) readShortLE(payload, i + 27) else 0,
             roll = if (dataLen >= 31) readShortLE(payload, i + 29) else 0,
             windSpeed = if (dataLen >= 35) readShortLE(payload, i + 33) / 100f else 0f,

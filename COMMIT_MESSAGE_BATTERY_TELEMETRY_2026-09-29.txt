@@ -1,0 +1,32 @@
+BL_Fix battery percentage and relative-height telemetry
+Date: 2026-09-29
+
+Summary:
+- Use the aircraft-supplied remainedBattery value as the drone battery percentage; do not derive battery percentage from voltage.
+- Apply the PotensicPro battery display threshold to percentage-backed cockpit battery indicators: green above 20%, red at or below 20%.
+- Correct the long ATOM Flight Info post-horizontal-distance +2-byte parser shift so verticalDistance and remainedBattery are read from their PotensicPro-confirmed offsets.
+- Use verticalDistance as the cockpit Height value, matching the original Potensic app, while retaining altitude and TOF as separate technical telemetry.
+- Add a collapsible Telemetry panel for height, altitude, TOF, speed, distance, attitude, satellite and voltage details.
+- Keep Camera Control directly below Joystick Control and preserve the existing Camera section behavior.
+- Update protocol notes, README and project version to 0.953 / Android versionCode 26.
+
+Validation:
+- webui/node_modules/.bin/vue-tsc --noEmit: PASS
+- npm run build: BLOCKED by missing @rollup/rollup-linux-x64-gnu in the supplied node_modules; TypeScript validation completed before the Rollup load failure.
+
+Changed files:
+- app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/Telemetry.kt
+- webui/package.json
+- webui/package-lock.json
+- webui/src/types/drone.ts
+- webui/src/stores/useDroneStore.ts
+- webui/src/protocol/PacketParser.ts
+- webui/src/components/cockpit/TelemetryBar.vue
+- webui/src/components/cockpit/TelemetryDetails.vue
+- webui/src/components/cockpit/CockpitView.vue
+- PROTOCOL.md
+- README.md
+- DOCUMENTATION/2026-09-29 - PotensicProxy_TAF - Projektdokumentation - Batterie-und-Telemetrie - v1.0.docx
+- DOCUMENTATION/2026-09-29 - PotensicProxy_TAF - Projektdokumentation - Batterie-und-Telemetrie - v1.0.pdf
+- COMMIT_MESSAGE_BATTERY_TELEMETRY_2026-09-29.txt

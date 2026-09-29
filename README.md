@@ -23,9 +23,10 @@ The cockpit currently provides:
 
 - switchable **LiveView / Map / PIP** layout;
 - a transparent telemetry/status overlay on the main image, retained when the flight stage enters fullscreen;
-- separate power indicators for **phone**, **controller** and **drone** where the corresponding values are available;
+- separate power indicators for **phone**, **controller** and **drone** where the corresponding values are available; battery percentages use the Potensic-style threshold coloring (**green > 20%**, **red <= 20%**);
 - an always-visible **Camera Control** directly below the joystick controls, with matching vertical Gimbal and Zoom controls;
 - a separate collapsible **Camera** settings section below Camera Control;
+- a collapsible **Telemetry** details section for relative height, separate altitude field, TOF, speeds, distances and additional technical values;
 - a continuous camera-zoom setpoint control in the UI (vertical drag control and direct numeric entry);
 - collapsible side controls instead of permanently covering the LiveView with action buttons;
 - map zoom using **+ / -** plus direct numeric zoom entry;
@@ -33,9 +34,15 @@ The cockpit currently provides:
 
 ### Power-value sources
 
-- **Drone battery:** flight telemetry percentage.
+- **Drone battery:** the explicit `remainedBattery` percentage supplied by the aircraft in Flight Info telemetry. TAF does **not** calculate this percentage from voltage.
 - **Controller battery:** controller battery percentage when the existing `0x1131` response provides it; controller voltage is shown as a fallback when a percentage is unavailable.
 - **Phone battery:** Android `BatteryManager`, exposed by the local backend status endpoint.
+
+### Height and telemetry display
+
+The cockpit **Height / Höhe** value follows the original Potensic app and uses `verticalDistance`, i.e. the relative flight height. The separate `altitude` field is retained as technical telemetry and is not used to overwrite the cockpit height. `tofHeight` is also kept separate and shown only in the collapsible Telemetry details section.
+
+For the long ATOM Flight Info layout, the parser applies the same +2-byte post-horizontal-distance index shift used by PotensicPro. This places `verticalDistance`, speed fields and the aircraft `remainedBattery` byte at their correct long-layout offsets.
 
 ## Camera zoom status
 
@@ -146,7 +153,6 @@ Relevant project documents include:
 
 ## Known limitations relevant to the current UI
 
-- A continuous camera zoom setpoint is available in the UI, but no confirmed zoom command/feedback source is currently wired into the protocol layer.
 - Controller percentage is shown only when the known controller status response supplies a valid percentage; otherwise voltage is used as fallback.
 - Browser hardware codec support varies by device/browser; fallback rendering paths remain available.
 - Model-specific protocol support is intentionally profile-driven and should not be generalized without confirmed captures/behavior.

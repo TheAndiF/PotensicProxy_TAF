@@ -4,6 +4,9 @@
 
 export interface TelemetryData {
   battery: number
+  /** Relative flight height used by the original Potensic cockpit. */
+  verticalDistance: number
+  /** Separate altitude field from flight telemetry; not used as cockpit height. */
   altitude: number
   horizontalDistance: number
   horizontalSpeed: number
@@ -15,10 +18,6 @@ export interface TelemetryData {
   remoterVoltage: number
   remoterBatteryPercent?: number
   phoneBatteryPercent?: number
-  cellVoltage1?: number
-  cellVoltage2?: number
-  cellVoltage3?: number
-  cellVoltage4?: number
   heading: number
   pitch: number
   roll: number

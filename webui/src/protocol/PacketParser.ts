@@ -66,16 +66,38 @@ export class PacketParser {
         if (this.droneProfile === 'ATOM' && feType === 0x21) {
           const dataOffset = 22
           if (cmdShort === 0x0000 && bytes.length >= dataOffset + 15) {
+            const innerLen = view.getUint16(18, true)
+            const dataLen = Math.max(0, innerLen - 3)
+            const fullLayout = dataLen >= 48
+            const shift = fullLayout ? 2 : 0
+            const has = (offset: number, size = 1) => dataLen >= offset + size && bytes.length >= dataOffset + offset + size
             const flightVoltage = view.getUint16(dataOffset, true) / 100.0
             const remoterVoltage = view.getUint16(dataOffset + 2, true) / 100.0
             const longitude = view.getInt32(dataOffset + 4, true) / 1e7
             const latitude = view.getInt32(dataOffset + 8, true) / 1e7
             const satellites = bytes[dataOffset + 12]
             const heading = view.getUint16(dataOffset + 13, true)
+            const horizontalDistance = has(15, fullLayout ? 4 : 2)
+              ? (fullLayout ? view.getInt32(dataOffset + 15, true) / 10.0 : view.getUint16(dataOffset + 15, true) / 10.0)
+              : 0
+            const verticalDistance = has(17 + shift, 2) ? view.getInt16(dataOffset + 17 + shift, true) / 10.0 : 0
+            const horizontalSpeed = has(19 + shift, 2) ? view.getUint16(dataOffset + 19 + shift, true) / 10.0 : 0
+            const verticalSpeed = has(21 + shift, 2) ? view.getInt16(dataOffset + 21 + shift, true) / 10.0 : 0
+            const batteryRaw = has(23 + shift) ? bytes[dataOffset + 23 + shift] : -1
+            const battery = batteryRaw >= 0 && batteryRaw <= 100 ? batteryRaw : -1
+            const altitude = has(43 + shift, 4) ? view.getInt32(dataOffset + 43 + shift, true) / 1000.0 : 0
+            const tofHeight = has(47 + shift) ? view.getInt8(dataOffset + 47 + shift) : 0
             res.category = 'telemetry'
             res.categoryLabel = 'ATOM Flight Info'
-            res.telemetry = { flightVoltage, remoterVoltage, longitude, latitude, satellites, heading }
+            res.telemetry = { flightVoltage, remoterVoltage, longitude, latitude, satellites, heading, horizontalDistance, verticalDistance, horizontalSpeed, verticalSpeed, battery, altitude, tofHeight }
             res.details = {
+              'Aircraft battery remaining': battery >= 0 ? `${battery}%` : 'Unknown',
+              'Relative flight height (verticalDistance)': `${verticalDistance.toFixed(1)} m`,
+              'Separate altitude field': `${altitude.toFixed(1)} m`,
+              'TOF ground height': `${tofHeight} raw`,
+              'Horizontal distance': `${horizontalDistance.toFixed(1)} m`,
+              'Horizontal speed': `${horizontalSpeed.toFixed(1)} m/s`,
+              'Vertical speed': `${verticalSpeed.toFixed(1)} m/s`,
               'Flight battery voltage': `${flightVoltage.toFixed(2)} V`,
               'Controller voltage': `${remoterVoltage.toFixed(2)} V`,
               'Longitude': longitude.toFixed(7),
@@ -83,7 +105,7 @@ export class PacketParser {
               'GPS satellite count': satellites,
               'directToNorth raw': heading
             }
-            res.summary = `ATOM Flight Info (0x0000): ${latitude.toFixed(6)}, ${longitude.toFixed(6)}, sat=${satellites}, headingRaw=${heading}`
+            res.summary = `ATOM Flight Info (0x0000): Battery=${battery >= 0 ? battery + '%' : 'unknown'}, Height=${verticalDistance.toFixed(1)}m, ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
             return res
           }
           if (cmdShort === 0x0001 && bytes.length >= dataOffset + 19) {
@@ -137,10 +159,12 @@ export class PacketParser {
             const satellites = bytes[34]
             const heading = view.getUint16(35, true)
             const horizontalDistance = bytes.length >= 41 ? view.getInt32(37, true) / 10.0 : 0
-            let altitude = bytes.length >= 43 ? view.getInt16(41, true) / 10.0 : 0
+            const verticalDistance = bytes.length >= 43 ? view.getInt16(41, true) / 10.0 : 0
             const horizontalSpeed = bytes.length >= 45 ? view.getUint16(43, true) / 10.0 : 0
             const verticalSpeed = bytes.length >= 47 ? view.getInt16(45, true) / 10.0 : 0
-            const battery = bytes.length >= 48 ? bytes[47] : 0
+            const batteryRaw = bytes.length >= 48 ? bytes[47] : -1
+            const battery = batteryRaw >= 0 && batteryRaw <= 100 ? batteryRaw : -1
+            let altitude = 0
             const pitch = bytes.length >= 51 ? view.getInt16(49, true) : 0
             const roll = bytes.length >= 53 ? view.getInt16(51, true) : 0
 
@@ -152,6 +176,7 @@ export class PacketParser {
 
             res.telemetry = {
               battery,
+              verticalDistance,
               altitude,
               horizontalDistance,
               horizontalSpeed,
@@ -167,7 +192,8 @@ export class PacketParser {
             }
             res.details = {
               'Battery remaining': `${battery}%`,
-              'Altitude above ground': `${altitude.toFixed(1)} m`,
+              'Relative flight height': `${verticalDistance.toFixed(1)} m`,
+              'Separate altitude field': `${altitude.toFixed(1)} m`,
               'Horizontal ground distance': `${horizontalDistance.toFixed(1)} m`,
               'Horizontal speed': `${horizontalSpeed.toFixed(1)} m/s`,
               'Vertical speed': `${verticalSpeed.toFixed(1)} m/s`,
@@ -179,7 +205,7 @@ export class PacketParser {
               'Aircraft roll': `${roll}°`,
               'Latitude / longitude': `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
             }
-            res.summary = `Flight Telemetry: Battery=${battery}%, Altitude=${altitude.toFixed(1)}m, Speed=${horizontalSpeed.toFixed(1)}m/s, Satellites=${satellites}, Voltage=${flightVoltage.toFixed(1)}V`
+            res.summary = `Flight Telemetry: Battery=${battery >= 0 ? battery + '%' : 'unknown'}, Height=${verticalDistance.toFixed(1)}m, AltitudeField=${altitude.toFixed(1)}m, Speed=${horizontalSpeed.toFixed(1)}m/s, Satellites=${satellites}, Voltage=${flightVoltage.toFixed(1)}V`
             return res
           } catch (e: any) {
             res.summary = 'Telemetry parse error: ' + e.message

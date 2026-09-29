@@ -78,6 +78,38 @@ frame[frame.size - 1] = xor.toByte()
 
 ## Telemetry (RX)
 
+### FE 0x21, short 0x0000 — ATOM FlightRevFlightInfoData (PotensicPro)
+
+The original PotensicPro parser supplies the cockpit battery percentage and relative height directly from this Flight Info frame. The aircraft battery percentage is **not derived from voltage**.
+
+For the long layout, PotensicPro reads `horizontalDistance` as a 32-bit value and then advances the parser base by two bytes before all following fields. Effective long-layout offsets are therefore:
+
+| Offset | Type | Scale | Field |
+|--------|------|-------|-------|
+| +0 | uint16 LE | /100 | flightVoltage |
+| +2 | uint16 LE | /100 | remoterVoltage |
+| +4 | int32 LE | /1E7 | longitude |
+| +8 | int32 LE | /1E7 | latitude |
+| +12 | uint8 | | satellitesNum |
+| +13 | uint16 LE | | directToNorth |
+| +15 | int32 LE | /10 | horizontalDistance |
+| +19 | int16 LE | /10 | **verticalDistance** (relative cockpit height) |
+| +21 | uint16 LE | /10 | horizontalSpeed |
+| +23 | int16 LE | /10 | verticalSpeed |
+| +25 | uint8 | | **remainedBattery (0-100%)** |
+| +26 | uint8 | | remainedFlyTime |
+| +27 | int16 LE | | angleOfPitch |
+| +29 | int16 LE | | angleOfRoll |
+| +33 | int16 LE | /100 | windSpeed |
+| +35 | int16 LE | /100 | windDirection |
+| +37 | int64 LE | | gpsUtcTime |
+| +45 | int32 LE | /1000 | altitude (separate altitude field) |
+| +49 | int8 | | tofHeight |
+
+TAF cockpit semantics follow PotensicPro: **Height/Höhe = `verticalDistance`**. The separate `altitude` and `tofHeight` values remain available as technical telemetry and must not overwrite the cockpit height.
+
+PotensicPro battery display threshold: **green above 20%**, **red at 20% or below**. The original takeoff logic additionally warns below 20% and suppresses takeoff below 5%; these behavioral thresholds are documented here but are not automatically applied to unrelated controls.
+
 ### FE 0x21, short 0x0200 — FlightRevGps (vt1.java)
 
 Main GPS/flight telemetry. Data starts at inner offset 6.

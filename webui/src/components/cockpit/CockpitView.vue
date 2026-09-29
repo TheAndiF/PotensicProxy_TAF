@@ -44,6 +44,15 @@
         </div>
       </section>
 
+      <section class="telemetry-section ui-card">
+        <button class="telemetry-section-header" type="button" @click="telemetryOpen = !telemetryOpen" :aria-expanded="telemetryOpen">
+          <span>📡 Telemetrie</span><span>{{ telemetryOpen ? '▾' : '▸' }}</span>
+        </button>
+        <div v-if="telemetryOpen" class="telemetry-section-body">
+          <TelemetryDetails />
+        </div>
+      </section>
+
       <div v-show="pipVisible && pipPosition === 'controls'" class="controls-pip-section">
         <div class="panel-title">{{ secondaryLabel }} preview</div>
         <div id="pip-controls-slot" class="pip-slot pip-controls-slot" title="Swap Liveview and map" @click="swapViews"></div>
@@ -75,6 +84,7 @@ import VirtualJoystick from './VirtualJoystick.vue'
 import GimbalControl from './GimbalControl.vue'
 import FlightActions from './FlightActions.vue'
 import CameraMediaPanel from './CameraMediaPanel.vue'
+import TelemetryDetails from './TelemetryDetails.vue'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { DroneControlService } from '../../services/DroneControlService'
 import { useCockpitViewSettings } from '../../composables/useCockpitViewSettings'
@@ -85,6 +95,8 @@ const teleportsReady = ref(false)
 const viewMenuOpen = ref(false)
 const cameraOpen = ref(localStorage.getItem('potensic-camera-panel-open') !== 'false')
 watch(cameraOpen, value => localStorage.setItem('potensic-camera-panel-open', String(value)))
+const telemetryOpen = ref(localStorage.getItem('potensic-telemetry-panel-open') === 'true')
+watch(telemetryOpen, value => localStorage.setItem('potensic-telemetry-panel-open', String(value)))
 
 const secondaryTarget = computed(() => pipPosition.value === 'controls' ? '#pip-controls-slot' : '#pip-overlay-slot')
 const hiddenTarget = '#hidden-view-slot'
@@ -127,7 +139,7 @@ function throttleSend() { const now = Date.now(); if (now - lastSend >= 20) { la
 .stage-status-overlay{position:absolute;left:10px;right:10px;bottom:9px;z-index:38}
 .right-panel{background:var(--panel-bg);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;padding:14px;gap:12px}
 .joysticks-container{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;padding:10px;background:var(--card-bg);border-radius:8px;border:1px solid var(--border)}
-.camera-section{padding:0;overflow:visible;flex:0 0 auto}.camera-section-header{width:100%;height:36px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;border:0;background:var(--ui-bg-card);color:var(--ui-text);font-weight:700;cursor:pointer}.camera-section-body{display:flex;flex-direction:column;gap:9px;padding:9px;overflow:visible;max-height:none}
+.camera-section,.telemetry-section{padding:0;overflow:visible;flex:0 0 auto}.camera-section-header,.telemetry-section-header{width:100%;height:36px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;border:0;background:var(--ui-bg-card);color:var(--ui-text);font-weight:700;cursor:pointer}.camera-section-body,.telemetry-section-body{display:flex;flex-direction:column;gap:9px;padding:9px;overflow:visible;max-height:none}
 .controls-pip-section{display:flex;flex-direction:column;gap:7px;margin-top:2px}.pip-controls-slot{position:relative;width:100%;height:190px;flex:0 0 190px}
 @media(max-width:900px){.cockpit-layout{grid-template-columns:1fr 300px}.stage-status-overlay{right:8px;left:8px}}
 </style>
