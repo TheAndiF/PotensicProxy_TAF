@@ -2,7 +2,7 @@
   <div class="hud-bar" aria-label="Flight status overlay">
     <div class="hud-item power"><span class="lbl">{{ t('telemetry.phoneBattery') }}</span><span class="val hi">{{ percent(store.telemetry.phoneBatteryPercent) }}</span></div>
     <div class="hud-item power"><span class="lbl">{{ t('telemetry.controllerBattery') }}</span><span class="val hi">{{ controllerBattery }}</span></div>
-    <div class="hud-item power"><span class="lbl">{{ t('telemetry.droneBattery') }}</span><span class="val hi">{{ percent(store.telemetry.battery) }}</span></div>
+    <div class="hud-item power"><span class="lbl">{{ t('telemetry.droneBattery') }}</span><span class="val hi">{{ droneBattery }}</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.altitude') }}</span><span class="val">{{ store.telemetry.altitude?.toFixed(1) || 0 }}m</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.horizontalSpeed') }}</span><span class="val">{{ store.telemetry.horizontalSpeed?.toFixed(1) || 0 }}m/s</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.verticalSpeed') }}</span><span class="val">{{ store.telemetry.verticalSpeed?.toFixed(1) || 0 }}m/s</span></div>
@@ -30,6 +30,26 @@ const controllerBattery = computed(() => {
   const pct = store.telemetry.remoterBatteryPercent
   if (pct != null && Number.isFinite(pct) && pct > 0) return `${Math.round(pct)}%`
   const voltage = store.telemetry.remoterVoltage
+  return voltage && voltage > 0 ? `${voltage.toFixed(1)}V` : '--'
+})
+
+const droneBattery = computed(() => {
+  const pct = store.telemetry.battery
+  if (Number.isFinite(pct) && pct > 0 && pct <= 100) return `${Math.round(pct)}%`
+
+  // The ATOM battery block exposes confirmed per-cell voltages even on links where
+  // the flight-info percentage is not present. Show the measured pack voltage as a
+  // factual fallback instead of presenting an initial 0% as a real battery level.
+  const cells = [
+    store.telemetry.cellVoltage1,
+    store.telemetry.cellVoltage2,
+    store.telemetry.cellVoltage3,
+    store.telemetry.cellVoltage4,
+  ].filter((value): value is number => value != null && Number.isFinite(value) && value > 0)
+  const packVoltage = cells.reduce((sum, value) => sum + value, 0)
+  if (packVoltage > 0) return `${packVoltage.toFixed(1)}V`
+
+  const voltage = store.telemetry.flightVoltage
   return voltage && voltage > 0 ? `${voltage.toFixed(1)}V` : '--'
 })
 </script>

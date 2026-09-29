@@ -22,7 +22,7 @@ System contains the moved **Flight / Calibration / Smart Modes** area together w
 The cockpit currently provides:
 
 - switchable **LiveView / Map / PIP** layout;
-- a transparent telemetry/status overlay on the main image, retained when the flight stage enters fullscreen;
+- a transparent telemetry/status overlay on the main image, retained when the flight stage enters fullscreen; the LiveView scales to the available fullscreen area while preserving its aspect ratio;
 - separate power indicators for **phone**, **controller** and **drone** where the corresponding values are available;
 - an always-visible **Camera Control** directly below the joystick controls, with matching vertical Gimbal and Zoom controls;
 - a separate collapsible **Camera** settings section below Camera Control;
@@ -33,7 +33,7 @@ The cockpit currently provides:
 
 ### Power-value sources
 
-- **Drone battery:** flight telemetry percentage.
+- **Drone battery:** flight telemetry percentage when available; otherwise the UI falls back to confirmed measured battery/flight voltage instead of showing an unverified 0%.
 - **Controller battery:** controller battery percentage when the existing `0x1131` response provides it; controller voltage is shown as a fallback when a percentage is unavailable.
 - **Phone battery:** Android `BatteryManager`, exposed by the local backend status endpoint.
 

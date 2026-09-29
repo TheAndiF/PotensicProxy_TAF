@@ -1,0 +1,28 @@
+BL_Fix fullscreen scaling and drone battery fallback
+Date: 2026-09-29
+
+Summary:
+- Scale the LiveView canvas/image to the complete available fullscreen stage while preserving the video aspect ratio.
+- Keep the existing confirmed drone battery percentage as the preferred display value.
+- When no valid percentage is available, show confirmed measured battery cell/flight voltage instead of presenting the initial 0% as a real battery level.
+- Add the confirmed battery-cell telemetry fields to the frontend type used by the status overlay.
+- Update the project README and bump application/frontend version to 0.951 (Android versionCode 24).
+- Preserve all unconfirmed protocol areas unchanged; no percentage is estimated from raw battery capacity values.
+
+Verification:
+- Vue/TypeScript validation: PASS (vue-tsc --noEmit).
+- Vite bundle: BLOCKED in this environment because the uploaded node_modules only contains Windows Rollup native packages and the Linux optional binary is unavailable offline.
+- Android assembleDebug: BLOCKED in this environment because Gradle 8.11.1 is not cached and services.gradle.org cannot be resolved from the build sandbox.
+
+Changed files:
+- app/build.gradle.kts
+- webui/package.json
+- webui/src/components/cockpit/TelemetryBar.vue
+- webui/src/components/cockpit/VideoPlayer.vue
+- webui/src/types/drone.ts
+- README.md
+- COMMIT_MESSAGE_FULLSCREEN_BATTERY_2026-09-29.txt
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-09-29_v1.2.md
+- PATCH_FULLSCREEN_BATTERY_v1.2.patch
+- DOCUMENTATION/2026-09-29 - PotensicProxy_TAF - Projektdokumentation - Fullscreen-und-Batterieanzeige - v1.2.docx
+- DOCUMENTATION/2026-09-29 - PotensicProxy_TAF - Projektdokumentation - Fullscreen-und-Batterieanzeige - v1.2.pdf

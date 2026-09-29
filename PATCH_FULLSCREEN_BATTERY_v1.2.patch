@@ -1,0 +1,117 @@
+diff --git a/README.md b/README.md
+index e2d6f71..8343334 100644
+--- a/README.md
++++ b/README.md
+@@ -22,7 +22,7 @@ System contains the moved **Flight / Calibration / Smart Modes** area together w
+ The cockpit currently provides:
+ 
+ - switchable **LiveView / Map / PIP** layout;
+-- a transparent telemetry/status overlay on the main image, retained when the flight stage enters fullscreen;
++- a transparent telemetry/status overlay on the main image, retained when the flight stage enters fullscreen; the LiveView scales to the available fullscreen area while preserving its aspect ratio;
+ - separate power indicators for **phone**, **controller** and **drone** where the corresponding values are available;
+ - an always-visible **Camera Control** directly below the joystick controls, with matching vertical Gimbal and Zoom controls;
+ - a separate collapsible **Camera** settings section below Camera Control;
+@@ -33,7 +33,7 @@ The cockpit currently provides:
+ 
+ ### Power-value sources
+ 
+-- **Drone battery:** flight telemetry percentage.
++- **Drone battery:** flight telemetry percentage when available; otherwise the UI falls back to confirmed measured battery/flight voltage instead of showing an unverified 0%.
+ - **Controller battery:** controller battery percentage when the existing `0x1131` response provides it; controller voltage is shown as a fallback when a percentage is unavailable.
+ - **Phone battery:** Android `BatteryManager`, exposed by the local backend status endpoint.
+ 
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 9ba1dbd..562d4fe 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -11,8 +11,8 @@ android {
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 23
+-        versionName = "0.950"
++        versionCode = 24
++        versionName = "0.951"
+     }
+ 
+     buildTypes {
+diff --git a/webui/package.json b/webui/package.json
+index e901d55..92fa3da 100644
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.950",
++  "version": "0.951",
+   "private": true,
+   "type": "module",
+   "scripts": {
+diff --git a/webui/src/components/cockpit/TelemetryBar.vue b/webui/src/components/cockpit/TelemetryBar.vue
+index 48c3699..97212c1 100644
+--- a/webui/src/components/cockpit/TelemetryBar.vue
++++ b/webui/src/components/cockpit/TelemetryBar.vue
+@@ -2,7 +2,7 @@
+   <div class="hud-bar" aria-label="Flight status overlay">
+     <div class="hud-item power"><span class="lbl">{{ t('telemetry.phoneBattery') }}</span><span class="val hi">{{ percent(store.telemetry.phoneBatteryPercent) }}</span></div>
+     <div class="hud-item power"><span class="lbl">{{ t('telemetry.controllerBattery') }}</span><span class="val hi">{{ controllerBattery }}</span></div>
+-    <div class="hud-item power"><span class="lbl">{{ t('telemetry.droneBattery') }}</span><span class="val hi">{{ percent(store.telemetry.battery) }}</span></div>
++    <div class="hud-item power"><span class="lbl">{{ t('telemetry.droneBattery') }}</span><span class="val hi">{{ droneBattery }}</span></div>
+     <div class="hud-item"><span class="lbl">{{ t('telemetry.altitude') }}</span><span class="val">{{ store.telemetry.altitude?.toFixed(1) || 0 }}m</span></div>
+     <div class="hud-item"><span class="lbl">{{ t('telemetry.horizontalSpeed') }}</span><span class="val">{{ store.telemetry.horizontalSpeed?.toFixed(1) || 0 }}m/s</span></div>
+     <div class="hud-item"><span class="lbl">{{ t('telemetry.verticalSpeed') }}</span><span class="val">{{ store.telemetry.verticalSpeed?.toFixed(1) || 0 }}m/s</span></div>
+@@ -32,6 +32,26 @@ const controllerBattery = computed(() => {
+   const voltage = store.telemetry.remoterVoltage
+   return voltage && voltage > 0 ? `${voltage.toFixed(1)}V` : '--'
+ })
++
++const droneBattery = computed(() => {
++  const pct = store.telemetry.battery
++  if (Number.isFinite(pct) && pct > 0 && pct <= 100) return `${Math.round(pct)}%`
++
++  // The ATOM battery block exposes confirmed per-cell voltages even on links where
++  // the flight-info percentage is not present. Show the measured pack voltage as a
++  // factual fallback instead of presenting an initial 0% as a real battery level.
++  const cells = [
++    store.telemetry.cellVoltage1,
++    store.telemetry.cellVoltage2,
++    store.telemetry.cellVoltage3,
++    store.telemetry.cellVoltage4,
++  ].filter((value): value is number => value != null && Number.isFinite(value) && value > 0)
++  const packVoltage = cells.reduce((sum, value) => sum + value, 0)
++  if (packVoltage > 0) return `${packVoltage.toFixed(1)}V`
++
++  const voltage = store.telemetry.flightVoltage
++  return voltage && voltage > 0 ? `${voltage.toFixed(1)}V` : '--'
++})
+ </script>
+ 
+ <style scoped>
+diff --git a/webui/src/components/cockpit/VideoPlayer.vue b/webui/src/components/cockpit/VideoPlayer.vue
+index e2812c4..97f07c6 100644
+--- a/webui/src/components/cockpit/VideoPlayer.vue
++++ b/webui/src/components/cockpit/VideoPlayer.vue
+@@ -478,6 +478,8 @@ onUnmounted(() => {
+ }
+ 
+ .video-feed {
++  width: 100%;
++  height: 100%;
+   max-width: 100%;
+   max-height: 100%;
+   object-fit: contain;
+diff --git a/webui/src/types/drone.ts b/webui/src/types/drone.ts
+index a724e55..0516514 100644
+--- a/webui/src/types/drone.ts
++++ b/webui/src/types/drone.ts
+@@ -15,6 +15,10 @@ export interface TelemetryData {
+   remoterVoltage: number
+   remoterBatteryPercent?: number
+   phoneBatteryPercent?: number
++  cellVoltage1?: number
++  cellVoltage2?: number
++  cellVoltage3?: number
++  cellVoltage4?: number
+   heading: number
+   pitch: number
+   roll: number

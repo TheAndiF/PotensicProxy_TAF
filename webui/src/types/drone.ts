@@ -15,6 +15,10 @@ export interface TelemetryData {
   remoterVoltage: number
   remoterBatteryPercent?: number
   phoneBatteryPercent?: number
+  cellVoltage1?: number
+  cellVoltage2?: number
+  cellVoltage3?: number
+  cellVoltage4?: number
   heading: number
   pitch: number
   roll: number
