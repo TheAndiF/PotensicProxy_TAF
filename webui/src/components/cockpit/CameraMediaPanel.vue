@@ -1,6 +1,6 @@
 <template>
   <div class="camera-media-panel ui-card">
-    <div class="panel-title">📷 Camera & Media</div>
+    <div class="panel-title">📷 Camera</div>
 
     <div class="camera-grid">
       <label class="camera-field">
@@ -61,32 +61,6 @@
       <span class="taf-status-field">Total: {{ sizeLabel(camera.sd.totalMb) }}</span>
     </div>
 
-    <div class="media-head">
-      <span class="ui-subtitle">Camera gallery</span>
-      <div class="button-row compact">
-        <button v-if="!camera.galleryEntered" class="taf-btn taf-btn--compact" @click="CameraMediaService.enterGallery()">Open</button>
-        <button v-else class="taf-btn taf-btn--compact" @click="CameraMediaService.refreshGallery()">Refresh</button>
-        <button v-if="camera.galleryEntered" class="taf-btn taf-btn--compact" @click="CameraMediaService.quitGallery()">Close</button>
-      </div>
-    </div>
-
-    <div v-if="camera.galleryLoading" class="gallery-empty">Reading media list…</div>
-    <div v-else-if="camera.media.length === 0" class="gallery-empty">No camera media loaded.</div>
-    <div v-else class="gallery-list">
-      <div v-for="file in camera.media" :key="file.type + ':' + file.name" class="gallery-item">
-        <span class="media-icon">{{ file.type === 'photo' ? '🖼️' : '🎞️' }}</span>
-        <span class="media-name" :title="file.name">{{ file.name }}</span>
-        <button class="taf-btn taf-btn--compact" :disabled="camera.download.active" @click="download(file.name)">↓</button>
-        <button class="taf-btn taf-btn--compact taf-btn--danger" :disabled="camera.download.active" @click="deleteFile(file.name)">×</button>
-      </div>
-    </div>
-
-    <div v-if="camera.download.active || camera.download.error" class="download-state">
-      <span>{{ camera.download.fileName }}</span>
-      <span v-if="camera.download.active">{{ camera.download.progress }}%</span>
-      <span v-else class="download-error">{{ camera.download.error }}</span>
-    </div>
-
     <div class="protocol-note">PotensicPro USB camera path: FE 0x15 → FF FD → message 0x0020.</div>
   </div>
 </template>
@@ -95,10 +69,8 @@
 import { computed, ref, watch } from 'vue'
 import { CameraMediaService } from '../../services/CameraMediaService'
 import { useCameraStore } from '../../stores/useCameraStore'
-import { useDroneStore } from '../../stores/useDroneStore'
 
 const camera = useCameraStore()
-const drone = useDroneStore()
 
 const videoOptions = [
   { index: 0, label: '4K 30 fps' },
@@ -150,17 +122,6 @@ function formatSd() {
   }
 }
 
-async function download(fileName: string) {
-  try {
-    await CameraMediaService.downloadFile(fileName)
-  } catch (e: any) {
-    drone.addLog('ERROR', `Camera download failed: ${e?.message || e}`)
-  }
-}
-
-function deleteFile(fileName: string) {
-  if (window.confirm(`Delete camera file "${fileName}"?`)) CameraMediaService.deleteFile(fileName)
-}
 </script>
 
 <style scoped>
@@ -168,12 +129,8 @@ function deleteFile(fileName: string) {
 .camera-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .camera-field{display:flex;flex-direction:column;gap:4px;color:var(--ui-text-muted);font-size:var(--ui-font-xs)}
 .taf-input{height:var(--ui-control-h-compact);border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control);color:var(--ui-text);padding:0 7px;font:inherit}
-.button-row{display:flex;gap:6px;flex-wrap:wrap}.button-row.compact{justify-content:flex-end}.manual-section{border-top:1px solid var(--ui-border);padding-top:8px;display:flex;flex-direction:column;gap:7px}.toggle-row{display:flex;gap:10px;flex-wrap:wrap;font-size:var(--ui-font-xs);color:var(--ui-text-muted)}
+.button-row{display:flex;gap:6px;flex-wrap:wrap}.manual-section{border-top:1px solid var(--ui-border);padding-top:8px;display:flex;flex-direction:column;gap:7px}.toggle-row{display:flex;gap:10px;flex-wrap:wrap;font-size:var(--ui-font-xs);color:var(--ui-text-muted)}
 .sd-row{display:flex;gap:6px;flex-wrap:wrap}.sd-row .taf-status-field{flex:1;min-width:88px}
-.media-head{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid var(--ui-border);padding-top:8px}
-.gallery-list{max-height:190px;overflow:auto;display:flex;flex-direction:column;gap:4px}
-.gallery-item{display:grid;grid-template-columns:22px minmax(0,1fr) 34px 34px;gap:4px;align-items:center;background:var(--ui-bg-control-strong);border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);padding:4px}
-.media-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:var(--ui-font-xs) var(--ui-font-mono);color:var(--ui-text)}
-.gallery-empty,.protocol-note,.download-state{font-size:var(--ui-font-xs);color:var(--ui-text-muted)}
-.protocol-note{opacity:.8}.download-state{display:flex;justify-content:space-between;gap:6px}.download-error{color:var(--ui-danger)}
+.protocol-note{font-size:var(--ui-font-xs);color:var(--ui-text-muted)}
+.protocol-note{opacity:.8}
 </style>

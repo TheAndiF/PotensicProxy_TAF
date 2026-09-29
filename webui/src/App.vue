@@ -4,9 +4,10 @@
 
     <main class="view-container">
       <CockpitView v-if="store.activeTab === 'cockpit'" />
+      <MapMainView v-if="store.activeTab === 'map'" />
+      <GalleryView v-if="store.activeTab === 'gallery'" />
       <UsbManagerView v-show="store.activeTab === 'usb'" />
       <DebugConsoleView v-if="store.activeTab === 'debug'" />
-      <LogConsole v-show="store.activeTab === 'logs'" />
     </main>
   </div>
 </template>
@@ -15,9 +16,10 @@
 import { onMounted, onUnmounted } from 'vue'
 import HeaderBar from './components/header/HeaderBar.vue'
 import CockpitView from './components/cockpit/CockpitView.vue'
+import MapMainView from './components/map/MapMainView.vue'
+import GalleryView from './components/gallery/GalleryView.vue'
 import UsbManagerView from './components/usb/UsbManagerView.vue'
 import DebugConsoleView from './components/debug/DebugConsoleView.vue'
-import LogConsole from './components/logs/LogConsole.vue'
 import { useDroneStore } from './stores/useDroneStore'
 import { UsbTransportService } from './services/UsbTransportService'
 

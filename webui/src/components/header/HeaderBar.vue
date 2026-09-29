@@ -10,9 +10,10 @@
     <nav class="tabs-group" aria-label="Main navigation">
       <el-radio-group v-model="store.activeTab" size="small" class="main-tabs">
         <el-radio-button value="cockpit">🎮 {{ t('header.cockpit') }}</el-radio-button>
+        <el-radio-button value="map">🗺️ {{ t('header.map') }}</el-radio-button>
+        <el-radio-button value="gallery">🖼️ {{ t('header.gallery') }}</el-radio-button>
         <el-radio-button value="usb">⚡ {{ t('header.usb') }}</el-radio-button>
         <el-radio-button value="debug">🛠️ {{ t('header.engineering') }}</el-radio-button>
-        <el-radio-button value="logs">📋 {{ t('header.logs') }}</el-radio-button>
       </el-radio-group>
     </nav>
 
@@ -86,7 +87,7 @@ const { t } = useI18n()
 }
 
 .main-tabs :deep(.el-radio-button__inner) {
-  min-width: 118px;
+  min-width: 108px;
   height: 30px;
   display: inline-flex;
   align-items: center;

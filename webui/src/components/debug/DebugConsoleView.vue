@@ -9,7 +9,7 @@
           <el-radio-button value="sensor">⚖️ {{ t('engineering.sensor') }}</el-radio-button>
           <el-radio-button value="rid">📡 {{ t('engineering.rid') }}</el-radio-button>
           <el-radio-button value="relay">🌐 {{ t('engineering.relay') }}</el-radio-button>
-          <el-radio-button value="map">🗺️ {{ t('engineering.map') }}</el-radio-button>
+          <el-radio-button value="logs">📋 {{ t('engineering.logs') }}</el-radio-button>
         </el-radio-group>
       </div>
 
@@ -651,9 +651,9 @@
         <RemoteRelayPanel />
       </div>
 
-      <!-- ================= Sub-tab 6: Map settings ================= -->
-      <div v-show="debugStore.activeSubTab === 'map'" class="sub-tab-pane map-pane">
-        <MapSettingsView />
+      <!-- ================= Sub-tab 6: System logs ================= -->
+      <div v-show="debugStore.activeSubTab === 'logs'" class="sub-tab-pane logs-pane">
+        <LogConsole />
       </div>
     </div>
   </div>
@@ -665,7 +665,7 @@ import { useDebugStore } from '../../stores/useDebugStore'
 import { DroneControlService } from '../../services/DroneControlService'
 import { ElMessage } from 'element-plus'
 import RemoteRelayPanel from './RemoteRelayPanel.vue'
-import MapSettingsView from '../settings/MapSettingsView.vue'
+import LogConsole from '../logs/LogConsole.vue'
 import DroneProfilePanel from './DroneProfilePanel.vue'
 import LanguagePanel from './LanguagePanel.vue'
 import { useI18n } from '../../i18n'
