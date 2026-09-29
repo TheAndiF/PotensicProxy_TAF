@@ -468,6 +468,36 @@ export class PacketBuilder {
   // === Joysticks & Controls ===
 
   /**
+   * PotensicPro Send4AxisData (function code 0x0001).
+   * Browser axes use -1000..1000; the official app serializes each axis as
+   * an unsigned byte 0..250 with neutral=125. The payload is sent on the
+   * APP_TO_FLIGHT transport (FE 0x14).
+   */
+  static buildFourAxisControl(
+    throttle = 0,
+    yaw = 0,
+    pitch = 0,
+    roll = 0,
+    gimbal = 0,
+    channel = 4
+  ): Uint8Array {
+    const axisByte = (value: number) => {
+      const clamped = Math.max(-1000, Math.min(1000, Math.round(value)))
+      return Math.max(0, Math.min(250, Math.trunc((clamped * 125) / 1000) + 125))
+    }
+    const data = new Uint8Array(11)
+    data[0] = channel & 0xff
+    data[1] = axisByte(throttle)
+    data[2] = axisByte(yaw)
+    data[3] = axisByte(pitch)
+    data[4] = axisByte(roll)
+    data[5] = axisByte(gimbal)
+    data[6] = 125 // camera axis neutral, matching Send4AxisData constructor
+    // data[7..10] remain zero: light/other/calibration/photo-record toggles
+    return this.buildFlightData(0x0001, data)
+  }
+
+  /**
    * HighFrequencyData3 Control Packet (37 bytes)
    * Values range: -1000..1000
    */

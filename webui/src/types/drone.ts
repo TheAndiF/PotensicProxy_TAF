@@ -80,6 +80,17 @@ export interface TelemetryData {
   gimbalTuningYaw?: number
   gimbalReset?: number
   gimbalSettingsValid?: boolean
+  /** Confirmed FlightRevGimbalStateData (function 0x0017). */
+  gimbalRoll?: number
+  gimbalPitch?: number
+  gimbalYaw?: number
+  gimbalRollSpeed?: number
+  gimbalPitchSpeedActual?: number
+  gimbalYawSpeed?: number
+  gimbalErrorStatus?: number
+  gimbalPitchChanging?: boolean
+  gimbalControlPitch?: number
+  gimbalStateValid?: boolean
   rcThrottle?: number
   rcYaw?: number
   rcPitch?: number

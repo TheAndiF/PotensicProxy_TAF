@@ -109,6 +109,17 @@ data class TelemetryData(
     val gimbalTuningYaw: Int = 0,
     val gimbalReset: Int = 0,
     val gimbalSettingsValid: Boolean = false,
+    // Confirmed ATOM gimbal state block (0x0017 / 23)
+    val gimbalRoll: Float = 0f,
+    val gimbalPitch: Float = 0f,
+    val gimbalYaw: Float = 0f,
+    val gimbalRollSpeed: Float = 0f,
+    val gimbalPitchSpeedActual: Float = 0f,
+    val gimbalYawSpeed: Float = 0f,
+    val gimbalErrorStatus: Int = 0,
+    val gimbalPitchChanging: Boolean = false,
+    val gimbalControlPitch: Float = 0f,
+    val gimbalStateValid: Boolean = false,
     // Confirmed ATOM Home Point (0x0005)
     val homeLongitude: Double = 0.0,
     val homeLatitude: Double = 0.0,
@@ -215,6 +226,16 @@ data class TelemetryData(
         put("gimbalTuningYaw", gimbalTuningYaw)
         put("gimbalReset", gimbalReset)
         put("gimbalSettingsValid", gimbalSettingsValid)
+        put("gimbalRoll", gimbalRoll)
+        put("gimbalPitch", gimbalPitch)
+        put("gimbalYaw", gimbalYaw)
+        put("gimbalRollSpeed", gimbalRollSpeed)
+        put("gimbalPitchSpeedActual", gimbalPitchSpeedActual)
+        put("gimbalYawSpeed", gimbalYawSpeed)
+        put("gimbalErrorStatus", gimbalErrorStatus)
+        put("gimbalPitchChanging", gimbalPitchChanging)
+        put("gimbalControlPitch", gimbalControlPitch)
+        put("gimbalStateValid", gimbalStateValid)
         put("homeLongitude", homeLongitude)
         put("homeLatitude", homeLatitude)
         put("homeSynced", homeSynced)
@@ -301,6 +322,7 @@ object TelemetryParser {
                     0x0002 -> if (profileId == "ATOM") parseAtomState(payload, dataStart, dataLen)
                     0x0003 -> if (profileId == "ATOM") parseAtomSettings(payload, dataStart, dataLen)
                     0x0005 -> if (profileId == "ATOM") parseAtomHomePoint(payload, dataStart, dataLen)
+                    0x0017 -> if (profileId == "ATOM") parseAtomGimbalState(payload, dataStart, dataLen)
                     0x001A -> if (profileId == "ATOM") parseAtomGimbalSettings(payload, dataStart, dataLen)
                     0x001E -> if (profileId == "ATOM") parseAtomNoFly(payload, dataStart, dataLen)
                     0x0200 -> return parseFlightGps(payload, dataStart, dataLen)
@@ -441,6 +463,24 @@ object TelemetryParser {
             nearRestrictedZone = (flags and 0x08) != 0,
             noFlyHeightLimit = readIntLE(payload, i + 4),
             noFlyDistance = readIntLE(payload, i + 8),
+            timestamp = System.currentTimeMillis(),
+        )
+    }
+
+    /** ATOM 0x0017 FlightRevGimbalStateData layout from PotensicPro. */
+    private fun parseAtomGimbalState(payload: ByteArray, i: Int, dataLen: Int) {
+        if (dataLen < 23) return
+        latest = latest.copy(
+            gimbalRoll = readShortLE(payload, i) / 100f,
+            gimbalPitch = kotlin.math.round(readShortLE(payload, i + 2) / 100f),
+            gimbalYaw = readShortLE(payload, i + 4) / 100f,
+            gimbalRollSpeed = readFloatLE(payload, i + 6),
+            gimbalPitchSpeedActual = readFloatLE(payload, i + 10),
+            gimbalYawSpeed = readFloatLE(payload, i + 14),
+            gimbalErrorStatus = readUShortLE(payload, i + 18),
+            gimbalPitchChanging = (payload[i + 20].toInt() and 0xFF) == 1,
+            gimbalControlPitch = readShortLE(payload, i + 21) / 100f,
+            gimbalStateValid = true,
             timestamp = System.currentTimeMillis(),
         )
     }

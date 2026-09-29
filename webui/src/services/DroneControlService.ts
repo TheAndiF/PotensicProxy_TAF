@@ -98,6 +98,35 @@ export class DroneControlService {
     this.transport.send(PacketBuilder.buildGeneralCommand(8, 0))
   }
 
+  /**
+   * Set one of the three pitch presets used by the original Potensic app.
+   * FlightRevGimbalSettingData: 1=0°, 3=-45°, 2=-90°. Existing synchronized
+   * gimbal settings are preserved exactly as the app does.
+   */
+  static setGimbalPitchPreset(angle: 0 | -45 | -90): boolean {
+    const store = useDroneStore()
+    const t = store.telemetry
+    if (!t.gimbalSettingsValid) {
+      store.addLog('WARN', `Gimbal ${angle}° not sent: waiting for synchronized gimbal settings`)
+      this.requestGimbalSettings()
+      return false
+    }
+    const pitchControl = angle === 0 ? 1 : angle === -45 ? 3 : 2
+    const packet = PacketBuilder.buildGimbalSettings({
+      pitchControl,
+      pitchSpeed: t.gimbalPitchSpeed || 0,
+      stableMode: t.gimbalStableMode !== false,
+      fpvSmooth: t.gimbalFpvSmooth || 0,
+      calibration: 0,
+      tuningRoll: t.gimbalTuningRoll || 0,
+      tuningYaw: t.gimbalTuningYaw || 0,
+      reset: 0
+    })
+    store.addLog('INFO', `Set gimbal pitch preset ${angle}° (Potensic function 0x1A, pitchControl=${pitchControl})`)
+    this.transport.send(packet)
+    return true
+  }
+
   static calibrateGimbal() {
     const store = useDroneStore()
     const t = store.telemetry
@@ -222,12 +251,12 @@ export class DroneControlService {
 
   static sendJoysticks() {
     const store = useDroneStore()
-    const packet = PacketBuilder.buildCombinedControl(
+    const packet = PacketBuilder.buildFourAxisControl(
       store.userJoysticks.throttle,
       store.userJoysticks.yaw,
       store.userJoysticks.pitch,
       store.userJoysticks.roll,
-      store.userJoysticks.gimbal || 0
+      0 // ATOM series: PotensicPro hides the app-side gimbal slide; keep axis byte neutral.
     )
     this.transport.send(packet)
   }

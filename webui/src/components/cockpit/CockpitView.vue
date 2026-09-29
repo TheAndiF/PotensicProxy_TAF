@@ -28,8 +28,8 @@
     <div class="right-panel">
       <div class="panel-title">🕹️ Joystick Control</div>
       <div class="joysticks-container">
-        <VirtualJoystick label="Throttle / Yaw" :value-labels="['Throttle', 'Yaw']" v-model="leftStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.yaw, y: store.rcHardwareJoysticks.throttle }" @change="onJoystickChange"/>
-        <VirtualJoystick label="Pitch / Roll" :value-labels="['Pitch', 'Roll']" v-model="rightStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.roll, y: store.rcHardwareJoysticks.pitch }" @change="onRightStickChange"/>
+        <VirtualJoystick label="Throttle / Yaw" :value-labels="['Throttle', 'Yaw']" v-model="leftStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.yaw, y: store.rcHardwareJoysticks.throttle }" @change="onJoystickChange" @control-start="startLeftControl" @control-end="stopLeftControl"/>
+        <VirtualJoystick label="Pitch / Roll" :value-labels="['Pitch', 'Roll']" v-model="rightStickModel" :rc-echo="{ x: store.rcHardwareJoysticks.roll, y: store.rcHardwareJoysticks.pitch }" @change="onRightStickChange" @control-start="startRightControl" @control-end="stopRightControl"/>
       </div>
       <GimbalControl/>
 
@@ -76,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import VideoPlayer from './VideoPlayer.vue'
 import MapView from './MapView.vue'
 import TelemetryBar from './TelemetryBar.vue'
@@ -116,10 +116,38 @@ const rightStickModel = computed({
   get: () => ({ x: store.userJoysticks.roll, y: store.userJoysticks.pitch }),
   set: v => { store.userJoysticks.roll = v.x; store.userJoysticks.pitch = v.y },
 })
+let leftControlActive = false
+let rightControlActive = false
+let axisTimer: ReturnType<typeof setInterval> | null = null
 let lastSend = 0
-function onJoystickChange() { throttleSend() }
-function onRightStickChange(v: { x: number; y: number }) { store.userJoysticks.roll = v.x; store.userJoysticks.pitch = v.y; throttleSend() }
-function throttleSend() { const now = Date.now(); if (now - lastSend >= 20) { lastSend = now; DroneControlService.sendJoysticks() } }
+
+function sendAxesNow() {
+  lastSend = Date.now()
+  DroneControlService.sendJoysticks()
+}
+function ensureAxisLoop() {
+  if (axisTimer) return
+  sendAxesNow()
+  // PotensicPro DataManager.startSend4Axis() transmits every 80 ms.
+  axisTimer = setInterval(sendAxesNow, 80)
+}
+function maybeStopAxisLoop() {
+  if (leftControlActive || rightControlActive) return
+  if (axisTimer) { clearInterval(axisTimer); axisTimer = null }
+  // Send a neutral frame immediately after both sticks have been released.
+  sendAxesNow()
+}
+function startLeftControl() { leftControlActive = true; ensureAxisLoop() }
+function stopLeftControl() { leftControlActive = false; maybeStopAxisLoop() }
+function startRightControl() { rightControlActive = true; ensureAxisLoop() }
+function stopRightControl() { rightControlActive = false; maybeStopAxisLoop() }
+function onJoystickChange() { if (Date.now() - lastSend >= 80) sendAxesNow() }
+function onRightStickChange(v: { x: number; y: number }) {
+  store.userJoysticks.roll = v.x
+  store.userJoysticks.pitch = v.y
+  if (Date.now() - lastSend >= 80) sendAxesNow()
+}
+onBeforeUnmount(() => { if (axisTimer) clearInterval(axisTimer) })
 </script>
 
 <style scoped>

@@ -32,6 +32,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:modelValue', value: { x: number; y: number }): void
   (e: 'change', value: { x: number; y: number }): void
+  (e: 'control-start'): void
+  (e: 'control-end'): void
 }>()
 
 const boxRef = ref<HTMLElement | null>(null)
@@ -53,7 +55,8 @@ const rcDotStyle = computed(() => {
 
 function onPointerDown(e: PointerEvent) {
   isDragging = true
-  ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+  emit('control-start')
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   updatePosition(e)
 }
 
@@ -65,10 +68,11 @@ function onPointerUp(e: PointerEvent) {
   if (!isDragging) return
   isDragging = false
   try {
-    ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+    ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
   } catch (_) {}
   emit('update:modelValue', { x: 0, y: 0 })
   emit('change', { x: 0, y: 0 })
+  emit('control-end')
 }
 
 function updatePosition(e: PointerEvent) {

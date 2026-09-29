@@ -156,3 +156,6 @@ Relevant project documents include:
 - Controller percentage is shown only when the known controller status response supplies a valid percentage; otherwise voltage is used as fallback.
 - Browser hardware codec support varies by device/browser; fallback rendering paths remain available.
 - Model-specific protocol support is intentionally profile-driven and should not be generalized without confirmed captures/behavior.
+
+### Virtual joystick and ATOM gimbal
+The cockpit virtual joysticks are connected to PotensicPro's confirmed `Send4AxisData` flight function (`0x0001`). Throttle, yaw, pitch and roll are transmitted at the original app cadence of 80 ms while a virtual stick is actively held, with a neutral frame on release. The ATOM gimbal deliberately does not use the generic `Send4AxisData` gimbal byte because PotensicPro disables that app-side slider for ATOM-series aircraft. The camera control instead uses the confirmed ATOM pitch presets from `SendGimbalSettingData` (`0x001A`) and displays the received gimbal-state feedback as the actual angle.

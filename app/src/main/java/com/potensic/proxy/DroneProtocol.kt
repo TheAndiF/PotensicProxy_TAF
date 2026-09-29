@@ -123,6 +123,31 @@ object DroneProtocol {
         return wrapFE(inner, 0x14)
     }
 
+    /**
+     * PotensicPro Send4AxisData, function code 0x0001, APP_TO_FLIGHT.
+     * Input axes use the application's normalized -1000..1000 range and are
+     * serialized exactly like RockController.getValue(): 0..250, neutral 125.
+     */
+    fun buildFourAxisControl(
+        throttle: Short = 0, yaw: Short = 0, pitch: Short = 0, roll: Short = 0,
+        gimbal: Short = 0, channel: Int = 4,
+    ): ByteArray {
+        fun axisByte(v: Short): Byte {
+            val c = v.toInt().coerceIn(-1000, 1000)
+            return (((c * 125) / 1000) + 125).coerceIn(0, 250).toByte()
+        }
+        val data = ByteArray(11)
+        data[0] = (channel and 0xFF).toByte()
+        data[1] = axisByte(throttle)
+        data[2] = axisByte(yaw)
+        data[3] = axisByte(pitch)
+        data[4] = axisByte(roll)
+        data[5] = axisByte(gimbal)
+        data[6] = 125.toByte() // camera axis neutral
+        val inner = buildInnerCommandWithShort(0x0001, data)
+        return wrapFE(inner, 0x14)
+    }
+
     /** Take photo — camera cmd, short 0x1200 */
     fun buildTakePhoto(): ByteArray {
         return wrapFE(buildInnerCommand(0x51.toByte()), 0x15)

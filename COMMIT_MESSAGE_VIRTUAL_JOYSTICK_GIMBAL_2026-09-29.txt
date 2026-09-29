@@ -1,0 +1,37 @@
+BL_Connect virtual joystick and ATOM gimbal controls
+Date: 2026-09-29
+
+Summary:
+- Connected the cockpit virtual joysticks to PotensicPro Send4AxisData function 0x0001 on APP_TO_FLIGHT.
+- Matched the original PotensicPro axis encoding: -1000..1000 to 0..250 with neutral 125.
+- Matched the original 80 ms Send4AxisData cadence while a virtual stick is held and send a neutral frame on release.
+- Added confirmed ATOM gimbal state parsing for function 0x0017 and expose the returned pitch/roll/yaw values to the cockpit.
+- Connected the ATOM gimbal control to the confirmed 0x001A pitch presets (0, -45 and -90 degrees) while preserving synchronized gimbal settings.
+- Request gimbal settings on camera-control initialization and automatically apply a queued preset once synchronization is available.
+- Keep the Send4AxisData gimbal byte neutral for ATOM-series aircraft because PotensicPro hides the generic app-side gimbal slider for ATOM.
+- Updated project protocol documentation and release version to 0.954 / Android versionCode 27.
+
+Validation:
+- vue-tsc --noEmit: PASS.
+- npm run build: source type-check passes, Vite build cannot start because the supplied node_modules lacks @rollup/rollup-linux-x64-gnu in this Linux environment.
+
+Changed files:
+- PROTOCOL.md
+- README.md
+- app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+- app/src/main/java/com/potensic/proxy/ProxyService.kt
+- app/src/main/java/com/potensic/proxy/Telemetry.kt
+- app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt
+- webui/package-lock.json
+- webui/package.json
+- webui/src/components/cockpit/CockpitView.vue
+- webui/src/components/cockpit/GimbalControl.vue
+- webui/src/components/cockpit/VirtualJoystick.vue
+- webui/src/protocol/PacketBuilder.ts
+- webui/src/services/DroneControlService.ts
+- webui/src/stores/useDroneStore.ts
+- webui/src/types/drone.ts
+- DOCUMENTATION/2026-09-29 - PotensicProxy_TAF - Projektdokumentation - Virtual-Joystick-und-Gimbal - v1.0.pdf
+- DOCUMENTATION/2026-09-29 - PotensicProxy_TAF - Projektdokumentation - Virtual-Joystick-und-Gimbal - v1.0.docx
+- COMMIT_MESSAGE_VIRTUAL_JOYSTICK_GIMBAL_2026-09-29.txt

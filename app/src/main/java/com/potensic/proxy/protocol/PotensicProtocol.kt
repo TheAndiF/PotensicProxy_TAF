@@ -20,6 +20,9 @@ object PotensicProtocol {
     fun buildEmergencyStop() = DroneProtocol.buildEmergencyStop()
     fun buildTakePhoto() = DroneProtocol.buildTakePhoto()
     fun buildToggleRecord() = DroneProtocol.buildToggleRecord()
+    fun buildFourAxisControl(throttle: Short, yaw: Short, pitch: Short, roll: Short, gimbal: Short) =
+        DroneProtocol.buildFourAxisControl(throttle, yaw, pitch, roll, gimbal)
+    // Legacy HFD builder remains available only for diagnostics/backward comparison.
     fun buildCombinedControl(throttle: Short, yaw: Short, pitch: Short, roll: Short, gimbalTilt: Short) =
         DroneProtocol.buildCombinedControl(throttle, yaw, pitch, roll, gimbalTilt)
     fun buildWifiDirectSwitch(enter: Boolean) = DroneProtocol.buildWifiDirectSwitch(enter)

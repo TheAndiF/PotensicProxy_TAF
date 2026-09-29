@@ -69,20 +69,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useCameraStore } from '../../stores/useCameraStore'
 import { CameraMediaService } from '../../services/CameraMediaService'
+import { DroneControlService } from '../../services/DroneControlService'
+import { useDroneStore } from '../../stores/useDroneStore'
 
 const MIN_ANGLE = -90
 const MAX_ANGLE = 30
 const MIN_ZOOM = 1
 const camera = useCameraStore()
+const store = useDroneStore()
 const MAX_ZOOM = computed(() => Math.max(MIN_ZOOM, camera.zoomMax || 4))
-const targetAngle = ref(0)
+const targetAngle = ref<0 | -45 | -90>(0)
+const pendingGimbalAngle = ref<0 | -45 | -90 | null>(null)
 const targetZoom = computed(() => camera.zoomTarget)
 
-// Gimbal measured feedback is still not confirmed in the current data model.
-const actualGimbal = ref<number | null>(null)
+const actualGimbal = computed<number | null>(() => store.telemetry.gimbalStateValid ? (store.telemetry.gimbalControlPitch ?? store.telemetry.gimbalPitch ?? 0) : null)
 const actualZoom = computed(() => camera.zoomActual)
 
 const dialRef = ref<HTMLElement | null>(null)
@@ -106,11 +109,18 @@ const zoomKnobStyle = computed(() => {
 
 const actualGimbalText = computed(() => actualGimbal.value == null ? '--' : `${actualGimbal.value.toFixed(0)}°`)
 const actualZoomText = computed(() => actualZoom.value == null ? '--' : `${actualZoom.value.toFixed(2)}x`)
-const gimbalStatus = computed(() => actualGimbal.value == null ? 'Keine Rückmeldung' : Math.abs(actualGimbal.value - targetAngle.value) <= 1 ? 'Erreicht' : 'Fährt')
+const gimbalStatus = computed(() => pendingGimbalAngle.value != null ? 'Warte auf Gimbal-Einstellungen …' : actualGimbal.value == null ? 'Keine Rückmeldung' : Math.abs(actualGimbal.value - targetAngle.value) <= 1 ? 'Erreicht' : 'Fährt')
 const zoomStatus = computed(() => camera.zoomPending ? 'Warte auf Kamera …' : actualZoom.value == null ? 'Keine Rückmeldung' : Math.abs(actualZoom.value - targetZoom.value) <= 0.02 ? 'Erreicht' : 'Abweichung')
 
 function setAngle(value: number) {
-  targetAngle.value = Math.max(MIN_ANGLE, Math.min(MAX_ANGLE, Math.round(value)))
+  // The original ATOM app exposes three confirmed absolute pitch presets via
+  // gimbal settings function 0x1A: 0°, -45° and -90°. Arbitrary absolute
+  // target angles are deliberately not invented here.
+  const presets: Array<0 | -45 | -90> = [0, -45, -90]
+  const snapped = presets.reduce((best, p) => Math.abs(p - value) < Math.abs(best - value) ? p : best, presets[0])
+  targetAngle.value = snapped
+  const sent = DroneControlService.setGimbalPitchPreset(snapped)
+  pendingGimbalAngle.value = sent ? null : snapped
 }
 
 let lastZoomSend = 0
@@ -174,7 +184,21 @@ function updateZoomFromPointer(e: PointerEvent) {
   const ratio = (y - 15) / usable
   setZoom(MAX_ZOOM.value - ratio * (MAX_ZOOM.value - MIN_ZOOM))
 }
+watch(() => store.telemetry.gimbalSettingsValid, valid => {
+  if (!valid) return
+  if (pendingGimbalAngle.value != null) {
+    const angle = pendingGimbalAngle.value
+    if (DroneControlService.setGimbalPitchPreset(angle)) pendingGimbalAngle.value = null
+    return
+  }
+  const ctrl = store.telemetry.gimbalPitchControl
+  if (ctrl === 1) targetAngle.value = 0
+  else if (ctrl === 3) targetAngle.value = -45
+  else if (ctrl === 2) targetAngle.value = -90
+})
+
 onMounted(() => {
+  DroneControlService.requestGimbalSettings()
   CameraMediaService.getZoom()
 })
 </script>

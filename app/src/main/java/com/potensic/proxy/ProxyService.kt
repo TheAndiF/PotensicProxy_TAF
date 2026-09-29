@@ -605,26 +605,27 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             var lastIdrRequest = 0L
             var lastHeartbeat = 0L
             var lastVideoWatchdog = 0L
+            var lastControlSend = 0L
             val heartbeatPacket = PotensicProtocol.buildHeartbeat()
             Log.hex("[Service] Heartbeat packet", heartbeatPacket)
 
             while (isActive && isAnyConnected) {
                 try {
-                    // Send combined HFD2+HFD1+HFD3 (127B) FE-wrapped when web joysticks active
-                    // Must match official app format: all 3 concatenated, FE type 0x14
+                    // PotensicPro Send4AxisData is function 0x0001 on APP_TO_FLIGHT.
+                    // Keep the 80 ms control cadence used by DataManager.startSend4Axis().
+                    val now = System.currentTimeMillis()
                     val control = controlCoordinator.current()
-                    if (control.active) {
-                        val packet = PotensicProtocol.buildCombinedControl(
+                    if (control.active && now - lastControlSend >= 80L) {
+                        val packet = PotensicProtocol.buildFourAxisControl(
                             throttle = control.throttle,
                             yaw = control.yaw,
                             pitch = control.pitch,
                             roll = control.roll,
-                            gimbalTilt = control.gimbal,
+                            gimbal = 0, // ATOM series: keep app-side Send4AxisData gimbal byte neutral.
                         )
                         sendDirectAny(packet)
+                        lastControlSend = now
                     }
-
-                    val now = System.currentTimeMillis()
 
                     // Send heartbeat every 100ms to keep connection alive
                     if (now - lastHeartbeat > 100) {

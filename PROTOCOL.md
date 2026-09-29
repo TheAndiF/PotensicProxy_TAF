@@ -728,3 +728,25 @@ The decryption key is stored in the drone's bootloader on the NAND flash. The NA
 - Interface: SPI (CS#, SI, SO, SCLK, WP#, HOLD#)
 - Filesystem: UBIFS
 - ECC: BCH t=16, primitive polynomial 17475, pre/post transform: reverse bit order + invert
+
+## Virtual joystick and ATOM gimbal control (2026-09-29)
+
+### Virtual joystick / Send4AxisData
+PotensicPro sends its virtual flight controls with flight function `0x0001` (`Send4AxisData`) on the APP_TO_FLIGHT transport. The 11-byte payload starts with channel 4 and uses unsigned axis bytes with neutral 125:
+
+| Payload offset | PotensicPro field | TAF control | Encoding |
+|---:|---|---|---|
+| +0 | channel | fixed 4 | uint8 |
+| +1 | accelerator | Throttle | -1000..1000 -> 0..250, neutral 125 |
+| +2 | rotate | Yaw | -1000..1000 -> 0..250, neutral 125 |
+| +3 | frontBack | Pitch | -1000..1000 -> 0..250, neutral 125 |
+| +4 | leftRight | Roll | -1000..1000 -> 0..250, neutral 125 |
+| +5 | gimbal | kept neutral for ATOM series | 125 |
+| +6 | camera | neutral | 125 |
+
+PotensicPro's `DataManager.startSend4Axis()` transmits the current frame every 80 ms while control is active. TAF mirrors this cadence while either virtual stick is held and sends a final neutral frame after both sticks are released.
+
+### ATOM gimbal
+The original app's generic `SlideController` writes the `Send4AxisData.gimbal` byte, but explicitly hides that app-side slider for the ATOM series. TAF therefore does not invent continuous ATOM gimbal motion through that byte and keeps it neutral.
+
+For ATOM, the app-confirmed absolute pitch controls are sent with flight function `0x001A` (`SendGimbalSettingData`): `pitchControl=1` for 0 degrees, `3` for -45 degrees and `2` for -90 degrees. TAF requests the synchronized gimbal settings first, preserves the remaining settings fields and then applies these confirmed presets. Gimbal state feedback is taken from the confirmed gimbal-state receive path and shown separately as the actual value.
