@@ -1,0 +1,26 @@
+BL_Refine camera control layout and remove redundant zoom slider
+Date: 2026-09-29
+
+Summary:
+- Kept Camera Control permanently visible directly below the Joystick Control area.
+- Moved only the extended Camera settings into the collapsible Camera section.
+- Kept the small controls-side preview below the Camera section.
+- Kept Gimbal and Zoom on the same vertical drag-control concept.
+- Removed the redundant horizontal Zoom range slider while retaining direct numeric Zoom input.
+- Updated README, README audit and UI implementation documentation to match the corrected cockpit layout.
+- Preserved the existing frontend/backend separation and all confirmed protocol behavior.
+- Left unconfirmed protocol areas unchanged; no speculative camera Zoom command was added.
+- Added the v1.1 project documentation, original-structure change manifest and patch file.
+
+Changed files:
+- README.md
+- README_AUDIT_2026-09-29.md
+- UI_DETAIL_IMPLEMENTATION_2026-09-29.md
+- webui/src/components/cockpit/CameraMediaPanel.vue
+- webui/src/components/cockpit/CockpitView.vue
+- webui/src/components/cockpit/GimbalControl.vue
+- DOCUMENTATION/2026-09-29_PotensicProxy_TAF_Projektdokumentation_UI-Detailaenderungen_v1.1.docx
+- DOCUMENTATION/2026-09-29_PotensicProxy_TAF_Projektdokumentation_UI-Detailaenderungen_v1.1.pdf
+- COMMIT_MESSAGE_CAMERA_LAYOUT_2026-09-29.txt
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-09-29_v1.1.md
+- PATCH_UI_CAMERA_LAYOUT_v1.1.patch

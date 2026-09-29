@@ -33,13 +33,14 @@
       </div>
       <FlightActions/>
 
+      <GimbalControl/>
+
       <section class="camera-section ui-card">
         <button class="camera-section-header" type="button" @click="cameraOpen = !cameraOpen" :aria-expanded="cameraOpen">
           <span>📷 Camera</span><span>{{ cameraOpen ? '▾' : '▸' }}</span>
         </button>
         <div v-if="cameraOpen" class="camera-section-body">
-          <GimbalControl/>
-          <CameraMediaPanel/>
+          <CameraMediaPanel :show-title="false"/>
         </div>
       </section>
 

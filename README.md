@@ -24,8 +24,9 @@ The cockpit currently provides:
 - switchable **LiveView / Map / PIP** layout;
 - a transparent telemetry/status overlay on the main image, retained when the flight stage enters fullscreen;
 - separate power indicators for **phone**, **controller** and **drone** where the corresponding values are available;
-- a collapsible **Camera** section;
-- a continuous camera-zoom setpoint control in the UI (drag, range control and direct numeric entry);
+- an always-visible **Camera Control** directly below the joystick controls, with matching vertical Gimbal and Zoom controls;
+- a separate collapsible **Camera** settings section below Camera Control;
+- a continuous camera-zoom setpoint control in the UI (vertical drag control and direct numeric entry);
 - collapsible side controls instead of permanently covering the LiveView with action buttons;
 - map zoom using **+ / -** plus direct numeric zoom entry;
 - selectable UI backgrounds: **Dark**, **Light** and **Gray**.

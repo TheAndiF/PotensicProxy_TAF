@@ -29,8 +29,8 @@ Review the repository README against the current PotensicProxy_TAF package and u
 - Selectable Dark/Light/Gray backgrounds.
 - Transparent telemetry overlay and fullscreen behavior.
 - Phone/controller/drone power indicators and their data sources.
-- Collapsible camera section and LiveView side controls.
-- Continuous camera-zoom UI setpoint and explicit limitation that no unconfirmed zoom protocol command is sent.
+- Always-visible Camera Control below Joystick Control, separate collapsible Camera settings section, and LiveView side controls.
+- Continuous camera-zoom UI setpoint via the same vertical control concept used for Gimbal plus direct numeric entry; the redundant horizontal slider is intentionally absent. No unconfirmed zoom protocol command is sent.
 - Map + / - controls plus direct zoom input.
 - Current map and mission capabilities.
 - Current build requirements from Gradle.

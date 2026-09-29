@@ -1,0 +1,115 @@
+--- a/README.md
++++ b/README.md
+@@ -24,8 +24,9 @@
+ - switchable **LiveView / Map / PIP** layout;
+ - a transparent telemetry/status overlay on the main image, retained when the flight stage enters fullscreen;
+ - separate power indicators for **phone**, **controller** and **drone** where the corresponding values are available;
+-- a collapsible **Camera** section;
+-- a continuous camera-zoom setpoint control in the UI (drag, range control and direct numeric entry);
++- an always-visible **Camera Control** directly below the joystick controls, with matching vertical Gimbal and Zoom controls;
++- a separate collapsible **Camera** settings section below Camera Control;
++- a continuous camera-zoom setpoint control in the UI (vertical drag control and direct numeric entry);
+ - collapsible side controls instead of permanently covering the LiveView with action buttons;
+ - map zoom using **+ / -** plus direct numeric zoom entry;
+ - selectable UI backgrounds: **Dark**, **Light** and **Gray**.
+--- a/README_AUDIT_2026-09-29.md
++++ b/README_AUDIT_2026-09-29.md
+@@ -29,8 +29,8 @@
+ - Selectable Dark/Light/Gray backgrounds.
+ - Transparent telemetry overlay and fullscreen behavior.
+ - Phone/controller/drone power indicators and their data sources.
+-- Collapsible camera section and LiveView side controls.
+-- Continuous camera-zoom UI setpoint and explicit limitation that no unconfirmed zoom protocol command is sent.
++- Always-visible Camera Control below Joystick Control, separate collapsible Camera settings section, and LiveView side controls.
++- Continuous camera-zoom UI setpoint via the same vertical control concept used for Gimbal plus direct numeric entry; the redundant horizontal slider is intentionally absent. No unconfirmed zoom protocol command is sent.
+ - Map + / - controls plus direct zoom input.
+ - Current map and mission capabilities.
+ - Current build requirements from Gradle.
+--- a/UI_DETAIL_IMPLEMENTATION_2026-09-29.md
++++ b/UI_DETAIL_IMPLEMENTATION_2026-09-29.md
+@@ -12,10 +12,10 @@
+ | Phone battery | Not implemented | Implemented | Android `BatteryManager` -> `/api/status` -> WebUI. |
+ | Controller battery | Voltage existed; percentage was parsed only for diagnostics | Implemented/conditional | Percentage from existing `0x1131` response is now stored/displayed when valid; voltage remains fallback. |
+ | Drone battery | Already available | Kept and integrated | Shown beside phone/controller in the status overlay. |
+-| Continuous camera zoom control | Presets/setpoint only | UI implemented | Drag control, range control and direct numeric entry in 0.01 steps. No speculative protocol transmission added. |
++| Continuous camera zoom control | Presets/setpoint only | UI implemented | Vertical drag control and direct numeric entry in 0.01 steps. The redundant horizontal range slider was removed. No speculative protocol transmission added. |
+ | Transparent status block over image | Status bar outside main stage | Implemented | Telemetry bar moved into flight stage as transparent overlay. |
+ | Status visible in fullscreen | Not guaranteed | Implemented | Fullscreen now targets the complete flight stage so the status overlay remains visible. |
+-| Camera collapsible | Not implemented | Implemented | Camera control/media blocks grouped into one collapsible section. |
++| Camera layout | Camera Control and Camera settings were grouped in one collapsible section | Implemented | Camera Control is now always visible directly below Joystick Control. Only the Camera settings section is collapsible. The controls-side preview remains below Camera. |
+ | LiveView buttons in collapsible side menu | Actions permanently in top OSD | Implemented | Stream/IDR/render/fullscreen moved to side drawer; view switcher also moved to a collapsible side drawer. Small PIP hides action controls. |
+ | Map +/- plus direct zoom input | +/- existed | Implemented | Numeric zoom input added between + and -. |
+ | Calibration under technical area | Previously moved | Confirmed | Remains under System. |
+@@ -37,10 +37,14 @@
+ 
+ ## Structural changes
+ 
++The right-side cockpit order is now **Joystick Control -> Camera Control -> Camera -> small preview window**. Camera Control remains permanently visible. The Camera settings block is independently collapsible. Gimbal and Zoom use the same vertical control concept; the redundant horizontal Zoom range slider was removed.
++
+ The previously implemented System navigation reorganization remains intact. No mission, map-provider, USB transport, packet framing or flight-command format was changed by this UI-detail work.
+ 
+ ## Project documentation deliverables
+ 
+-- `COMMIT_MESSAGE_UI_DETAIL_2026-09-29.txt`
+-- `DOCUMENTATION/2026-09-29_PotensicProxy_TAF_Projektdokumentation_UI-Detailaenderungen_v1.0.docx`
+-- `DOCUMENTATION/2026-09-29_PotensicProxy_TAF_Projektdokumentation_UI-Detailaenderungen_v1.0.pdf`
++- `COMMIT_MESSAGE_CAMERA_LAYOUT_2026-09-29.txt`
++- `NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-09-29_v1.1.md`
++- `PATCH_UI_CAMERA_LAYOUT_v1.1.patch`
++- `DOCUMENTATION/2026-09-29_PotensicProxy_TAF_Projektdokumentation_UI-Detailaenderungen_v1.1.docx`
++- `DOCUMENTATION/2026-09-29_PotensicProxy_TAF_Projektdokumentation_UI-Detailaenderungen_v1.1.pdf`
+--- a/webui/src/components/cockpit/CameraMediaPanel.vue
++++ b/webui/src/components/cockpit/CameraMediaPanel.vue
+@@ -1,6 +1,6 @@
+ <template>
+   <div class="camera-media-panel ui-card">
+-    <div class="panel-title">📷 Camera</div>
++    <div v-if="showTitle" class="panel-title">📷 Camera</div>
+ 
+     <div class="camera-grid">
+       <label class="camera-field">
+@@ -70,6 +70,8 @@
+ import { CameraMediaService } from '../../services/CameraMediaService'
+ import { useCameraStore } from '../../stores/useCameraStore'
+ 
++withDefaults(defineProps<{ showTitle?: boolean }>(), { showTitle: true })
++
+ const camera = useCameraStore()
+ 
+ const videoOptions = [
+--- a/webui/src/components/cockpit/CockpitView.vue
++++ b/webui/src/components/cockpit/CockpitView.vue
+@@ -33,13 +33,14 @@
+       </div>
+       <FlightActions/>
+ 
++      <GimbalControl/>
++
+       <section class="camera-section ui-card">
+         <button class="camera-section-header" type="button" @click="cameraOpen = !cameraOpen" :aria-expanded="cameraOpen">
+           <span>📷 Camera</span><span>{{ cameraOpen ? '▾' : '▸' }}</span>
+         </button>
+         <div v-if="cameraOpen" class="camera-section-body">
+-          <GimbalControl/>
+-          <CameraMediaPanel/>
++          <CameraMediaPanel :show-title="false"/>
+         </div>
+       </section>
+ 
+--- a/webui/src/components/cockpit/GimbalControl.vue
++++ b/webui/src/components/cockpit/GimbalControl.vue
+@@ -58,7 +58,6 @@
+             <button class="taf-btn taf-btn--compact" type="button" @click="setZoom(2)">2.0x</button>
+           </div>
+         </div>
+-        <input class="zoom-range" type="range" :min="MIN_ZOOM" :max="MAX_ZOOM" step="0.01" v-model.number="targetZoom" aria-label="Continuous zoom setpoint" />
+         <div class="value-grid">
+           <div><span class="value-label">Soll</span><input class="zoom-number" type="number" :min="MIN_ZOOM" :max="MAX_ZOOM" step="0.01" :value="targetZoom.toFixed(2)" @change="onZoomNumberChange" /></div>
+           <div><span class="value-label">Ist</span><strong>{{ actualZoomText }}</strong></div>
+@@ -173,5 +172,5 @@
+ .presets{display:flex;flex-direction:column;gap:5px}.preset-label{color:var(--text-muted);font-size:8px;text-transform:uppercase;letter-spacing:.4px}
+ .value-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:8px}.value-grid>div{min-height:31px;border:1px solid var(--ui-border-control);border-radius:5px;background:var(--ui-bg-control-strong);display:flex;align-items:center;justify-content:space-between;padding:0 6px;font-family:var(--mono);font-size:9px}.value-grid strong{color:var(--cyan);font-size:10px}.value-label{color:var(--text-muted)}
+ .feedback-state{margin-top:5px;text-align:center;color:var(--text-muted);font-size:8px;font-family:var(--mono)}
+-.zoom-range{width:100%;margin-top:7px;accent-color:var(--ui-primary)}.zoom-number{width:64px;height:23px;border:1px solid var(--ui-border-control);border-radius:4px;background:var(--ui-bg-control);color:var(--ui-text);font-family:var(--mono);font-size:9px;padding:0 4px;text-align:right}
++.zoom-number{width:64px;height:23px;border:1px solid var(--ui-border-control);border-radius:4px;background:var(--ui-bg-control);color:var(--ui-text);font-family:var(--mono);font-size:9px;padding:0 4px;text-align:right}
+ </style>

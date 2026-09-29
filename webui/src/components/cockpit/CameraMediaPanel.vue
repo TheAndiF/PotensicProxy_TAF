@@ -1,6 +1,6 @@
 <template>
   <div class="camera-media-panel ui-card">
-    <div class="panel-title">📷 Camera</div>
+    <div v-if="showTitle" class="panel-title">📷 Camera</div>
 
     <div class="camera-grid">
       <label class="camera-field">
@@ -69,6 +69,8 @@
 import { computed, ref, watch } from 'vue'
 import { CameraMediaService } from '../../services/CameraMediaService'
 import { useCameraStore } from '../../stores/useCameraStore'
+
+withDefaults(defineProps<{ showTitle?: boolean }>(), { showTitle: true })
 
 const camera = useCameraStore()
 

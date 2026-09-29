@@ -12,10 +12,10 @@ Audit the current package against the requested UI/detail changes, implement mis
 | Phone battery | Not implemented | Implemented | Android `BatteryManager` -> `/api/status` -> WebUI. |
 | Controller battery | Voltage existed; percentage was parsed only for diagnostics | Implemented/conditional | Percentage from existing `0x1131` response is now stored/displayed when valid; voltage remains fallback. |
 | Drone battery | Already available | Kept and integrated | Shown beside phone/controller in the status overlay. |
-| Continuous camera zoom control | Presets/setpoint only | UI implemented | Drag control, range control and direct numeric entry in 0.01 steps. No speculative protocol transmission added. |
+| Continuous camera zoom control | Presets/setpoint only | UI implemented | Vertical drag control and direct numeric entry in 0.01 steps. The redundant horizontal range slider was removed. No speculative protocol transmission added. |
 | Transparent status block over image | Status bar outside main stage | Implemented | Telemetry bar moved into flight stage as transparent overlay. |
 | Status visible in fullscreen | Not guaranteed | Implemented | Fullscreen now targets the complete flight stage so the status overlay remains visible. |
-| Camera collapsible | Not implemented | Implemented | Camera control/media blocks grouped into one collapsible section. |
+| Camera layout | Camera Control and Camera settings were grouped in one collapsible section | Implemented | Camera Control is now always visible directly below Joystick Control. Only the Camera settings section is collapsible. The controls-side preview remains below Camera. |
 | LiveView buttons in collapsible side menu | Actions permanently in top OSD | Implemented | Stream/IDR/render/fullscreen moved to side drawer; view switcher also moved to a collapsible side drawer. Small PIP hides action controls. |
 | Map +/- plus direct zoom input | +/- existed | Implemented | Numeric zoom input added between + and -. |
 | Calibration under technical area | Previously moved | Confirmed | Remains under System. |
@@ -37,10 +37,14 @@ The UI can now select a continuous zoom setpoint. The current project data model
 
 ## Structural changes
 
+The right-side cockpit order is now **Joystick Control -> Camera Control -> Camera -> small preview window**. Camera Control remains permanently visible. The Camera settings block is independently collapsible. Gimbal and Zoom use the same vertical control concept; the redundant horizontal Zoom range slider was removed.
+
 The previously implemented System navigation reorganization remains intact. No mission, map-provider, USB transport, packet framing or flight-command format was changed by this UI-detail work.
 
 ## Project documentation deliverables
 
-- `COMMIT_MESSAGE_UI_DETAIL_2026-09-29.txt`
-- `DOCUMENTATION/2026-09-29_PotensicProxy_TAF_Projektdokumentation_UI-Detailaenderungen_v1.0.docx`
-- `DOCUMENTATION/2026-09-29_PotensicProxy_TAF_Projektdokumentation_UI-Detailaenderungen_v1.0.pdf`
+- `COMMIT_MESSAGE_CAMERA_LAYOUT_2026-09-29.txt`
+- `NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-09-29_v1.1.md`
+- `PATCH_UI_CAMERA_LAYOUT_v1.1.patch`
+- `DOCUMENTATION/2026-09-29_PotensicProxy_TAF_Projektdokumentation_UI-Detailaenderungen_v1.1.docx`
+- `DOCUMENTATION/2026-09-29_PotensicProxy_TAF_Projektdokumentation_UI-Detailaenderungen_v1.1.pdf`

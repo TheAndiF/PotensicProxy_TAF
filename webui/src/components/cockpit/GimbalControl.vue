@@ -58,7 +58,6 @@
             <button class="taf-btn taf-btn--compact" type="button" @click="setZoom(2)">2.0x</button>
           </div>
         </div>
-        <input class="zoom-range" type="range" :min="MIN_ZOOM" :max="MAX_ZOOM" step="0.01" v-model.number="targetZoom" aria-label="Continuous zoom setpoint" />
         <div class="value-grid">
           <div><span class="value-label">Soll</span><input class="zoom-number" type="number" :min="MIN_ZOOM" :max="MAX_ZOOM" step="0.01" :value="targetZoom.toFixed(2)" @change="onZoomNumberChange" /></div>
           <div><span class="value-label">Ist</span><strong>{{ actualZoomText }}</strong></div>
@@ -173,5 +172,5 @@ function updateZoomFromPointer(e: PointerEvent) {
 .presets{display:flex;flex-direction:column;gap:5px}.preset-label{color:var(--text-muted);font-size:8px;text-transform:uppercase;letter-spacing:.4px}
 .value-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:8px}.value-grid>div{min-height:31px;border:1px solid var(--ui-border-control);border-radius:5px;background:var(--ui-bg-control-strong);display:flex;align-items:center;justify-content:space-between;padding:0 6px;font-family:var(--mono);font-size:9px}.value-grid strong{color:var(--cyan);font-size:10px}.value-label{color:var(--text-muted)}
 .feedback-state{margin-top:5px;text-align:center;color:var(--text-muted);font-size:8px;font-family:var(--mono)}
-.zoom-range{width:100%;margin-top:7px;accent-color:var(--ui-primary)}.zoom-number{width:64px;height:23px;border:1px solid var(--ui-border-control);border-radius:4px;background:var(--ui-bg-control);color:var(--ui-text);font-family:var(--mono);font-size:9px;padding:0 4px;text-align:right}
+.zoom-number{width:64px;height:23px;border:1px solid var(--ui-border-control);border-radius:4px;background:var(--ui-bg-control);color:var(--ui-text);font-family:var(--mono);font-size:9px;padding:0 4px;text-align:right}
 </style>
