@@ -4,6 +4,7 @@
 
     <main class="view-container">
       <CockpitView v-if="store.activeTab === 'cockpit'" />
+      <MissionPlannerView v-if="store.activeTab === 'mission'" />
       <MapMainView v-if="store.activeTab === 'map'" />
       <GalleryView v-if="store.activeTab === 'gallery'" />
       <UsbManagerView v-show="store.activeTab === 'usb'" />
@@ -16,6 +17,7 @@
 import { onMounted, onUnmounted } from 'vue'
 import HeaderBar from './components/header/HeaderBar.vue'
 import CockpitView from './components/cockpit/CockpitView.vue'
+import MissionPlannerView from './components/mission/MissionPlannerView.vue'
 import MapMainView from './components/map/MapMainView.vue'
 import GalleryView from './components/gallery/GalleryView.vue'
 import UsbManagerView from './components/usb/UsbManagerView.vue'

@@ -54,6 +54,7 @@ class WebServer(
     private val wsClients = CopyOnWriteArrayList<DefaultWebSocketSession>()
     private val usbWsClients = CopyOnWriteArrayList<DefaultWebSocketSession>()
     private val mapBackend = MapBackend(filesDir)
+    private val missionBackend = MissionBackend(filesDir)
 
     // Requested control state is owned by ControlCoordinator.
 
@@ -112,6 +113,42 @@ class WebServer(
                 }
                 delete("/api/map/regions/{id}") {
                     if (mapBackend.deleteRegion(call.parameters["id"] ?: "")) call.respond(HttpStatusCode.NoContent) else call.respond(HttpStatusCode.NotFound)
+                }
+
+                // Mission planning storage and Potensic ATOM 1 export.
+                get("/api/missions") {
+                    call.respondText(missionBackend.list().toString(), ContentType.Application.Json)
+                }
+                get("/api/missions/{id}") {
+                    try {
+                        val mission = missionBackend.load(call.parameters["id"] ?: "")
+                        if (mission == null) call.respond(HttpStatusCode.NotFound)
+                        else call.respondText(mission.toString(), ContentType.Application.Json)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", e.message ?: "invalid mission id").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
+                }
+                put("/api/missions/{id}") {
+                    try {
+                        val mission = missionBackend.save(call.parameters["id"] ?: "", JSONObject(call.receiveText()))
+                        call.respondText(mission.toString(), ContentType.Application.Json)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", e.message ?: "mission save failed").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
+                }
+                delete("/api/missions/{id}") {
+                    try {
+                        if (missionBackend.delete(call.parameters["id"] ?: "")) call.respond(HttpStatusCode.NoContent) else call.respond(HttpStatusCode.NotFound)
+                    } catch (e: Exception) { call.respond(HttpStatusCode.BadRequest) }
+                }
+                get("/api/missions/{id}/export/potensic") {
+                    try {
+                        val file = withContext(Dispatchers.IO) { missionBackend.exportAtom1(call.parameters["id"] ?: "") }
+                        call.response.header(HttpHeaders.ContentDisposition, "attachment; filename=map.db")
+                        call.respondFile(file)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", e.message ?: "Potensic export failed").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
                 }
 
                 // USB WebSocket passthrough (bidirectional)

@@ -10,6 +10,7 @@
     <nav class="tabs-group" aria-label="Main navigation">
       <el-radio-group v-model="store.activeTab" size="small" class="main-tabs">
         <el-radio-button value="cockpit">🎮 {{ t('header.cockpit') }}</el-radio-button>
+        <el-radio-button value="mission">🧭 {{ t('header.mission') }}</el-radio-button>
         <el-radio-button value="map">🗺️ {{ t('header.map') }}</el-radio-button>
         <el-radio-button value="gallery">🖼️ {{ t('header.gallery') }}</el-radio-button>
         <el-radio-button value="usb">⚡ {{ t('header.usb') }}</el-radio-button>

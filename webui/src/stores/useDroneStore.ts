@@ -149,7 +149,7 @@ export const useDroneStore = defineStore('drone', () => {
   // Lists
   const packets = ref<ParsedPacket[]>([])
   const logs = ref<SystemLog[]>([])
-  const activeTab = ref<'cockpit' | 'map' | 'gallery' | 'usb' | 'debug'>('cockpit')
+  const activeTab = ref<'cockpit' | 'mission' | 'map' | 'gallery' | 'usb' | 'debug'>('cockpit')
   const ignoreTelemetryAtIngestion = ref(false)
 
   // Incoming packets are batched before touching Vue's reactive array. This keeps
