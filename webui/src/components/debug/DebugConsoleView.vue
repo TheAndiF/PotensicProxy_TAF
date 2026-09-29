@@ -4,6 +4,7 @@
     <div class="debug-header">
       <div class="tab-selectors">
         <el-radio-group v-model="debugStore.activeSubTab" size="small">
+          <el-radio-button value="flight">✈️ {{ t('system.flight') }}</el-radio-button>
           <el-radio-button value="camera">📷 {{ t('engineering.camera') }}</el-radio-button>
           <el-radio-button value="fpv">📶 {{ t('engineering.fpv') }}</el-radio-button>
           <el-radio-button value="sensor">⚖️ {{ t('engineering.sensor') }}</el-radio-button>
@@ -31,6 +32,11 @@
 
     <!-- Main Content Area -->
     <div class="debug-body">
+      <!-- ================= System: flight limits, smart modes and calibration ================= -->
+      <div v-show="debugStore.activeSubTab === 'flight'" class="sub-tab-pane system-flight-pane">
+        <AdvancedFlightPanel />
+      </div>
+
       <!-- ================= Sub-tab 1: Camera command console ================= -->
       <div v-show="debugStore.activeSubTab === 'camera'" class="sub-tab-pane camera-pane">
         <!-- Chip Temperatures Bar -->
@@ -660,6 +666,7 @@
 </template>
 
 <script setup lang="ts">
+import AdvancedFlightPanel from '../cockpit/AdvancedFlightPanel.vue'
 import { ref, nextTick, watch, onMounted } from 'vue'
 import { useDebugStore } from '../../stores/useDebugStore'
 import { DroneControlService } from '../../services/DroneControlService'

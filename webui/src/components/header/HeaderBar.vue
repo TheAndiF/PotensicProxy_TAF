@@ -14,7 +14,7 @@
         <el-radio-button value="map">🗺️ {{ t('header.map') }}</el-radio-button>
         <el-radio-button value="gallery">🖼️ {{ t('header.gallery') }}</el-radio-button>
         <el-radio-button value="usb">⚡ {{ t('header.usb') }}</el-radio-button>
-        <el-radio-button value="debug">🛠️ {{ t('header.engineering') }}</el-radio-button>
+        <el-radio-button value="debug">🛠️ {{ t('header.system') }}</el-radio-button>
       </el-radio-group>
     </nav>
 

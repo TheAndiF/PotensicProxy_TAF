@@ -1,0 +1,7 @@
+refactor(webui): move flight/calibration tools into System
+
+- rename top-level Engineering navigation label to System
+- move Flight / Calibration / Smart Modes out of Flight Cockpit
+- add the moved panel as the first System sub-tab
+- keep existing diagnostics and protocol behavior unchanged
+- add EN/DE/ZH labels for the new navigation entry
