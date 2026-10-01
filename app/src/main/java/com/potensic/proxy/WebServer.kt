@@ -1,5 +1,7 @@
 package com.potensic.proxy
 
+import android.content.Context
+
 import io.ktor.server.application.*
 import com.potensic.proxy.protocol.PotensicProtocol
 import io.ktor.server.cio.*
@@ -47,6 +49,7 @@ class WebServer(
     private val transportCapture: TransportCaptureManager,
     private val droneState: DroneStateStore,
     private val controlCoordinator: ControlCoordinator,
+    private val appContext: Context,
     filesDir: File,
     private val assetLoader: (String) -> ByteArray?,
 ) {
@@ -55,6 +58,7 @@ class WebServer(
     private val usbWsClients = CopyOnWriteArrayList<DefaultWebSocketSession>()
     private val mapBackend = MapBackend(filesDir)
     private val missionBackend = MissionBackend(filesDir)
+    private val androidMedia = AndroidMediaRepository(appContext, filesDir)
 
     // Requested control state is owned by ControlCoordinator.
 
@@ -208,6 +212,112 @@ class WebServer(
                         call.respondText("""{"success":true,"sentBytes":${bytes.size}}""", ContentType.Application.Json)
                     } catch (e: Exception) {
                         call.respondText("""{"success":false,"error":"${e.message}"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
+                }
+
+                // Android-owned image storage. These endpoints make captured images
+                // available both to gallery apps and to the future on-device recognition pipeline.
+                get("/api/media/local") {
+                    call.response.header("Access-Control-Allow-Origin", "*")
+                    val library = call.request.queryParameters["library"]
+                    val images = withContext(Dispatchers.IO) { androidMedia.listImages(library) }
+                    call.respondText(images.toString(), ContentType.Application.Json)
+                }
+
+                get("/api/media/local/{id}") {
+                    call.response.header("Access-Control-Allow-Origin", "*")
+                    val id = call.parameters["id"] ?: ""
+                    val item = withContext(Dispatchers.IO) { androidMedia.readImage(id) }
+                    if (item == null) {
+                        call.respond(HttpStatusCode.NotFound)
+                    } else {
+                        call.respondBytes(item.first, ContentType.parse(item.second))
+                    }
+                }
+
+                post("/api/media/snapshot") {
+                    call.response.header("Access-Control-Allow-Origin", "*")
+                    val metadata = try {
+                        val text = call.receiveText().trim()
+                        if (text.isNotEmpty()) JSONObject(text) else null
+                    } catch (_: Exception) {
+                        null
+                    }
+                    var jpeg = videoDecoder.lastJpeg
+                    if (jpeg == null) {
+                        ProxyService.instance?.activateLiveView()
+                        var waitedMs = 0
+                        while (jpeg == null && waitedMs < 2000) {
+                            delay(100)
+                            waitedMs += 100
+                            jpeg = videoDecoder.lastJpeg
+                        }
+                    }
+                    val frame = jpeg
+                    if (frame == null) {
+                        call.respondText(
+                            JSONObject().put("error", "No decoded video frame is available").toString(),
+                            ContentType.Application.Json,
+                            HttpStatusCode.ServiceUnavailable,
+                        )
+                    } else {
+                        try {
+                            val saved = withContext(Dispatchers.IO) {
+                                androidMedia.saveImage(
+                                    bytes = frame,
+                                    requestedName = null,
+                                    source = "live-reco",
+                                    library = "recognition",
+                                    metadata = metadata,
+                                )
+                            }
+                            call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
+                        } catch (e: SecurityException) {
+                            call.respondText(JSONObject().put("error", e.message ?: "storage permission denied").toString(), ContentType.Application.Json, HttpStatusCode.Forbidden)
+                        } catch (e: Exception) {
+                            call.respondText(JSONObject().put("error", e.message ?: "snapshot save failed").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
+                        }
+                    }
+                }
+
+                post("/api/media/import") {
+                    call.response.header("Access-Control-Allow-Origin", "*")
+                    try {
+                        val declaredLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+                        if (declaredLength != null && declaredLength > 64L * 1024L * 1024L) {
+                            call.respondText(JSONObject().put("error", "Image is larger than 64 MiB").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                            return@post
+                        }
+                        val name = call.request.queryParameters["name"]
+                        val source = call.request.queryParameters["source"]?.take(64) ?: "camera-download"
+                        val library = call.request.queryParameters["library"]?.take(32) ?: "camera"
+                        val metadata = call.request.queryParameters["metadata"]
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { JSONObject(it) }
+                        val ext = name?.substringAfterLast('.', "")?.lowercase()
+                        if (ext !in setOf("jpg", "jpeg", "png", "dng")) {
+                            call.respondText(JSONObject().put("error", "Only JPG, JPEG, PNG and DNG images can be imported").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                            return@post
+                        }
+                        val bytes = call.receive<ByteArray>()
+                        if (bytes.size > 64 * 1024 * 1024) {
+                            call.respondText(JSONObject().put("error", "Image is larger than 64 MiB").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                            return@post
+                        }
+                        val saved = withContext(Dispatchers.IO) {
+                            androidMedia.saveImage(
+                                bytes = bytes,
+                                requestedName = name,
+                                source = source,
+                                library = library,
+                                metadata = metadata,
+                            )
+                        }
+                        call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
+                    } catch (e: SecurityException) {
+                        call.respondText(JSONObject().put("error", e.message ?: "storage permission denied").toString(), ContentType.Application.Json, HttpStatusCode.Forbidden)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", e.message ?: "image import failed").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
                     }
                 }
 

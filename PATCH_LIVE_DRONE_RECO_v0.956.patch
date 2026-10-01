@@ -1,0 +1,1483 @@
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/COMMIT_MESSAGE.txt /mnt/data/potensic_reco_work2/PotensicProxy_TAF/COMMIT_MESSAGE.txt
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/COMMIT_MESSAGE.txt	2026-09-29 10:08:31.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/COMMIT_MESSAGE.txt	2026-10-01 10:18:52.687197911 +0000
+@@ -1,15 +1,13 @@
+-BL_Fix video state frame counter type
+-Date: 2026-09-28
+-
+-Summary:
+-- Fixed the Android Kotlin compilation error in ProxyService by converting the AtomicInteger video frame counter to Long before assigning it to VideoState.frames.
+-- Kept the confirmed Potensic protocol, telemetry parsing, and video extraction implementations unchanged.
+-- Bumped application and frontend version from 0.941 to 0.942 (versionCode 22).
+-- Verified the architecture guard script and Vue TypeScript type check after the correction.
+-
+-Changed files:
+-- COMMIT_MESSAGE.txt
+-- app/build.gradle.kts
+-- app/src/main/java/com/potensic/proxy/ProxyService.kt
+-- webui/package.json
+-- webui/package-lock.json
++feat(recognition): split camera and recognition capture paths
++
++- keep normal camera gallery/download flow separate
++- store normal photos under Pictures/PotensicProxy/Camera
++- store recognition captures under Pictures/PotensicProxy/Recognition
++- add Live Reco from decoded LiveView frames
++- add Drone Reco full-photo transfer workflow
++- verify MediaStore copy by size and SHA-256 before drone delete
++- wait for camera delete acknowledgement before success
++- capture rich telemetry/camera/gimbal/control metadata
++- add Camera/Recognition gallery tabs and Live/Drone filters
++- prepare common recognition result schema for future ML pipeline
++- bump app/web version to 0.956 (versionCode 29)
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/COMMIT_MESSAGE_LIVE_DRONE_RECO_2026-10-01.txt /mnt/data/potensic_reco_work2/PotensicProxy_TAF/COMMIT_MESSAGE_LIVE_DRONE_RECO_2026-10-01.txt
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/COMMIT_MESSAGE_LIVE_DRONE_RECO_2026-10-01.txt	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/COMMIT_MESSAGE_LIVE_DRONE_RECO_2026-10-01.txt	2026-10-01 10:12:55.366328841 +0000
+@@ -0,0 +1,13 @@
++feat(recognition): split camera and recognition capture paths
++
++- keep normal camera gallery/download flow separate
++- store normal photos under Pictures/PotensicProxy/Camera
++- store recognition captures under Pictures/PotensicProxy/Recognition
++- add Live Reco from decoded LiveView frames
++- add Drone Reco full-photo transfer workflow
++- verify MediaStore copy by size and SHA-256 before drone delete
++- wait for camera delete acknowledgement before success
++- capture rich telemetry/camera/gimbal/control metadata
++- add Camera/Recognition gallery tabs and Live/Drone filters
++- prepare common recognition result schema for future ML pipeline
++- bump app/web version to 0.956 (versionCode 29)
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/IMAGE_RECOGNITION_LIVE_DRONE_RECO_2026-10-01.md /mnt/data/potensic_reco_work2/PotensicProxy_TAF/IMAGE_RECOGNITION_LIVE_DRONE_RECO_2026-10-01.md
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/IMAGE_RECOGNITION_LIVE_DRONE_RECO_2026-10-01.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/IMAGE_RECOGNITION_LIVE_DRONE_RECO_2026-10-01.md	2026-10-01 10:19:03.024882946 +0000
+@@ -0,0 +1,168 @@
++# PotensicProxy_TAF - Live Reco / Drone Reco
++
++Datum: 2026-10-01
++Version: 0.956 / Android versionCode 29
++Ausgangsstand: 0.955 Image Recognition Prerequisites
++
++## 1. Ziel
++
++Die normale Foto-/Kamerafunktion und der fortschrittliche Recognition-Weg sind getrennt. Recognition besitzt zwei Bildquellen, die hinter der Aufnahmequelle dieselbe Speicher-, Metadaten- und spätere Erkennungspipeline verwenden:
++
++- **Live Reco**: aktuelles dekodiertes LiveView-JPEG wird direkt auf Android gespeichert.
++- **Drone Reco**: echtes Kamerafoto wird auf der Drohne erzeugt, nach Android übertragen, lokal verifiziert und erst danach auf der Drohne gelöscht.
++
++Die eigentliche KI-/Objekterkennung ist in diesem Stand noch nicht implementiert. Der gemeinsame Datensatz enthält bereits `recognition.processed=false` und `recognition.runs=[]` als Erweiterungspunkt.
++
++## 2. Speichertrennung
++
++Normale Kamera-Downloads:
++
++`Pictures/PotensicProxy/Camera/`
++
++Recognition-Aufnahmen:
++
++`Pictures/PotensicProxy/Recognition/`
++
++Beide Pfade werden über Android MediaStore veröffentlicht. Die App führt zusätzlich einen eigenen Index mit `content://`-URI.
++
++## 3. Camera Gallery
++
++Die bestehende Kamera-/SD-Galerie bleibt erhalten. Ein manuell heruntergeladenes Foto wird nach `Pictures/PotensicProxy/Camera/` gespeichert. Es wird **nicht** automatisch auf der Drohne gelöscht.
++
++Damit bleibt der bisherige Benutzerweg von der neuen Recognition-Funktion unabhängig.
++
++## 4. Recognition Gallery
++
++Auf der Gallery-Seite existieren zwei klar getrennte Tabs:
++
++- `Camera`
++- `Recognition`
++
++Der Recognition-Tab zeigt alle lokalen Recognition-Bilder. Jedes Bild wird als `LIVE` oder `DRONE` gekennzeichnet. Verifizierte Dateien tragen zusätzlich den Status `verified`. Die vollständigen gespeicherten Metadaten können pro Bild aufgeklappt werden.
++
++Filter:
++
++- All
++- Live
++- Drone
++
++## 5. Live Reco
++
++Ablauf:
++
++1. aktuelles Telemetrie-/Kamera-/Steuerungsabbild erzeugen;
++2. letztes dekodiertes LiveView-JPEG übernehmen;
++3. unter `Pictures/PotensicProxy/Recognition/` speichern;
++4. MediaStore-Datei zurücklesen;
++5. Dateigröße und SHA-256 mit dem Quelldatensatz vergleichen;
++6. Bild als Recognition-Eingabe bereitstellen.
++
++Auf der Drohne entsteht hierbei keine zusätzliche Fotodatei.
++
++## 6. Drone Reco
++
++Sicherheitsorientierter Ablauf:
++
++1. aktuelle Kamera-Dateiliste vollständig einlesen;
++2. Kamera-Galerie verlassen;
++3. Recognition-Metadaten zum Auslösezeitpunkt erfassen;
++4. normalen Potensic-Fotobefehl senden;
++5. Kamera-Galerie erneut öffnen;
++6. neu hinzugekommene Fotodatei gegenüber der Ausgangsliste identifizieren; bei RAW+JPEG wird für Recognition ein direkt dekodierbares JPG/JPEG/PNG bevorzugt, zusätzliche Dateien bleiben unberührt;
++7. Originalfoto von der Kamera nach Android übertragen;
++8. unter `Pictures/PotensicProxy/Recognition/` speichern;
++9. gespeicherte MediaStore-Datei zurücklesen;
++10. Byteanzahl und SHA-256 verifizieren;
++11. **nur bei erfolgreicher Verifikation** Löschbefehl für exakt diese Quelldatei senden;
++12. Kamera-Löschbestätigung abwarten;
++13. erst danach den Drone-Reco-Vorgang als erfolgreich melden.
++
++Bei fehlendem neuen Foto, Downloadfehler, Speicherfehler, Verifikationsfehler oder fehlender Löschbestätigung gilt der Vorgang als fehlgeschlagen. Die Implementierung führt dann keinen erfolgreichen Auto-Delete-Abschluss aus.
++
++## 7. Metadaten
++
++Für Recognition wird Schema-Version 1 verwendet. Gespeichert werden alle zum Aufnahmezeitpunkt in der App tatsächlich verfügbaren Werte, insbesondere:
++
++- UTC/Unix-Aufnahmezeit;
++- Recognition-Quelle `LIVE_RECO` oder `DRONE_RECO`;
++- vollständiger aktueller Telemetrie-State;
++- Latitude/Longitude und GPS-Gültigkeitsstatus;
++- relative Höhe, Altitude, Distanz und Geschwindigkeiten soweit vorhanden;
++- Heading, Pitch, Roll;
++- Gimbal Pitch/Roll/Yaw, Geschwindigkeiten und Steuerwert;
++- RC-Hardwarewerte;
++- virtuelle/angeforderte Steuerwerte;
++- Akku-/Spannungswerte soweit vorhanden;
++- Flug-/GPS-/Statusflags;
++- Kamera-Auflösungsindizes, EV, Zoom, Manual/ISO/Shutter/WB, RAW/OSD/GPS-Einstellungen;
++- SD-Kartenstatus;
++- Verbindungsstatus;
++- TAF-Version und Metadaten-Schema;
++- tatsächliches Bildformat, Bytegröße, Bildabmessungen soweit dekodierbar;
++- SHA-256;
++- MediaStore-Verifikationsstatus;
++- vorbereiteter Recognition-Ergebnisbereich.
++
++Nicht bekannte Werte werden nicht geschätzt.
++
++## 8. Gemeinsame Recognition-Pipeline
++
++Beide Quellen erzeugen denselben `AndroidStoredImage`-/Recognition-Datensatz. Damit kann die spätere Erkennung unabhängig von der Aufnahmequelle implementiert werden.
++
++Logische Struktur:
++
++```text
++LiveView frame -----\
++                    > Recognition image -> Metadata -> Recognition engine -> Results
++Camera photo -------/
++```
++
++Ein späterer Hybrid-Modus kann dadurch Live Reco zur schnellen Kandidatensuche und Drone Reco zur hochauflösenden Bestätigung verwenden, ohne eine zweite Erkennungsengine einzuführen.
++
++## 9. Geänderte Kernmodule
++
++- `app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt`
++- `app/src/main/java/com/potensic/proxy/WebServer.kt`
++- `webui/src/services/AndroidMediaService.ts`
++- `webui/src/services/CameraMediaService.ts`
++- `webui/src/services/RecognitionCaptureService.ts` (neu)
++- `webui/src/services/RecognitionMetadataService.ts` (neu)
++- `webui/src/services/DroneControlService.ts`
++- `webui/src/components/gallery/GalleryView.vue`
++- `webui/src/i18n/index.ts`
++- `README.md`
++- Versionsdateien
++
++## 10. Verifikation
++
++Erfolgreich ausgeführt:
++
++*`./node_modules/.bin/vue-tsc --noEmit`*
++
++Ergebnis: ohne TypeScript-/Vue-Typfehler.
++
++Der vollständige Vite-Build wurde in der Linux-Arbeitsumgebung versucht:
++
++*`npm run build`*
++
++Ergebnis: nicht aufgrund des Quellcodes, sondern wegen des im übernommenen `node_modules` fehlenden optionalen Linux-Pakets `@rollup/rollup-linux-x64-gnu` abgebrochen. Das Paket enthält Windows-Rollup-Binaries. Auf dem Windows-Build-PC sollte ein sauberes *`npm ci`* vor dem Build ausgeführt werden.
++
++Android-Kotlin-Kompilierung wurde ebenfalls angestoßen:
++
++*`./gradlew :app:compileDebugKotlin --offline`*
++
++Der Wrapper versucht die nicht lokal vorhandene Gradle-8.11.1-Distribution zu beziehen; Netzwerkzugriff auf `services.gradle.org` ist in der Arbeitsumgebung nicht verfügbar. Daher konnte der native Android-Compile hier nicht abgeschlossen werden.
++
++## 11. Hardwaretest erforderlich
++
++Folgende Punkte müssen mit echter Drohne/Controller bestätigt werden:
++
++- neues Foto erscheint nach dem Auslösen zuverlässig in der Dateiliste;
++- das richtige neue Foto wird eindeutig ausgewählt;
++- vollständiger Foto-Download funktioniert;
++- MediaStore-Verifikation liefert `verified=true`;
++- der bekannte Kamera-Löschbefehl löscht exakt die übertragene Quelldatei;
++- Löschbestätigung wird zuverlässig empfangen;
++- bei absichtlich unterbrochenem Transfer bleibt die Quelldatei auf der Drohne erhalten.
++
++Bis zu diesem Gerätetest ist die Auto-Delete-Logik **implementiert, aber nicht hardwareseitig bestätigt**.
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-01_LIVE_DRONE_RECO_v0.956.md /mnt/data/potensic_reco_work2/PotensicProxy_TAF/NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-01_LIVE_DRONE_RECO_v0.956.md
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-01_LIVE_DRONE_RECO_v0.956.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-01_LIVE_DRONE_RECO_v0.956.md	2026-10-01 10:19:03.025055546 +0000
+@@ -0,0 +1,57 @@
++# Nur Änderungen in Originalstruktur - Live Reco / Drone Reco
++
++Datum: 2026-10-01
++Basis: PotensicProxy_TAF 0.955 Image Recognition Prerequisites
++Ziel: PotensicProxy_TAF 0.956
++
++## Geändert
++
++- `README.md` - zwei getrennte Bildbibliotheken und Live-/Drone-Reco-Ablauf dokumentiert.
++- `app/build.gradle.kts` - `versionCode 29`, `versionName 0.956`.
++- `app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt`
++  - `Pictures/PotensicProxy/Camera/` und `Pictures/PotensicProxy/Recognition/`;
++  - Library-Kennzeichnung im Index;
++  - SHA-256 und Rücklese-Verifikation;
++  - Bildabmessungen/Format/Größe;
++  - optionaler umfangreicher Recognition-Metadatensatz.
++- `app/src/main/java/com/potensic/proxy/WebServer.kt`
++  - Library-Filter für lokale Bilder;
++  - Live-Reco-Metadatenannahme;
++  - Import mit `library` und `metadata`.
++- `webui/package.json`, `webui/package-lock.json` - Version 0.956.
++- `webui/src/services/AndroidMediaService.ts` - getrennte Libraries, Recognition-Typen, Verifikations-/Hashfelder.
++- `webui/src/services/CameraMediaService.ts`
++  - Downloads liefern jetzt einen Abschluss-Promise;
++  - normales Foto -> Camera-Library;
++  - Recognition-Foto -> Recognition-Library;
++  - optionales Löschen ausschließlich nach `verified=true`;
++  - Löschbestätigung mit Timeout.
++- `webui/src/services/RecognitionMetadataService.ts` - neu; erfasst maximal verfügbare Zustandsdaten zum Aufnahmezeitpunkt.
++- `webui/src/services/RecognitionCaptureService.ts` - neu; orchestriert Live Reco und Drone Reco.
++- `webui/src/services/DroneControlService.ts` - Cockpit-Live-Snapshot nutzt Recognition-Metadaten.
++- `webui/src/components/gallery/GalleryView.vue`
++  - Tabs `Camera` / `Recognition`;
++  - Recognition-Filter `All` / `Live` / `Drone`;
++  - Buttons für Live Reco und Drone Reco;
++  - Quellen-/Verified-Badges;
++  - aufklappbare vollständige Metadaten.
++- `webui/src/i18n/index.ts` - FPV-Snapshot als Live-Reco-Aufnahme bezeichnet.
++
++## Neu
++
++- `IMAGE_RECOGNITION_LIVE_DRONE_RECO_2026-10-01.md`
++- `COMMIT_MESSAGE_LIVE_DRONE_RECO_2026-10-01.txt`
++- `PATCH_LIVE_DRONE_RECO_v0.956.patch`
++
++## Nicht verändert
++
++- bestätigte Potensic-Protokollwerte und bestehende Kamera-Befehlsstruktur;
++- normale Fotoaufnahme bleibt normale Kameraaufnahme;
++- nicht bestätigte Protokollbereiche werden nicht umgedeutet.
++
++## Noch nicht Bestandteil dieses Stands
++
++- eigentliches ML-/Objekterkennungsmodell;
++- Hybrid-Reco-Entscheidungslogik;
++- hardwareseitige Bestätigung des vollständigen Drone-Reco-Auto-Delete-Zyklus;
++- zusätzliche EXIF-/XMP-Einbettung in die Bilddatei selbst. Der vollständige Recognition-Datensatz liegt aktuell im app-eigenen Index und ist über die Gallery sichtbar.
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/README.md /mnt/data/potensic_reco_work2/PotensicProxy_TAF/README.md
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/README.md	2026-10-01 08:22:08.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/README.md	2026-10-01 10:10:22.110507516 +0000
+@@ -61,12 +61,17 @@
+ 
+ ## Image-recognition prerequisites
+ 
+-The project now has a native Android image-storage path intended as the input layer for a later on-device image-recognition module. Two capture sources remain deliberately separate:
++The project now has two deliberately separate Android image libraries:
+ 
+-- **Drone photo:** the existing mapped camera command `0x51` is used for the normal camera photo on the aircraft SD card. When a JPG/JPEG/PNG/DNG is downloaded from **Gallery**, the completed file is now sent back to the Android backend and published through `MediaStore` under `Pictures/PotensicProxy`.
+-- **LiveView snapshot:** the current decoded JPEG frame can be stored immediately on the Android device without waiting for the aircraft SD-card gallery. This is suitable as a deterministic recognition input path.
++- **Normal Camera:** the existing mapped camera command `0x51` and the normal aircraft SD-card gallery remain unchanged. Downloaded JPG/JPEG/PNG/DNG files are published through Android `MediaStore` under `Pictures/PotensicProxy/Camera`. Normal camera downloads are not automatically deleted from the aircraft.
++- **Recognition:** all images intended for later image recognition are published under `Pictures/PotensicProxy/Recognition` and shown in the separate **Recognition** tab of the Gallery page.
+ 
+-The backend keeps an app-owned index of images it created. The index stores the `content://` URI, source, file name, size and timestamp. A future recognition service can therefore process app-owned images directly without requesting broad access to the user's entire photo library. On Android 10+ no storage permission is required for media created by the app; Android 8/9 request the legacy write permission only for publishing into the public Pictures collection.
++Recognition has two capture sources that feed the same metadata/index pipeline:
++
++- **Live Reco:** saves the current decoded LiveView JPEG directly to Android. No temporary still image exists on the aircraft.
++- **Drone Reco:** records the pre-shot camera file list, leaves gallery mode, triggers a full camera photo, identifies the newly created file, transfers it to Android, reads the MediaStore copy back, verifies byte count plus SHA-256, and only then sends the camera-file delete command. A missing transfer, failed verification, ambiguous/new-file failure or missing delete acknowledgement is treated as an error; the workflow does not intentionally delete an unverified source.
++
++Each Recognition index record can carry a metadata snapshot captured at trigger time: all currently available telemetry fields, GPS state/coordinates, relative height and altitude fields, attitude, gimbal state, RC/user control values, camera settings, SD state, connection state, application/schema version, image dimensions/size/hash and a placeholder for later recognition runs. Unknown values are retained as unknown rather than inferred. The app-owned index lets a future recognition service process its own images without broad access to the user's entire photo library. On Android 10+ no storage permission is required for media created by the app; Android 8/9 request the legacy write permission only for publishing into the public Pictures collection.
+ 
+ ## Map and missions
+ 
+@@ -109,9 +114,9 @@
+ | `GET /api/telemetry` | interpreted telemetry state |
+ | `GET /api/video/stats` | video parser/extractor diagnostics |
+ | `GET /api/video/snapshot` | current decoded JPEG frame |
+-| `POST /api/media/snapshot` | save the latest decoded LiveView JPEG to Android `Pictures/PotensicProxy` |
+-| `POST /api/media/import?name=...` | publish a downloaded camera JPG/JPEG/PNG/DNG to Android MediaStore |
+-| `GET /api/media/local` | list images created by the app for gallery/recognition use |
++| `POST /api/media/snapshot` | save a Live Reco frame to Android `Pictures/PotensicProxy/Recognition` with optional metadata |
++| `POST /api/media/import?name=...&library=...` | publish camera/Recognition JPG/JPEG/PNG/DNG to the selected Android MediaStore library |
++| `GET /api/media/local?library=camera|recognition` | list app-created images, optionally filtered by library |
+ | `GET /api/media/local/{id}` | read an app-created image by local media index id |
+ | `GET /api/video/mjpeg` | MJPEG stream |
+ | `POST /api/video/activate` | explicit LiveView activation |
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/app/build.gradle.kts /mnt/data/potensic_reco_work2/PotensicProxy_TAF/app/build.gradle.kts
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/app/build.gradle.kts	2026-10-01 08:18:15.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/app/build.gradle.kts	2026-10-01 10:08:28.825839770 +0000
+@@ -11,8 +11,8 @@
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 28
+-        versionName = "0.955"
++        versionCode = 29
++        versionName = "0.956"
+     }
+ 
+     buildTypes {
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt /mnt/data/potensic_reco_work2/PotensicProxy_TAF/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt	2026-10-01 08:15:55.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt	2026-10-01 10:09:35.193244137 +0000
+@@ -4,6 +4,7 @@
+ import android.content.ContentValues
+ import android.content.Context
+ import android.content.pm.PackageManager
++import android.graphics.BitmapFactory
+ import android.net.Uri
+ import android.os.Build
+ import android.os.Environment
+@@ -12,49 +13,69 @@
+ import org.json.JSONArray
+ import org.json.JSONObject
+ import java.io.File
++import java.security.MessageDigest
+ import java.text.SimpleDateFormat
+ import java.util.Date
+ import java.util.Locale
+ import java.util.UUID
+ 
+ /**
+- * Stores images in Android's public MediaStore and keeps a small app-owned index.
++ * Android-owned image storage for the two intentionally separate media paths:
+  *
+- * The public copy makes captures visible to Android gallery/photo apps. The index
+- * gives the future image-recognition pipeline a deterministic list of images and
+- * stable content:// URIs without needing broad READ_MEDIA_IMAGES permission.
++ *  - camera      -> Pictures/PotensicProxy/Camera
++ *  - recognition -> Pictures/PotensicProxy/Recognition
++ *
++ * Every image receives an app-owned index record. Recognition captures may attach
++ * a rich JSON metadata snapshot (telemetry, gimbal, controls, camera state, etc.).
++ * The repository verifies the MediaStore copy by reading it back and comparing its
++ * byte count and SHA-256 digest before reporting verified=true.
+  */
+ class AndroidMediaRepository(
+     private val context: Context,
+     filesDir: File,
+ ) {
+     companion object {
+-        private const val RELATIVE_DIR = "Pictures/PotensicProxy"
+-        private const val MAX_INDEX_ITEMS = 500
++        private const val CAMERA_DIR = "Pictures/PotensicProxy/Camera"
++        private const val RECOGNITION_DIR = "Pictures/PotensicProxy/Recognition"
++        private const val MAX_INDEX_ITEMS = 1000
+     }
+ 
+     private val indexDir = File(filesDir, "media").apply { mkdirs() }
+     private val indexFile = File(indexDir, "android_images.jsonl")
+ 
+     @Synchronized
+-    fun saveImage(bytes: ByteArray, requestedName: String?, source: String): JSONObject {
++    fun saveImage(
++        bytes: ByteArray,
++        requestedName: String?,
++        source: String,
++        library: String = "camera",
++        metadata: JSONObject? = null,
++    ): JSONObject {
+         require(bytes.isNotEmpty()) { "Image payload is empty" }
+         ensureLegacyWritePermission()
+ 
+-        val (displayName, mimeType) = normalizedNameAndMime(requestedName)
++        val normalizedLibrary = normalizeLibrary(library)
++        val relativeDir = relativeDir(normalizedLibrary)
++        val (displayName, mimeType) = normalizedNameAndMime(requestedName, normalizedLibrary)
++        val captureTime = metadata
++            ?.optJSONObject("capture")
++            ?.optLong("timestampUnixMs", 0L)
++            ?.takeIf { it > 0L }
++            ?: System.currentTimeMillis()
++
+         val values = ContentValues().apply {
+             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+             put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+             put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000L)
+-            put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
++            put(MediaStore.Images.Media.DATE_TAKEN, captureTime)
+             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+-                put(MediaStore.Images.Media.RELATIVE_PATH, RELATIVE_DIR)
++                put(MediaStore.Images.Media.RELATIVE_PATH, relativeDir)
+                 put(MediaStore.Images.Media.IS_PENDING, 1)
+             } else {
+                 @Suppress("DEPRECATION")
+                 val publicDir = File(
+                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+-                    "PotensicProxy",
++                    relativeDir.removePrefix("Pictures/"),
+                 ).apply { mkdirs() }
+                 @Suppress("DEPRECATION")
+                 put(MediaStore.Images.Media.DATA, File(publicDir, displayName).absolutePath)
+@@ -78,25 +99,57 @@
+             throw e
+         }
+ 
++        // Verification is deliberately performed before callers are allowed to delete
++        // a Drone Reco source file from the drone SD card.
++        val sourceHash = sha256(bytes)
++        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
++        try { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds) } catch (_: Exception) {}
++        val storedBytes = try {
++            resolver.openInputStream(uri)?.use { it.readBytes() }
++        } catch (_: Exception) {
++            null
++        }
++        val storedHash = storedBytes?.let(::sha256)
++        val verified = storedBytes != null && storedBytes.size == bytes.size && storedHash == sourceHash
++
+         val item = JSONObject().apply {
+             put("id", UUID.randomUUID().toString())
+             put("name", displayName)
+             put("mimeType", mimeType)
+             put("size", bytes.size)
+             put("source", source)
++            put("library", normalizedLibrary)
+             put("createdAt", System.currentTimeMillis())
++            put("captureTime", captureTime)
+             put("uri", uri.toString())
+-            put("relativePath", RELATIVE_DIR)
++            put("relativePath", relativeDir)
++            put("sha256", sourceHash)
++            put("verified", verified)
++            put("image", JSONObject().apply {
++                put("width", if (bounds.outWidth > 0) bounds.outWidth else JSONObject.NULL)
++                put("height", if (bounds.outHeight > 0) bounds.outHeight else JSONObject.NULL)
++                put("format", mimeType)
++                put("byteSize", bytes.size)
++                put("sha256", sourceHash)
++            })
++            if (metadata != null) put("metadata", metadata)
+         }
+         appendToIndex(item)
+-        Log.i("[MediaStore] Saved ${bytes.size} bytes as $displayName from $source -> $uri")
++        Log.i("[MediaStore] Saved ${bytes.size} bytes as $displayName [$normalizedLibrary/$source] verified=$verified -> $uri")
+         return item
+     }
+ 
+     @Synchronized
+-    fun listImages(): JSONArray {
++    fun listImages(library: String? = null): JSONArray {
++        val normalized = library?.takeIf { it.isNotBlank() }?.let(::normalizeLibrary)
+         val result = JSONArray()
+-        readIndex().asReversed().take(MAX_INDEX_ITEMS).forEach { result.put(it) }
++        readIndex()
++            .asReversed()
++            .asSequence()
++            .map(::withInferredLibrary)
++            .filter { normalized == null || it.optString("library") == normalized }
++            .take(MAX_INDEX_ITEMS)
++            .forEach { result.put(it) }
+         return result
+     }
+ 
+@@ -109,14 +162,36 @@
+         return bytes to item.optString("mimeType", "image/jpeg")
+     }
+ 
+-    private fun normalizedNameAndMime(requestedName: String?): Pair<String, String> {
++    private fun withInferredLibrary(item: JSONObject): JSONObject {
++        if (!item.has("library")) {
++            val source = item.optString("source")
++            val inferred = if (source.contains("liveview", ignoreCase = true) || source.contains("reco", ignoreCase = true)) {
++                "recognition"
++            } else {
++                "camera"
++            }
++            item.put("library", inferred)
++            if (!item.has("relativePath")) item.put("relativePath", relativeDir(inferred))
++        }
++        return item
++    }
++
++    private fun normalizeLibrary(library: String): String = when (library.lowercase(Locale.US)) {
++        "recognition", "reco" -> "recognition"
++        else -> "camera"
++    }
++
++    private fun relativeDir(library: String): String = if (library == "recognition") RECOGNITION_DIR else CAMERA_DIR
++
++    private fun normalizedNameAndMime(requestedName: String?, library: String): Pair<String, String> {
+         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
++        val prefix = if (library == "recognition") "Reco" else "Camera"
+         val raw = requestedName
+             ?.substringAfterLast('/')
+             ?.substringAfterLast('\\')
+             ?.trim()
+             ?.takeIf { it.isNotBlank() }
+-            ?: "Potensic_$timestamp.jpg"
++            ?: "${prefix}_$timestamp.jpg"
+ 
+         val safe = raw.replace(Regex("[^A-Za-z0-9._-]"), "_")
+         val extension = safe.substringAfterLast('.', "").lowercase(Locale.US)
+@@ -128,6 +203,11 @@
+         }
+     }
+ 
++    private fun sha256(bytes: ByteArray): String = MessageDigest
++        .getInstance("SHA-256")
++        .digest(bytes)
++        .joinToString("") { "%02x".format(it) }
++
+     private fun ensureLegacyWritePermission() {
+         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+             ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/app/src/main/java/com/potensic/proxy/WebServer.kt /mnt/data/potensic_reco_work2/PotensicProxy_TAF/app/src/main/java/com/potensic/proxy/WebServer.kt
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/app/src/main/java/com/potensic/proxy/WebServer.kt	2026-10-01 08:20:59.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/app/src/main/java/com/potensic/proxy/WebServer.kt	2026-10-01 10:03:47.153045843 +0000
+@@ -219,7 +219,8 @@
+                 // available both to gallery apps and to the future on-device recognition pipeline.
+                 get("/api/media/local") {
+                     call.response.header("Access-Control-Allow-Origin", "*")
+-                    val images = withContext(Dispatchers.IO) { androidMedia.listImages() }
++                    val library = call.request.queryParameters["library"]
++                    val images = withContext(Dispatchers.IO) { androidMedia.listImages(library) }
+                     call.respondText(images.toString(), ContentType.Application.Json)
+                 }
+ 
+@@ -236,6 +237,12 @@
+ 
+                 post("/api/media/snapshot") {
+                     call.response.header("Access-Control-Allow-Origin", "*")
++                    val metadata = try {
++                        val text = call.receiveText().trim()
++                        if (text.isNotEmpty()) JSONObject(text) else null
++                    } catch (_: Exception) {
++                        null
++                    }
+                     var jpeg = videoDecoder.lastJpeg
+                     if (jpeg == null) {
+                         ProxyService.instance?.activateLiveView()
+@@ -256,7 +263,13 @@
+                     } else {
+                         try {
+                             val saved = withContext(Dispatchers.IO) {
+-                                androidMedia.saveImage(frame, null, "liveview-snapshot")
++                                androidMedia.saveImage(
++                                    bytes = frame,
++                                    requestedName = null,
++                                    source = "live-reco",
++                                    library = "recognition",
++                                    metadata = metadata,
++                                )
+                             }
+                             call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
+                         } catch (e: SecurityException) {
+@@ -277,6 +290,10 @@
+                         }
+                         val name = call.request.queryParameters["name"]
+                         val source = call.request.queryParameters["source"]?.take(64) ?: "camera-download"
++                        val library = call.request.queryParameters["library"]?.take(32) ?: "camera"
++                        val metadata = call.request.queryParameters["metadata"]
++                            ?.takeIf { it.isNotBlank() }
++                            ?.let { JSONObject(it) }
+                         val ext = name?.substringAfterLast('.', "")?.lowercase()
+                         if (ext !in setOf("jpg", "jpeg", "png", "dng")) {
+                             call.respondText(JSONObject().put("error", "Only JPG, JPEG, PNG and DNG images can be imported").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+@@ -287,7 +304,15 @@
+                             call.respondText(JSONObject().put("error", "Image is larger than 64 MiB").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                             return@post
+                         }
+-                        val saved = withContext(Dispatchers.IO) { androidMedia.saveImage(bytes, name, source) }
++                        val saved = withContext(Dispatchers.IO) {
++                            androidMedia.saveImage(
++                                bytes = bytes,
++                                requestedName = name,
++                                source = source,
++                                library = library,
++                                metadata = metadata,
++                            )
++                        }
+                         call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
+                     } catch (e: SecurityException) {
+                         call.respondText(JSONObject().put("error", e.message ?: "storage permission denied").toString(), ContentType.Application.Json, HttpStatusCode.Forbidden)
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/package-lock.json /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/package-lock.json
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/package-lock.json	2026-10-01 08:18:33.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/package-lock.json	2026-10-01 10:08:28.826079300 +0000
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.955",
++  "version": "0.956",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.955",
++      "version": "0.956",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/package.json /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/package.json
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/package.json	2026-10-01 08:18:15.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/package.json	2026-10-01 10:08:28.825958979 +0000
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.955",
++  "version": "0.956",
+   "private": true,
+   "type": "module",
+   "scripts": {
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/components/gallery/GalleryView.vue /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/components/gallery/GalleryView.vue
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/components/gallery/GalleryView.vue	2026-10-01 08:20:59.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/components/gallery/GalleryView.vue	2026-10-01 10:09:35.193507693 +0000
+@@ -3,78 +3,131 @@
+     <div class="gallery-header">
+       <div>
+         <h2>🖼️ Gallery</h2>
+-        <p>Photos and videos stored on the drone camera.</p>
++        <p>Normal camera media and the separate Recognition image library.</p>
+       </div>
+-      <div class="gallery-actions">
+-        <button v-if="!camera.galleryEntered" class="taf-btn" @click="CameraMediaService.enterGallery()">Open gallery</button>
+-        <button v-else class="taf-btn" @click="CameraMediaService.refreshGallery()">↻ Refresh</button>
+-        <button v-if="camera.galleryEntered" class="taf-btn" @click="CameraMediaService.quitGallery()">Close</button>
++      <div class="gallery-tabs" role="tablist" aria-label="Gallery type">
++        <button :class="['filter-btn', { active: galleryTab === 'camera' }]" @click="galleryTab = 'camera'">Camera</button>
++        <button :class="['filter-btn', { active: galleryTab === 'recognition' }]" @click="openRecognition">Recognition</button>
+       </div>
+     </div>
+ 
+-    <div class="gallery-toolbar ui-card">
+-      <div class="filter-group">
+-        <button :class="['filter-btn', { active: filter === 'all' }]" @click="filter = 'all'">All <span>{{ camera.media.length }}</span></button>
+-        <button :class="['filter-btn', { active: filter === 'photo' }]" @click="filter = 'photo'">Photos <span>{{ camera.photos.length }}</span></button>
+-        <button :class="['filter-btn', { active: filter === 'video' }]" @click="filter = 'video'">Videos <span>{{ camera.videos.length }}</span></button>
+-      </div>
+-      <div class="gallery-status">
+-        <span class="taf-status-field">{{ camera.galleryEntered ? 'Camera gallery open' : 'Camera gallery closed' }}</span>
+-        <span v-if="camera.download.active" class="taf-status-field">Downloading {{ camera.download.fileName }} · {{ camera.download.progress }}%</span>
++    <template v-if="galleryTab === 'camera'">
++      <div class="gallery-toolbar ui-card">
++        <div class="filter-group">
++          <button :class="['filter-btn', { active: filter === 'all' }]" @click="filter = 'all'">All <span>{{ camera.media.length }}</span></button>
++          <button :class="['filter-btn', { active: filter === 'photo' }]" @click="filter = 'photo'">Photos <span>{{ camera.photos.length }}</span></button>
++          <button :class="['filter-btn', { active: filter === 'video' }]" @click="filter = 'video'">Videos <span>{{ camera.videos.length }}</span></button>
++        </div>
++        <div class="gallery-actions">
++          <button v-if="!camera.galleryEntered" class="taf-btn" @click="CameraMediaService.enterGallery()">Open gallery</button>
++          <button v-else class="taf-btn" @click="CameraMediaService.refreshGallery()">↻ Refresh</button>
++          <button v-if="camera.galleryEntered" class="taf-btn" @click="CameraMediaService.quitGallery()">Close</button>
++        </div>
+       </div>
+-    </div>
+ 
+-    <div class="gallery-content ui-card">
+-      <div v-if="camera.galleryLoading" class="gallery-empty">Reading media list…</div>
+-      <div v-else-if="filteredMedia.length === 0" class="gallery-empty">
+-        {{ camera.galleryEntered ? 'No camera media loaded.' : 'Open the camera gallery to load photos and videos.' }}
+-      </div>
+-      <div v-else class="media-grid">
+-        <article v-for="file in filteredMedia" :key="file.type + ':' + file.name" class="media-card">
+-          <div class="media-preview" :class="file.type">
+-            <span>{{ file.type === 'photo' ? '🖼️' : '🎞️' }}</span>
+-            <small>{{ file.type === 'photo' ? 'PHOTO' : 'VIDEO' }}</small>
+-          </div>
+-          <div class="media-meta">
+-            <div class="media-name" :title="file.name">{{ file.name }}</div>
+-            <div class="media-type">{{ file.type === 'photo' ? 'Photo' : 'Video' }}</div>
+-          </div>
+-          <div class="media-actions">
+-            <button class="taf-btn taf-btn--compact" :disabled="camera.download.active" @click="download(file.name)">{{ file.type === 'photo' ? '↓ Save on Android' : '↓ Download' }}</button>
+-            <button class="taf-btn taf-btn--compact taf-btn--danger" :disabled="camera.download.active" @click="deleteFile(file.name)">Delete</button>
+-          </div>
+-        </article>
++      <div class="gallery-toolbar ui-card">
++        <div class="gallery-status">
++          <span class="taf-status-field">{{ camera.galleryEntered ? 'Camera gallery open' : 'Camera gallery closed' }}</span>
++          <span v-if="camera.download.active" class="taf-status-field">Downloading {{ camera.download.fileName }} · {{ camera.download.progress }}%</span>
++        </div>
++        <small class="path-note">Downloaded photos → Pictures/PotensicProxy/Camera/</small>
+       </div>
+-    </div>
+ 
+-    <div v-if="camera.download.error" class="download-error ui-card">
+-      <strong>Download failed:</strong> {{ camera.download.error }}
+-    </div>
++      <div class="gallery-content ui-card">
++        <div v-if="camera.galleryLoading" class="gallery-empty">Reading media list…</div>
++        <div v-else-if="filteredMedia.length === 0" class="gallery-empty">
++          {{ camera.galleryEntered ? 'No camera media loaded.' : 'Open the camera gallery to load photos and videos.' }}
++        </div>
++        <div v-else class="media-grid">
++          <article v-for="file in filteredMedia" :key="file.type + ':' + file.name" class="media-card">
++            <div class="media-preview" :class="file.type">
++              <span>{{ file.type === 'photo' ? '🖼️' : '🎞️' }}</span>
++              <small>{{ file.type === 'photo' ? 'PHOTO' : 'VIDEO' }}</small>
++            </div>
++            <div class="media-meta">
++              <div class="media-name" :title="file.name">{{ file.name }}</div>
++              <div class="media-type">{{ file.type === 'photo' ? 'Photo' : 'Video' }}</div>
++            </div>
++            <div class="media-actions">
++              <button class="taf-btn taf-btn--compact" :disabled="camera.download.active" @click="download(file.name)">{{ file.type === 'photo' ? '↓ Save on Android' : '↓ Download' }}</button>
++              <button class="taf-btn taf-btn--compact taf-btn--danger" :disabled="camera.download.active" @click="deleteFile(file.name)">Delete</button>
++            </div>
++          </article>
++        </div>
++      </div>
++
++      <div v-if="camera.download.error" class="download-error ui-card">
++        <strong>Download failed:</strong> {{ camera.download.error }}
++      </div>
++
++      <div class="protocol-note">Normal Camera path remains unchanged: camera/SD media is managed here. Saving a photo creates an Android copy in Pictures/PotensicProxy/Camera/ and does not automatically delete the drone source.</div>
++    </template>
+ 
+-    <div class="android-media ui-card">
+-      <div class="android-media-header">
++    <template v-else>
++      <div class="recognition-controls ui-card">
+         <div>
+-          <div class="ui-subtitle">Android images / recognition input</div>
+-          <small>Images saved by this app in Pictures/PotensicProxy via Android MediaStore.</small>
++          <div class="ui-subtitle">Recognition capture sources</div>
++          <small>Both modes use the same Recognition library and metadata schema; only the image source differs.</small>
++        </div>
++        <div class="reco-actions">
++          <button class="taf-btn" :disabled="recoBusy || camera.download.active" @click="captureLiveReco">⚡ Live Reco</button>
++          <button class="taf-btn" :disabled="recoBusy || camera.download.active" @click="captureDroneReco">📷 Drone Reco</button>
++          <button class="taf-btn taf-btn--compact" :disabled="recoBusy" @click="loadRecognitionImages">↻ Refresh</button>
+         </div>
+-        <button class="taf-btn taf-btn--compact" @click="loadAndroidImages">↻ Refresh</button>
+       </div>
+-      <div v-if="androidImagesError" class="download-error">{{ androidImagesError }}</div>
+-      <div v-else-if="androidImages.length === 0" class="android-empty">No Android images saved yet.</div>
+-      <div v-else class="android-grid">
+-        <article v-for="item in androidImages" :key="item.id" class="android-card">
+-          <img v-if="item.mimeType !== 'image/x-adobe-dng'" :src="AndroidMediaService.imageUrl(item.id)" :alt="item.name">
+-          <div v-else class="android-raw-preview">RAW / DNG</div>
+-          <div class="android-card-meta">
+-            <strong :title="item.name">{{ item.name }}</strong>
+-            <small>{{ item.source }} · {{ formatSize(item.size) }}</small>
+-            <small>{{ formatDate(item.createdAt) }}</small>
+-          </div>
+-        </article>
++
++      <div class="mode-explainer">
++        <div class="mode-card ui-card">
++          <strong>Live Reco</strong>
++          <span>Decoded LiveView frame → immediate Android save → Recognition pipeline.</span>
++          <small>No temporary photo exists on the drone.</small>
++        </div>
++        <div class="mode-card ui-card">
++          <strong>Drone Reco</strong>
++          <span>Full camera photo → transfer → Android verification → drone delete acknowledgement.</span>
++          <small>If transfer or verification fails, the source remains on the drone.</small>
++        </div>
++      </div>
++
++      <div class="gallery-toolbar ui-card">
++        <div class="filter-group">
++          <button :class="['filter-btn', { active: recoFilter === 'all' }]" @click="recoFilter = 'all'">All <span>{{ recognitionImages.length }}</span></button>
++          <button :class="['filter-btn', { active: recoFilter === 'live' }]" @click="recoFilter = 'live'">Live <span>{{ liveRecoCount }}</span></button>
++          <button :class="['filter-btn', { active: recoFilter === 'drone' }]" @click="recoFilter = 'drone'">Drone <span>{{ droneRecoCount }}</span></button>
++        </div>
++        <div class="gallery-status">
++          <span class="taf-status-field">Pictures/PotensicProxy/Recognition/</span>
++          <span v-if="recoBusy" class="taf-status-field">{{ recoStatus }}</span>
++        </div>
+       </div>
+-    </div>
+ 
+-    <div class="protocol-note">PotensicPro USB camera path: FE 0x15 → FF FD → message 0x0020. Camera photos saved from this gallery are published to Android MediaStore.</div>
++      <div v-if="recoError" class="download-error ui-card"><strong>Recognition capture:</strong> {{ recoError }}</div>
++
++      <div class="android-media ui-card">
++        <div v-if="recognitionImages.length === 0" class="gallery-empty">No Recognition images saved yet.</div>
++        <div v-else class="android-grid">
++          <article v-for="item in filteredRecognitionImages" :key="item.id" class="android-card">
++            <div class="reco-preview-wrap">
++              <img v-if="item.mimeType !== 'image/x-adobe-dng'" :src="AndroidMediaService.imageUrl(item.id)" :alt="item.name">
++              <div v-else class="android-raw-preview">RAW / DNG</div>
++              <span :class="['source-badge', item.source === 'drone-reco' ? 'drone' : 'live']">{{ sourceLabel(item) }}</span>
++              <span v-if="item.verified" class="verified-badge">✓ verified</span>
++            </div>
++            <div class="android-card-meta">
++              <strong :title="item.name">{{ item.name }}</strong>
++              <small>{{ formatSize(item.size) }} · {{ formatDate(item.captureTime || item.createdAt) }}</small>
++              <small v-if="metadataSummary(item)">{{ metadataSummary(item) }}</small>
++              <details v-if="item.metadata" class="metadata-details">
++                <summary>Metadata</summary>
++                <pre>{{ prettyMetadata(item) }}</pre>
++              </details>
++            </div>
++          </article>
++        </div>
++      </div>
++
++      <div class="protocol-note">Recognition entries store source, timestamp, available telemetry, GPS/height, attitude, gimbal, controls, camera state, connection state, SHA-256 and MediaStore verification status. Recognition model results can later be appended to the same metadata schema.</div>
++    </template>
+   </div>
+ </template>
+ 
+@@ -82,14 +135,19 @@
+ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+ import { CameraMediaService } from '../../services/CameraMediaService'
+ import { AndroidMediaService, type AndroidStoredImage } from '../../services/AndroidMediaService'
++import { RecognitionCaptureService } from '../../services/RecognitionCaptureService'
+ import { useCameraStore, type CameraMediaFile } from '../../stores/useCameraStore'
+ import { useDroneStore } from '../../stores/useDroneStore'
+ 
+ const camera = useCameraStore()
+ const drone = useDroneStore()
++const galleryTab = ref<'camera' | 'recognition'>('camera')
+ const filter = ref<'all' | 'photo' | 'video'>('all')
+-const androidImages = ref<AndroidStoredImage[]>([])
+-const androidImagesError = ref('')
++const recoFilter = ref<'all' | 'live' | 'drone'>('all')
++const recognitionImages = ref<AndroidStoredImage[]>([])
++const recoError = ref('')
++const recoBusy = ref(false)
++const recoStatus = ref('')
+ 
+ const filteredMedia = computed<CameraMediaFile[]>(() => {
+   if (filter.value === 'photo') return camera.photos
+@@ -97,35 +155,101 @@
+   return camera.media
+ })
+ 
++const filteredRecognitionImages = computed(() => recognitionImages.value.filter(item => {
++  if (recoFilter.value === 'live') return item.source === 'live-reco' || item.metadata?.source === 'LIVE_RECO'
++  if (recoFilter.value === 'drone') return item.source === 'drone-reco' || item.metadata?.source === 'DRONE_RECO'
++  return true
++}))
++const liveRecoCount = computed(() => recognitionImages.value.filter(item => item.source === 'live-reco' || item.metadata?.source === 'LIVE_RECO').length)
++const droneRecoCount = computed(() => recognitionImages.value.filter(item => item.source === 'drone-reco' || item.metadata?.source === 'DRONE_RECO').length)
++
+ async function download(fileName: string) {
+   try {
+-    await CameraMediaService.downloadFile(fileName)
++    await CameraMediaService.downloadFile(fileName, { library: 'camera', source: 'drone-camera' })
+   } catch (e: any) {
+     drone.addLog('ERROR', `Camera download failed: ${e?.message || e}`)
+   }
+ }
+ 
+-async function loadAndroidImages() {
++async function openRecognition() {
++  galleryTab.value = 'recognition'
++  await loadRecognitionImages()
++}
++
++async function loadRecognitionImages() {
++  try {
++    recognitionImages.value = await AndroidMediaService.listImages('recognition')
++    recoError.value = ''
++  } catch (e: any) {
++    recoError.value = `Could not read Recognition image index: ${e?.message || e}`
++  }
++}
++
++async function captureLiveReco() {
++  recoBusy.value = true
++  recoStatus.value = 'Capturing LiveView frame…'
++  recoError.value = ''
+   try {
+-    androidImages.value = await AndroidMediaService.listImages()
+-    androidImagesError.value = ''
++    await RecognitionCaptureService.captureLiveReco()
++    recoStatus.value = 'Live Reco saved and verified'
++    await loadRecognitionImages()
+   } catch (e: any) {
+-    androidImagesError.value = `Could not read Android image index: ${e?.message || e}`
++    recoError.value = e?.message || String(e)
++    drone.addLog('ERROR', `Live Reco failed: ${recoError.value}`)
++  } finally {
++    recoBusy.value = false
+   }
+ }
+ 
++async function captureDroneReco() {
++  recoBusy.value = true
++  recoStatus.value = 'Taking full-resolution camera photo…'
++  recoError.value = ''
++  try {
++    await RecognitionCaptureService.captureDroneReco()
++    recoStatus.value = 'Drone Reco transferred, verified and source delete acknowledged'
++    await loadRecognitionImages()
++  } catch (e: any) {
++    recoError.value = e?.message || String(e)
++    drone.addLog('ERROR', `Drone Reco failed: ${recoError.value}`)
++  } finally {
++    recoBusy.value = false
++  }
++}
++
++function sourceLabel(item: AndroidStoredImage) {
++  return item.source === 'drone-reco' || item.metadata?.source === 'DRONE_RECO' ? 'DRONE' : 'LIVE'
++}
++
++function metadataSummary(item: AndroidStoredImage) {
++  const metadata: any = item.metadata
++  const telemetry = metadata?.telemetry
++  if (!telemetry) return ''
++  const parts: string[] = []
++  if (telemetry.gpsLocationValid && Number.isFinite(telemetry.latitude) && Number.isFinite(telemetry.longitude)) {
++    parts.push(`${Number(telemetry.latitude).toFixed(6)}, ${Number(telemetry.longitude).toFixed(6)}`)
++  }
++  if (Number.isFinite(telemetry.verticalDistance)) parts.push(`H ${Number(telemetry.verticalDistance).toFixed(1)} m`)
++  if (Number.isFinite(telemetry.gimbalPitch)) parts.push(`Gimbal ${Number(telemetry.gimbalPitch).toFixed(1)}°`)
++  return parts.join(' · ')
++}
++
++function prettyMetadata(item: AndroidStoredImage) {
++  return JSON.stringify({ image: item.image, sha256: item.sha256, verified: item.verified, ...item.metadata }, null, 2)
++}
++
+ function formatSize(bytes: number) {
+   if (!Number.isFinite(bytes)) return '—'
+   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+ }
+ function formatDate(value: number) { return value ? new Date(value).toLocaleString() : '—' }
+-function onAndroidMediaSaved() { void loadAndroidImages() }
++function onAndroidMediaSaved(event: Event) {
++  const saved = (event as CustomEvent<AndroidStoredImage>).detail
++  if (saved?.library === 'recognition') void loadRecognitionImages()
++}
+ 
+-onMounted(() => {
+-  void loadAndroidImages()
+-  window.addEventListener('taf-android-media-saved', onAndroidMediaSaved)
+-})
++onMounted(() => window.addEventListener('taf-android-media-saved', onAndroidMediaSaved))
+ onBeforeUnmount(() => window.removeEventListener('taf-android-media-saved', onAndroidMediaSaved))
+ 
+ function deleteFile(fileName: string) {
+@@ -135,9 +259,10 @@
+ 
+ <style scoped>
+ .gallery-page{height:100%;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px;background:var(--ui-bg-stage)}
+-.gallery-header{display:flex;align-items:center;justify-content:space-between;gap:16px}.gallery-header h2{margin:0;color:var(--cyan)}.gallery-header p{margin:4px 0 0;color:var(--ui-text-muted);font-size:12px}.gallery-actions{display:flex;gap:7px;flex-wrap:wrap}
+-.gallery-toolbar{padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:12px}.filter-group{display:flex;gap:6px}.filter-btn{height:30px;border:1px solid var(--ui-border-control);border-radius:5px;background:var(--ui-bg-control);color:var(--ui-text);padding:0 10px;cursor:pointer}.filter-btn.active{border-color:var(--cyan);color:var(--cyan)}.filter-btn span{opacity:.7;margin-left:4px}.gallery-status{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+-.gallery-content{padding:12px;min-height:260px}.gallery-empty{height:240px;display:grid;place-items:center;color:var(--ui-text-muted);font-size:13px}.media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}.media-card{border:1px solid var(--ui-border-control);border-radius:8px;background:var(--ui-bg-control-strong);overflow:hidden}.media-preview{height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;background:var(--ui-bg-stage);font-size:36px}.media-preview small{font-size:10px;letter-spacing:1px;color:var(--ui-text-muted)}.media-meta{padding:10px}.media-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px var(--ui-font-mono);color:var(--ui-text)}.media-type{margin-top:4px;font-size:10px;color:var(--ui-text-muted)}.media-actions{display:flex;gap:6px;padding:0 10px 10px}.media-actions .taf-btn{flex:1}.download-error{padding:10px;color:var(--ui-danger)}.protocol-note{font-size:10px;color:var(--ui-text-muted);opacity:.8}
+-.android-media{padding:12px;display:flex;flex-direction:column;gap:10px}.android-media-header{display:flex;align-items:center;justify-content:space-between;gap:12px}.android-media-header small{color:var(--ui-text-muted)}.android-empty{padding:18px;color:var(--ui-text-muted);font-size:12px}.android-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}.android-card{border:1px solid var(--ui-border-control);border-radius:8px;overflow:hidden;background:var(--ui-bg-control-strong)}.android-card img{display:block;width:100%;height:110px;object-fit:cover;background:var(--ui-bg-stage)}.android-raw-preview{height:110px;display:grid;place-items:center;background:var(--ui-bg-stage);color:var(--ui-text-muted);font:12px var(--ui-font-mono)}.android-card-meta{padding:8px;display:flex;flex-direction:column;gap:3px}.android-card-meta strong{font:11px var(--ui-font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.android-card-meta small{font-size:10px;color:var(--ui-text-muted)}
+-@media (max-width:760px){.gallery-header,.gallery-toolbar,.android-media-header{align-items:flex-start;flex-direction:column}.gallery-status{justify-content:flex-start}}
++.gallery-header{display:flex;align-items:center;justify-content:space-between;gap:16px}.gallery-header h2{margin:0;color:var(--cyan)}.gallery-header p{margin:4px 0 0;color:var(--ui-text-muted);font-size:12px}.gallery-actions,.gallery-tabs,.reco-actions{display:flex;gap:7px;flex-wrap:wrap}
++.gallery-toolbar{padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:12px}.filter-group{display:flex;gap:6px;flex-wrap:wrap}.filter-btn{height:30px;border:1px solid var(--ui-border-control);border-radius:5px;background:var(--ui-bg-control);color:var(--ui-text);padding:0 10px;cursor:pointer}.filter-btn.active{border-color:var(--cyan);color:var(--cyan)}.filter-btn span{opacity:.7;margin-left:4px}.gallery-status{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}.path-note{color:var(--ui-text-muted)}
++.gallery-content{padding:12px;min-height:260px}.gallery-empty{min-height:180px;display:grid;place-items:center;color:var(--ui-text-muted);font-size:13px}.media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}.media-card{border:1px solid var(--ui-border-control);border-radius:8px;background:var(--ui-bg-control-strong);overflow:hidden}.media-preview{height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;background:var(--ui-bg-stage);font-size:36px}.media-preview small{font-size:10px;letter-spacing:1px;color:var(--ui-text-muted)}.media-meta{padding:10px}.media-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px var(--ui-font-mono);color:var(--ui-text)}.media-type{margin-top:4px;font-size:10px;color:var(--ui-text-muted)}.media-actions{display:flex;gap:6px;padding:0 10px 10px}.media-actions .taf-btn{flex:1}.download-error{padding:10px;color:var(--ui-danger)}.protocol-note{font-size:10px;color:var(--ui-text-muted);opacity:.85}
++.recognition-controls{padding:12px;display:flex;align-items:center;justify-content:space-between;gap:14px}.recognition-controls small{color:var(--ui-text-muted)}.mode-explainer{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.mode-card{padding:12px;display:flex;flex-direction:column;gap:5px}.mode-card strong{color:var(--cyan)}.mode-card span{font-size:12px}.mode-card small{color:var(--ui-text-muted);font-size:10px}
++.android-media{padding:12px}.android-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}.android-card{border:1px solid var(--ui-border-control);border-radius:8px;overflow:hidden;background:var(--ui-bg-control-strong)}.reco-preview-wrap{position:relative}.android-card img{display:block;width:100%;height:150px;object-fit:cover;background:var(--ui-bg-stage)}.android-raw-preview{height:150px;display:grid;place-items:center;background:var(--ui-bg-stage);color:var(--ui-text-muted);font:12px var(--ui-font-mono)}.source-badge,.verified-badge{position:absolute;top:7px;padding:3px 6px;border-radius:4px;background:var(--ui-bg-control-strong);border:1px solid var(--ui-border-control);font:9px var(--ui-font-mono)}.source-badge{left:7px;color:var(--cyan)}.verified-badge{right:7px;color:var(--ui-success,#53d18d)}.android-card-meta{padding:9px;display:flex;flex-direction:column;gap:4px}.android-card-meta strong{font:11px var(--ui-font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.android-card-meta small{font-size:10px;color:var(--ui-text-muted)}.metadata-details{margin-top:5px;font-size:10px}.metadata-details summary{cursor:pointer;color:var(--cyan)}.metadata-details pre{max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--ui-bg-stage);padding:8px;border-radius:5px;font:9px var(--ui-font-mono)}
++@media (max-width:760px){.gallery-header,.gallery-toolbar,.recognition-controls{align-items:flex-start;flex-direction:column}.gallery-status{justify-content:flex-start}.mode-explainer{grid-template-columns:1fr}}
+ </style>
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/i18n/index.ts /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/i18n/index.ts
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/i18n/index.ts	2026-10-01 08:13:37.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/i18n/index.ts	2026-10-01 10:08:28.826204248 +0000
+@@ -33,7 +33,7 @@
+     'telemetry.heading': 'Heading', 'telemetry.pitch': 'Pitch', 'telemetry.roll': 'Roll', 'telemetry.controllerVoltage': 'Controller Voltage',
+     'telemetry.phoneBattery': 'Phone', 'telemetry.controllerBattery': 'Controller', 'telemetry.droneBattery': 'Drone',
+     'actions.flight': 'Flight Actions', 'actions.takeoff': 'Takeoff', 'actions.land': 'Land', 'actions.rth': 'RTH',
+-    'actions.emergency': 'Emergency Stop', 'actions.camera': 'Camera & Video Control', 'actions.photo': 'Photo', 'actions.snapshotAndroid': 'Save FPV snapshot',
++    'actions.emergency': 'Emergency Stop', 'actions.camera': 'Camera & Video Control', 'actions.photo': 'Photo', 'actions.snapshotAndroid': 'Live Reco capture',
+     'actions.record': 'Record Toggle', 'actions.keyframe': 'Request Keyframe (IDR)', 'actions.liveview': 'Initialize LiveView Parameters',
+     'video.waitingTitle': 'Waiting for drone video stream',
+     'video.waitingDesc': 'Currently using direct frontend USB passthrough mode. If the aircraft is powered on and paired, activate the stream to send the initialization sequence.',
+@@ -65,7 +65,7 @@
+     'telemetry.heading': 'Kurs', 'telemetry.pitch': 'Nick', 'telemetry.roll': 'Roll', 'telemetry.controllerVoltage': 'Controller-Spannung',
+     'telemetry.phoneBattery': 'Handy', 'telemetry.controllerBattery': 'FB', 'telemetry.droneBattery': 'Drohne',
+     'actions.flight': 'Flugaktionen', 'actions.takeoff': 'Start', 'actions.land': 'Landung', 'actions.rth': 'RTH',
+-    'actions.emergency': 'Not-Aus', 'actions.camera': 'Kamera & Video', 'actions.photo': 'Foto', 'actions.snapshotAndroid': 'FPV-Snapshot speichern',
++    'actions.emergency': 'Not-Aus', 'actions.camera': 'Kamera & Video', 'actions.photo': 'Foto', 'actions.snapshotAndroid': 'Live Reco aufnehmen',
+     'actions.record': 'Aufnahme umschalten', 'actions.keyframe': 'Schlüsselbild anfordern (IDR)', 'actions.liveview': 'LiveView-Parameter initialisieren',
+     'video.waitingTitle': 'Warte auf Drohnen-Videostream',
+     'video.waitingDesc': 'Direkter USB-Passthrough-Modus ist aktiv. Wenn die Drohne eingeschaltet und gekoppelt ist, den Stream aktivieren, um die Initialisierungssequenz zu senden.',
+@@ -94,7 +94,7 @@
+     'telemetry.horizontalDistance': '水平距离', 'telemetry.satellites': '卫星', 'telemetry.heading': '航向', 'telemetry.pitch': '俯仰',
+     'telemetry.roll': '横滚', 'telemetry.controllerVoltage': '遥控器电压', 'telemetry.phoneBattery': '手机', 'telemetry.controllerBattery': '遥控器', 'telemetry.droneBattery': '无人机',
+     'actions.flight': '飞行动作', 'actions.takeoff': '起飞', 'actions.land': '降落', 'actions.rth': '返航', 'actions.emergency': '紧急停止',
+-    'actions.camera': '相机与视频控制', 'actions.photo': '拍照', 'actions.snapshotAndroid': '保存 FPV 快照', 'actions.record': '录像切换', 'actions.keyframe': '请求关键帧 (IDR)',
++    'actions.camera': '相机与视频控制', 'actions.photo': '拍照', 'actions.snapshotAndroid': '保存 Live Reco 图像', 'actions.record': '录像切换', 'actions.keyframe': '请求关键帧 (IDR)',
+     'actions.liveview': '初始化 LiveView 参数',
+     'video.waitingTitle': '等待无人机视频流', 'video.waitingDesc': '当前使用前端 USB 直通模式。如果飞行器已开机并完成配对，请激活视频流以发送初始化序列。',
+     'video.usbPassthrough': 'USB 直通通道 (WebSocket)：', 'video.androidUsb': 'Android USB 附件：', 'video.rxLink': '遥控器 / 飞行器 RX 链路：',
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/services/AndroidMediaService.ts /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/services/AndroidMediaService.ts
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/services/AndroidMediaService.ts	2026-10-01 08:13:50.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/services/AndroidMediaService.ts	2026-10-01 10:09:35.193397528 +0000
+@@ -1,14 +1,44 @@
+ import { useDroneStore } from '../stores/useDroneStore'
+ 
++export type AndroidMediaLibrary = 'camera' | 'recognition'
++export type RecognitionSource = 'LIVE_RECO' | 'DRONE_RECO'
++
++export type RecognitionMetadata = {
++  schemaVersion: number
++  source: RecognitionSource
++  capture: {
++    timestampUnixMs: number
++    timestampIso: string
++  }
++  telemetry: Record<string, unknown>
++  camera: Record<string, unknown>
++  controls: Record<string, unknown>
++  connection: Record<string, unknown>
++  app: {
++    version: string
++    metadataSchema: number
++  }
++  recognition: {
++    processed: boolean
++    runs: unknown[]
++  }
++}
++
+ export type AndroidStoredImage = {
+   id: string
+   name: string
+   mimeType: string
+   size: number
+   source: string
++  library: AndroidMediaLibrary
+   createdAt: number
++  captureTime?: number
+   uri: string
+   relativePath: string
++  sha256?: string
++  verified?: boolean
++  image?: { width?: number | null; height?: number | null; format?: string; byteSize?: number; sha256?: string }
++  metadata?: RecognitionMetadata | Record<string, unknown>
+ }
+ 
+ export class AndroidMediaService {
+@@ -18,8 +48,12 @@
+     return `${protocol}//${host}`
+   }
+ 
+-  static async saveLiveSnapshot(): Promise<AndroidStoredImage> {
+-    const response = await fetch(`${this.baseUrl()}/api/media/snapshot`, { method: 'POST' })
++  static async saveLiveSnapshot(metadata?: RecognitionMetadata): Promise<AndroidStoredImage> {
++    const response = await fetch(`${this.baseUrl()}/api/media/snapshot`, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: metadata ? JSON.stringify(metadata) : '{}'
++    })
+     const body = await response.json().catch(() => ({}))
+     if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`)
+     const saved = body as AndroidStoredImage
+@@ -27,8 +61,15 @@
+     return saved
+   }
+ 
+-  static async saveImageBytes(blob: Blob, fileName: string, source = 'camera-download'): Promise<AndroidStoredImage> {
+-    const params = new URLSearchParams({ name: fileName, source })
++  static async saveImageBytes(
++    blob: Blob,
++    fileName: string,
++    source = 'camera-download',
++    library: AndroidMediaLibrary = 'camera',
++    metadata?: RecognitionMetadata
++  ): Promise<AndroidStoredImage> {
++    const params = new URLSearchParams({ name: fileName, source, library })
++    if (metadata) params.set('metadata', JSON.stringify(metadata))
+     const response = await fetch(`${this.baseUrl()}/api/media/import?${params.toString()}`, {
+       method: 'POST',
+       headers: { 'Content-Type': blob.type || 'application/octet-stream' },
+@@ -41,8 +82,9 @@
+     return saved
+   }
+ 
+-  static async listImages(): Promise<AndroidStoredImage[]> {
+-    const response = await fetch(`${this.baseUrl()}/api/media/local`, { cache: 'no-store' })
++  static async listImages(library?: AndroidMediaLibrary): Promise<AndroidStoredImage[]> {
++    const params = library ? `?library=${encodeURIComponent(library)}` : ''
++    const response = await fetch(`${this.baseUrl()}/api/media/local${params}`, { cache: 'no-store' })
+     if (!response.ok) throw new Error(`HTTP ${response.status}`)
+     return await response.json() as AndroidStoredImage[]
+   }
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/services/CameraMediaService.ts /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/services/CameraMediaService.ts
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/services/CameraMediaService.ts	2026-10-01 08:13:05.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/services/CameraMediaService.ts	2026-10-01 10:05:06.682206791 +0000
+@@ -1,7 +1,7 @@
+ import { PacketBuilder } from '../protocol/PacketBuilder'
+ import { useCameraStore } from '../stores/useCameraStore'
+ import { useDroneStore } from '../stores/useDroneStore'
+-import { AndroidMediaService } from './AndroidMediaService'
++import { AndroidMediaService, type AndroidMediaLibrary, type AndroidStoredImage, type RecognitionMetadata } from './AndroidMediaService'
+ 
+ export class CameraMediaService {
+   private static sender: ((bytes: Uint8Array) => void) | null = null
+@@ -13,10 +13,23 @@
+   private static pendingInfo = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; timer: any }>()
+   private static activeDownload: null | {
+     fileName: string
++    originalFileName: string
+     outputName: string
+     total: bigint
+     received: bigint
+     chunks: Uint8Array[]
++    library: AndroidMediaLibrary
++    source: string
++    metadata?: RecognitionMetadata
++    deleteAfterVerified: boolean
++    resolve: (value: AndroidStoredImage | undefined) => void
++    reject: (error: Error) => void
++  } = null
++  private static pendingDelete: null | {
++    fileName: string
++    resolve: () => void
++    reject: (error: Error) => void
++    timer: ReturnType<typeof setTimeout>
+   } = null
+ 
+   static setSender(sender: (bytes: Uint8Array) => void) {
+@@ -142,7 +155,28 @@
+     this.send(PacketBuilder.buildCameraDeleteFile(fileName))
+   }
+ 
+-  static async downloadFile(fileName: string) {
++  static deleteFileConfirmed(fileName: string): Promise<void> {
++    if (this.pendingDelete) return Promise.reject(new Error('Another camera delete is already pending'))
++    useDroneStore().addLog('WARN', `Delete verified Drone Reco source from camera: ${fileName}`)
++    return new Promise((resolve, reject) => {
++      const timer = setTimeout(() => {
++        if (this.pendingDelete?.fileName === fileName) this.pendingDelete = null
++        reject(new Error('Timed out waiting for camera delete acknowledgement'))
++      }, 5000)
++      this.pendingDelete = { fileName, resolve, reject, timer }
++      this.send(PacketBuilder.buildCameraDeleteFile(fileName))
++    })
++  }
++
++  static async downloadFile(
++    fileName: string,
++    options: {
++      library?: AndroidMediaLibrary
++      source?: string
++      metadata?: RecognitionMetadata
++      deleteAfterVerified?: boolean
++    } = {}
++  ): Promise<AndroidStoredImage | undefined> {
+     const cam = useCameraStore()
+     if (this.activeDownload) throw new Error('Another camera download is already active')
+     cam.download.fileName = fileName
+@@ -159,8 +193,23 @@
+       if (!Number.isFinite(totalNum) || totalNum <= 0) throw new Error('Camera returned no usable file size')
+       const total = BigInt(Math.trunc(totalNum))
+       const outputName = fileName.split('/').pop() || (isVideo ? 'camera-video.mp4' : 'camera-photo.jpg')
+-      this.activeDownload = { fileName: remoteName, outputName, total, received: 0n, chunks: [] }
+-      this.requestNextDownloadChunk()
++      return await new Promise<AndroidStoredImage | undefined>((resolve, reject) => {
++        this.activeDownload = {
++          fileName: remoteName,
++          originalFileName: fileName,
++          outputName,
++          total,
++          received: 0n,
++          chunks: [],
++          library: options.library ?? 'camera',
++          source: options.source ?? 'drone-camera',
++          metadata: options.metadata,
++          deleteAfterVerified: options.deleteAfterVerified === true,
++          resolve,
++          reject
++        }
++        this.requestNextDownloadChunk()
++      })
+     } catch (e: any) {
+       cam.download.active = false
+       cam.download.error = e?.message || String(e)
+@@ -207,9 +256,18 @@
+     const blob = new Blob(blobParts, { type: mime })
+ 
+     try {
++      let saved: AndroidStoredImage | undefined
+       if (isPhoto) {
+-        const saved = await AndroidMediaService.saveImageBytes(blob, dl.outputName, 'drone-camera')
+-        drone.addLog('INFO', `Camera photo saved on Android: ${saved.relativePath}/${saved.name} (${blob.size} bytes)`)
++        saved = await AndroidMediaService.saveImageBytes(blob, dl.outputName, dl.source, dl.library, dl.metadata)
++        if (!saved.verified || saved.size !== blob.size) {
++          throw new Error('Android MediaStore verification failed; drone source will not be deleted')
++        }
++        drone.addLog('INFO', `Camera photo verified on Android: ${saved.relativePath}/${saved.name} (${blob.size} bytes)`)
++
++        if (dl.deleteAfterVerified) {
++          await this.deleteFileConfirmed(dl.originalFileName)
++          drone.addLog('INFO', `Drone Reco source deleted after verified Android transfer: ${dl.originalFileName}`)
++        }
+       } else {
+         // Preserve the previous browser download behavior for video/LRV files.
+         const url = URL.createObjectURL(blob)
+@@ -224,12 +282,14 @@
+       }
+       cam.download.progress = 100
+       cam.download.error = ''
++      dl.resolve(saved)
+     } catch (e: any) {
+-      cam.download.error = `Android save failed: ${e?.message || e}`
+-      drone.addLog('ERROR', cam.download.error)
++      cam.download.error = e?.message || String(e)
++      drone.addLog('ERROR', `Camera download/save pipeline failed: ${cam.download.error}`)
++      dl.reject(e instanceof Error ? e : new Error(String(e)))
+     } finally {
+       cam.download.active = false
+-      this.activeDownload = null
++      if (this.activeDownload === dl) this.activeDownload = null
+     }
+   }
+ 
+@@ -309,9 +369,17 @@
+     if (status !== 0) {
+       drone.addLog('WARN', `Camera command 0x${cmd.toString(16).padStart(2, '0')} failed with status ${status}`)
+       if (this.activeDownload && cmd === 27) {
++        const dl = this.activeDownload
+         cam.download.active = false
+         cam.download.error = `Camera download failed with status ${status}`
+         this.activeDownload = null
++        dl.reject(new Error(cam.download.error))
++      }
++      if (this.pendingDelete && cmd === 29) {
++        const pending = this.pendingDelete
++        clearTimeout(pending.timer)
++        this.pendingDelete = null
++        pending.reject(new Error(`Camera delete failed with status ${status}`))
+       }
+       return true
+     }
+@@ -435,10 +503,17 @@
+       case 27:
+         this.handleDownloadData(payload)
+         break
+-      case 29:
++      case 29: {
+         drone.addLog('INFO', 'Camera file delete acknowledged')
++        const pending = this.pendingDelete
++        if (pending) {
++          clearTimeout(pending.timer)
++          this.pendingDelete = null
++          pending.resolve()
++        }
+         this.refreshGallery()
+         break
++      }
+     }
+     return true
+   }
+@@ -495,6 +570,7 @@
+       cam.download.active = false
+       cam.download.error = `Unexpected camera file offset ${offset}; expected ${dl.received}`
+       this.activeDownload = null
++      dl.reject(new Error(cam.download.error))
+       return
+     }
+     dl.chunks.push(chunk)
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/services/DroneControlService.ts /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/services/DroneControlService.ts
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/services/DroneControlService.ts	2026-10-01 08:13:25.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/services/DroneControlService.ts	2026-10-01 10:06:51.209913603 +0000
+@@ -7,6 +7,7 @@
+ import { ByteUtils } from '../utils/ByteUtils'
+ import { useDroneStore } from '../stores/useDroneStore'
+ import { AndroidMediaService } from './AndroidMediaService'
++import { RecognitionMetadataService } from './RecognitionMetadataService'
+ 
+ export class DroneControlService {
+   private static transport = UsbTransportService.getInstance()
+@@ -191,7 +192,7 @@
+   static async saveLiveSnapshotToAndroid() {
+     const store = useDroneStore()
+     try {
+-      const saved = await AndroidMediaService.saveLiveSnapshot()
++      const saved = await AndroidMediaService.saveLiveSnapshot(RecognitionMetadataService.build('LIVE_RECO'))
+       store.addLog('INFO', `Live snapshot saved on Android: ${saved.relativePath}/${saved.name}`)
+     } catch (e: any) {
+       store.addLog('ERROR', `Live snapshot save failed: ${e?.message || e}`)
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/services/RecognitionCaptureService.ts /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/services/RecognitionCaptureService.ts
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/services/RecognitionCaptureService.ts	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/services/RecognitionCaptureService.ts	2026-10-01 10:17:37.014118195 +0000
+@@ -0,0 +1,111 @@
++import { useCameraStore } from '../stores/useCameraStore'
++import { useDroneStore } from '../stores/useDroneStore'
++import { AndroidMediaService, type AndroidStoredImage } from './AndroidMediaService'
++import { CameraMediaService } from './CameraMediaService'
++import { DroneControlService } from './DroneControlService'
++import { RecognitionMetadataService } from './RecognitionMetadataService'
++
++export class RecognitionCaptureService {
++  static async captureLiveReco(): Promise<AndroidStoredImage> {
++    const drone = useDroneStore()
++    const metadata = RecognitionMetadataService.build('LIVE_RECO')
++    drone.addLog('INFO', 'Live Reco capture: save current decoded LiveView frame to Android')
++    const saved = await AndroidMediaService.saveLiveSnapshot(metadata)
++    if (!saved.verified) throw new Error('Live Reco image was stored but MediaStore verification failed')
++    drone.addLog('INFO', `Live Reco ready: ${saved.relativePath}/${saved.name}`)
++    return saved
++  }
++
++  static async captureDroneReco(): Promise<AndroidStoredImage> {
++    const drone = useDroneStore()
++    const camera = useCameraStore()
++    if (camera.download.active) throw new Error('Camera download is already active')
++
++    const galleryWasOpen = camera.galleryEntered
++
++    try {
++      // Capture an authoritative pre-shot file list. This avoids guessing which existing
++      // camera image is the newly created Recognition source.
++      if (!camera.galleryEntered) {
++        CameraMediaService.enterGallery()
++      } else {
++        CameraMediaService.refreshGallery()
++      }
++      await this.waitFor(() => camera.galleryEntered && !camera.galleryLoading, 8000, 'initial camera gallery list')
++      const before = new Set(camera.photos.map(item => item.name))
++
++      // Leave gallery/playback mode before asking the camera to create a new still image.
++      CameraMediaService.quitGallery()
++      await this.waitFor(() => !camera.galleryEntered, 5000, 'leaving camera gallery')
++
++      const metadata = RecognitionMetadataService.build('DRONE_RECO')
++      drone.addLog('INFO', 'Drone Reco capture: take full camera photo, transfer, verify, then delete drone source')
++      DroneControlService.takePhoto()
++      await this.sleep(1200)
++
++      CameraMediaService.enterGallery()
++      await this.waitFor(() => camera.galleryEntered && !camera.galleryLoading, 8000, 'post-shot camera gallery list')
++
++      let newPhotos = camera.photos.map(item => item.name).filter(name => !before.has(name))
++      for (let attempt = 0; newPhotos.length === 0 && attempt < 4; attempt++) {
++        await this.sleep(700)
++        CameraMediaService.refreshGallery()
++        await this.waitFor(() => !camera.galleryLoading, 8000, 'camera gallery refresh')
++        newPhotos = camera.photos.map(item => item.name).filter(name => !before.has(name))
++      }
++
++      if (newPhotos.length === 0) {
++        throw new Error('No new camera photo appeared after the Drone Reco capture; nothing was deleted')
++      }
++
++      // Prefer a directly decodable still image when RAW+JPEG created more than one file.
++      // Any additional file (for example DNG) is deliberately left untouched on the drone.
++      const directlyDecodable = newPhotos.filter(name => /\.(jpg|jpeg|png)$/i.test(name))
++      const sortedNewPhotos = [...(directlyDecodable.length ? directlyDecodable : newPhotos)].sort()
++      const sourceFile = sortedNewPhotos[sortedNewPhotos.length - 1]
++      drone.addLog('INFO', `Drone Reco source identified: ${sourceFile}`)
++
++      const saved = await CameraMediaService.downloadFile(sourceFile, {
++        library: 'recognition',
++        source: 'drone-reco',
++        metadata,
++        deleteAfterVerified: true
++      })
++      if (!saved) throw new Error('Drone Reco transfer completed without a saved image record')
++      return saved
++    } finally {
++      // Preserve the user's previous gallery state. The delete acknowledgement may start
++      // one final list refresh, so do not close the gallery in the middle of it.
++      if (!galleryWasOpen && camera.galleryEntered) {
++        try {
++          if (camera.galleryLoading) await this.waitFor(() => !camera.galleryLoading, 5000, 'final camera gallery refresh')
++        } catch (_) {
++          // Closing the gallery is best-effort; never turn this into deletion/retry logic.
++        }
++        CameraMediaService.quitGallery()
++      } else if (galleryWasOpen && !camera.galleryEntered) {
++        CameraMediaService.enterGallery()
++      }
++    }
++  }
++
++  private static waitFor(predicate: () => boolean, timeoutMs: number, label: string): Promise<void> {
++    if (predicate()) return Promise.resolve()
++    return new Promise((resolve, reject) => {
++      const started = Date.now()
++      const timer = window.setInterval(() => {
++        if (predicate()) {
++          window.clearInterval(timer)
++          resolve()
++        } else if (Date.now() - started >= timeoutMs) {
++          window.clearInterval(timer)
++          reject(new Error(`Timed out waiting for ${label}`))
++        }
++      }, 100)
++    })
++  }
++
++  private static sleep(ms: number): Promise<void> {
++    return new Promise(resolve => window.setTimeout(resolve, ms))
++  }
++}
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=PATCH_LIVE_DRONE_RECO_v0.956.patch' /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/services/RecognitionMetadataService.ts /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/services/RecognitionMetadataService.ts
+--- /mnt/data/potensic_reco_baseline/PotensicProxy_TAF/webui/src/services/RecognitionMetadataService.ts	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/potensic_reco_work2/PotensicProxy_TAF/webui/src/services/RecognitionMetadataService.ts	2026-10-01 10:06:29.827145979 +0000
+@@ -0,0 +1,65 @@
++import { useCameraStore } from '../stores/useCameraStore'
++import { useDroneStore } from '../stores/useDroneStore'
++import type { RecognitionMetadata, RecognitionSource } from './AndroidMediaService'
++
++const APP_VERSION = '0.956'
++const METADATA_SCHEMA = 1
++
++export class RecognitionMetadataService {
++  static build(source: RecognitionSource): RecognitionMetadata {
++    const drone = useDroneStore()
++    const camera = useCameraStore()
++    const now = Date.now()
++    const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
++
++    return {
++      schemaVersion: METADATA_SCHEMA,
++      source,
++      capture: {
++        timestampUnixMs: now,
++        timestampIso: new Date(now).toISOString()
++      },
++      telemetry: clone(drone.telemetry),
++      camera: {
++        videoResolutionIndex: camera.videoResolutionIndex,
++        photoResolutionIndex: camera.photoResolutionIndex,
++        videoEv: camera.videoEv,
++        photoEv: camera.photoEv,
++        zoomTarget: camera.zoomTarget,
++        zoomActual: camera.zoomActual,
++        zoomMax: camera.zoomMax,
++        zoomMaxSource: camera.zoomMaxSource,
++        manualMode: clone(camera.manualMode),
++        sd: clone(camera.sd)
++      },
++      controls: {
++        requested: clone(drone.userJoysticks),
++        rcHardware: clone(drone.rcHardwareJoysticks),
++        telemetryRc: {
++          throttle: drone.telemetry.rcThrottle,
++          yaw: drone.telemetry.rcYaw,
++          pitch: drone.telemetry.rcPitch,
++          roll: drone.telemetry.rcRoll
++        },
++        gimbal: {
++          pitch: drone.telemetry.gimbalPitch,
++          roll: drone.telemetry.gimbalRoll,
++          yaw: drone.telemetry.gimbalYaw,
++          controlPitch: drone.telemetry.gimbalControlPitch,
++          pitchSpeed: drone.telemetry.gimbalPitchSpeedActual,
++          rollSpeed: drone.telemetry.gimbalRollSpeed,
++          yawSpeed: drone.telemetry.gimbalYawSpeed
++        }
++      },
++      connection: clone(drone.connection),
++      app: {
++        version: APP_VERSION,
++        metadataSchema: METADATA_SCHEMA
++      },
++      recognition: {
++        processed: false,
++        runs: []
++      }
++    }
++  }
++}

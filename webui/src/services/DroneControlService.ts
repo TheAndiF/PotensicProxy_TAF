@@ -6,6 +6,8 @@ import { UsbTransportService } from './UsbTransportService'
 import { PacketBuilder } from '../protocol/PacketBuilder'
 import { ByteUtils } from '../utils/ByteUtils'
 import { useDroneStore } from '../stores/useDroneStore'
+import { AndroidMediaService } from './AndroidMediaService'
+import { RecognitionMetadataService } from './RecognitionMetadataService'
 
 export class DroneControlService {
   private static transport = UsbTransportService.getInstance()
@@ -185,6 +187,16 @@ export class DroneControlService {
     const store = useDroneStore()
     store.addLog('INFO', 'Toggle recording')
     this.transport.send(PacketBuilder.buildToggleRecord())
+  }
+
+  static async saveLiveSnapshotToAndroid() {
+    const store = useDroneStore()
+    try {
+      const saved = await AndroidMediaService.saveLiveSnapshot(RecognitionMetadataService.build('LIVE_RECO'))
+      store.addLog('INFO', `Live snapshot saved on Android: ${saved.relativePath}/${saved.name}`)
+    } catch (e: any) {
+      store.addLog('ERROR', `Live snapshot save failed: ${e?.message || e}`)
+    }
   }
 
   static requestIdr() {

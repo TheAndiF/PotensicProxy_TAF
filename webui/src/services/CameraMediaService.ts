@@ -1,6 +1,7 @@
 import { PacketBuilder } from '../protocol/PacketBuilder'
 import { useCameraStore } from '../stores/useCameraStore'
 import { useDroneStore } from '../stores/useDroneStore'
+import { AndroidMediaService, type AndroidMediaLibrary, type AndroidStoredImage, type RecognitionMetadata } from './AndroidMediaService'
 
 export class CameraMediaService {
   private static sender: ((bytes: Uint8Array) => void) | null = null
@@ -12,10 +13,23 @@ export class CameraMediaService {
   private static pendingInfo = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; timer: any }>()
   private static activeDownload: null | {
     fileName: string
+    originalFileName: string
     outputName: string
     total: bigint
     received: bigint
     chunks: Uint8Array[]
+    library: AndroidMediaLibrary
+    source: string
+    metadata?: RecognitionMetadata
+    deleteAfterVerified: boolean
+    resolve: (value: AndroidStoredImage | undefined) => void
+    reject: (error: Error) => void
+  } = null
+  private static pendingDelete: null | {
+    fileName: string
+    resolve: () => void
+    reject: (error: Error) => void
+    timer: ReturnType<typeof setTimeout>
   } = null
 
   static setSender(sender: (bytes: Uint8Array) => void) {
@@ -141,7 +155,28 @@ export class CameraMediaService {
     this.send(PacketBuilder.buildCameraDeleteFile(fileName))
   }
 
-  static async downloadFile(fileName: string) {
+  static deleteFileConfirmed(fileName: string): Promise<void> {
+    if (this.pendingDelete) return Promise.reject(new Error('Another camera delete is already pending'))
+    useDroneStore().addLog('WARN', `Delete verified Drone Reco source from camera: ${fileName}`)
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.pendingDelete?.fileName === fileName) this.pendingDelete = null
+        reject(new Error('Timed out waiting for camera delete acknowledgement'))
+      }, 5000)
+      this.pendingDelete = { fileName, resolve, reject, timer }
+      this.send(PacketBuilder.buildCameraDeleteFile(fileName))
+    })
+  }
+
+  static async downloadFile(
+    fileName: string,
+    options: {
+      library?: AndroidMediaLibrary
+      source?: string
+      metadata?: RecognitionMetadata
+      deleteAfterVerified?: boolean
+    } = {}
+  ): Promise<AndroidStoredImage | undefined> {
     const cam = useCameraStore()
     if (this.activeDownload) throw new Error('Another camera download is already active')
     cam.download.fileName = fileName
@@ -158,8 +193,23 @@ export class CameraMediaService {
       if (!Number.isFinite(totalNum) || totalNum <= 0) throw new Error('Camera returned no usable file size')
       const total = BigInt(Math.trunc(totalNum))
       const outputName = fileName.split('/').pop() || (isVideo ? 'camera-video.mp4' : 'camera-photo.jpg')
-      this.activeDownload = { fileName: remoteName, outputName, total, received: 0n, chunks: [] }
-      this.requestNextDownloadChunk()
+      return await new Promise<AndroidStoredImage | undefined>((resolve, reject) => {
+        this.activeDownload = {
+          fileName: remoteName,
+          originalFileName: fileName,
+          outputName,
+          total,
+          received: 0n,
+          chunks: [],
+          library: options.library ?? 'camera',
+          source: options.source ?? 'drone-camera',
+          metadata: options.metadata,
+          deleteAfterVerified: options.deleteAfterVerified === true,
+          resolve,
+          reject
+        }
+        this.requestNextDownloadChunk()
+      })
     } catch (e: any) {
       cam.download.active = false
       cam.download.error = e?.message || String(e)
@@ -192,24 +242,55 @@ export class CameraMediaService {
     this.send(PacketBuilder.buildCameraDownloadChunk(dl.fileName, dl.received, length))
   }
 
-  private static finishDownload() {
+  private static async finishDownload() {
     const dl = this.activeDownload
     if (!dl) return
     const cam = useCameraStore()
+    const drone = useDroneStore()
     const blobParts = dl.chunks.map(chunk => chunk.slice().buffer as ArrayBuffer)
-    const blob = new Blob(blobParts, { type: 'application/octet-stream' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = dl.outputName
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
-    cam.download.progress = 100
-    cam.download.active = false
-    useDroneStore().addLog('INFO', `Camera download completed: ${dl.fileName} (${blob.size} bytes)`)
-    this.activeDownload = null
+    const isPhoto = /\.(jpg|jpeg|png|dng)$/i.test(dl.outputName)
+    const mime = /\.png$/i.test(dl.outputName) ? 'image/png'
+      : /\.dng$/i.test(dl.outputName) ? 'image/x-adobe-dng'
+      : isPhoto ? 'image/jpeg'
+      : 'application/octet-stream'
+    const blob = new Blob(blobParts, { type: mime })
+
+    try {
+      let saved: AndroidStoredImage | undefined
+      if (isPhoto) {
+        saved = await AndroidMediaService.saveImageBytes(blob, dl.outputName, dl.source, dl.library, dl.metadata)
+        if (!saved.verified || saved.size !== blob.size) {
+          throw new Error('Android MediaStore verification failed; drone source will not be deleted')
+        }
+        drone.addLog('INFO', `Camera photo verified on Android: ${saved.relativePath}/${saved.name} (${blob.size} bytes)`)
+
+        if (dl.deleteAfterVerified) {
+          await this.deleteFileConfirmed(dl.originalFileName)
+          drone.addLog('INFO', `Drone Reco source deleted after verified Android transfer: ${dl.originalFileName}`)
+        }
+      } else {
+        // Preserve the previous browser download behavior for video/LRV files.
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = dl.outputName
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+        drone.addLog('INFO', `Camera video download completed in browser: ${dl.fileName} (${blob.size} bytes)`)
+      }
+      cam.download.progress = 100
+      cam.download.error = ''
+      dl.resolve(saved)
+    } catch (e: any) {
+      cam.download.error = e?.message || String(e)
+      drone.addLog('ERROR', `Camera download/save pipeline failed: ${cam.download.error}`)
+      dl.reject(e instanceof Error ? e : new Error(String(e)))
+    } finally {
+      cam.download.active = false
+      if (this.activeDownload === dl) this.activeDownload = null
+    }
   }
 
   private static parseConfigZoomCapabilities(data: Uint8Array) {
@@ -288,9 +369,17 @@ export class CameraMediaService {
     if (status !== 0) {
       drone.addLog('WARN', `Camera command 0x${cmd.toString(16).padStart(2, '0')} failed with status ${status}`)
       if (this.activeDownload && cmd === 27) {
+        const dl = this.activeDownload
         cam.download.active = false
         cam.download.error = `Camera download failed with status ${status}`
         this.activeDownload = null
+        dl.reject(new Error(cam.download.error))
+      }
+      if (this.pendingDelete && cmd === 29) {
+        const pending = this.pendingDelete
+        clearTimeout(pending.timer)
+        this.pendingDelete = null
+        pending.reject(new Error(`Camera delete failed with status ${status}`))
       }
       return true
     }
@@ -414,10 +503,17 @@ export class CameraMediaService {
       case 27:
         this.handleDownloadData(payload)
         break
-      case 29:
+      case 29: {
         drone.addLog('INFO', 'Camera file delete acknowledged')
+        const pending = this.pendingDelete
+        if (pending) {
+          clearTimeout(pending.timer)
+          this.pendingDelete = null
+          pending.resolve()
+        }
         this.refreshGallery()
         break
+      }
     }
     return true
   }
@@ -474,6 +570,7 @@ export class CameraMediaService {
       cam.download.active = false
       cam.download.error = `Unexpected camera file offset ${offset}; expected ${dl.received}`
       this.activeDownload = null
+      dl.reject(new Error(cam.download.error))
       return
     }
     dl.chunks.push(chunk)

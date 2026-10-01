@@ -59,6 +59,20 @@ Model-specific behavior is selected centrally through the drone protocol profile
 
 The WebUI supports direct WebCodecs rendering plus snapshot/MJPEG fallback paths. Diagnostics expose FE traffic, parser state, codec detection and frame/decode counters.
 
+## Image-recognition prerequisites
+
+The project now has two deliberately separate Android image libraries:
+
+- **Normal Camera:** the existing mapped camera command `0x51` and the normal aircraft SD-card gallery remain unchanged. Downloaded JPG/JPEG/PNG/DNG files are published through Android `MediaStore` under `Pictures/PotensicProxy/Camera`. Normal camera downloads are not automatically deleted from the aircraft.
+- **Recognition:** all images intended for later image recognition are published under `Pictures/PotensicProxy/Recognition` and shown in the separate **Recognition** tab of the Gallery page.
+
+Recognition has two capture sources that feed the same metadata/index pipeline:
+
+- **Live Reco:** saves the current decoded LiveView JPEG directly to Android. No temporary still image exists on the aircraft.
+- **Drone Reco:** records the pre-shot camera file list, leaves gallery mode, triggers a full camera photo, identifies the newly created file, transfers it to Android, reads the MediaStore copy back, verifies byte count plus SHA-256, and only then sends the camera-file delete command. A missing transfer, failed verification, ambiguous/new-file failure or missing delete acknowledgement is treated as an error; the workflow does not intentionally delete an unverified source.
+
+Each Recognition index record can carry a metadata snapshot captured at trigger time: all currently available telemetry fields, GPS state/coordinates, relative height and altitude fields, attitude, gimbal state, RC/user control values, camera settings, SD state, connection state, application/schema version, image dimensions/size/hash and a placeholder for later recognition runs. Unknown values are retained as unknown rather than inferred. The app-owned index lets a future recognition service process its own images without broad access to the user's entire photo library. On Android 10+ no storage permission is required for media created by the app; Android 8/9 request the legacy write permission only for publishing into the public Pictures collection.
+
 ## Map and missions
 
 The backend owns map-provider configuration and tile proxying. The WebUI contains:
@@ -100,6 +114,10 @@ The current backend includes, among others:
 | `GET /api/telemetry` | interpreted telemetry state |
 | `GET /api/video/stats` | video parser/extractor diagnostics |
 | `GET /api/video/snapshot` | current decoded JPEG frame |
+| `POST /api/media/snapshot` | save a Live Reco frame to Android `Pictures/PotensicProxy/Recognition` with optional metadata |
+| `POST /api/media/import?name=...&library=...` | publish camera/Recognition JPG/JPEG/PNG/DNG to the selected Android MediaStore library |
+| `GET /api/media/local?library=camera|recognition` | list app-created images, optionally filtered by library |
+| `GET /api/media/local/{id}` | read an app-created image by local media index id |
 | `GET /api/video/mjpeg` | MJPEG stream |
 | `POST /api/video/activate` | explicit LiveView activation |
 | `POST /api/video/request-idr` | request keyframe/IDR |
@@ -150,11 +168,13 @@ Relevant project documents include:
 - `SYSTEM_UI_REORGANIZATION.md` - Engineering -> System reorganization
 - `UI_DETAIL_IMPLEMENTATION_2026-09-29.md` - audit and implementation of the current UI detail request
 - `README_AUDIT_2026-09-29.md` - README review: valid, outdated and added content
+- `IMAGE_RECOGNITION_PREREQUISITES_2026-10-01.md` - Android image capture/storage layer prepared for later image recognition
 
 ## Known limitations relevant to the current UI
 
 - Controller percentage is shown only when the known controller status response supplies a valid percentage; otherwise voltage is used as fallback.
 - Browser hardware codec support varies by device/browser; fallback rendering paths remain available.
+- The actual aircraft-side photo command and SD-card transfer still require device-side verification on the target ATOM/firmware. The new Android storage path is implemented, but this source package cannot prove aircraft hardware behavior without a connected drone/controller.
 - Model-specific protocol support is intentionally profile-driven and should not be generalized without confirmed captures/behavior.
 
 ### Virtual joystick and ATOM gimbal
