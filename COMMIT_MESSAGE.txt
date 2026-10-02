@@ -11,3 +11,5 @@ feat(recognition): split camera and recognition capture paths
 - add Camera/Recognition gallery tabs and Live/Drone filters
 - prepare common recognition result schema for future ML pipeline
 - bump app/web version to 0.956 (versionCode 29)
+
+
