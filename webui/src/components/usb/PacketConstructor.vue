@@ -137,8 +137,8 @@ function applyPreset(id: string) {
     case 'land': bytes = PacketBuilder.buildLand(); feType.value = '0x14'; break
     case 'rth': bytes = PacketBuilder.buildRTH(); feType.value = '0x14'; break
     case 'emergency': bytes = PacketBuilder.buildEmergencyStop(); feType.value = '0x14'; break
-    case 'photo': bytes = PacketBuilder.buildTakePhoto(); feType.value = '0x15'; break
-    case 'record': bytes = PacketBuilder.buildToggleRecord(); feType.value = '0x15'; break
+    case 'photo': bytes = PacketBuilder.buildCameraTakePhoto(); feType.value = '0x15'; break
+    case 'record': bytes = PacketBuilder.buildCameraStartRecord(); feType.value = '0x15'; break
     case 'idr': bytes = PacketBuilder.buildIdrRequest(); feType.value = '0x15'; break
     case 'liveview': bytes = PacketBuilder.buildLiveViewParams(); feType.value = '0x15'; break
     case 'combined_joy':

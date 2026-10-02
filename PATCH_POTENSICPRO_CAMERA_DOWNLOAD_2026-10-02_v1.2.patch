@@ -1,0 +1,668 @@
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/PROTOCOL.md b/PROTOCOL.md
+--- a/PROTOCOL.md	2026-10-02 16:17:34.780529515 +0000
++++ b/PROTOCOL.md	2026-10-02 16:57:59.963826688 +0000
+@@ -283,7 +283,9 @@
+ 
+ ## Camera Commands (TX)
+ 
+-TAF uses two camera paths. LiveView/engineering **and capture actions** use **short 0x1200**; on the tested ATOM path photo is command `0x51` and video start/stop is `0x50`. The PotensicPro USB camera function **0x0020** remains in use for settings and gallery/media transfer. Both send with FE type `0x15`. This split was restored after device feedback showed that `0x0020/0x01` did not create a photo although gallery RX worked.
++TAF uses the PotensicPro USB camera function **0x0020** for normal capture, settings and gallery/media transfer. FE type `0x15` with inner TX header `FF FD` is used for requests; FE type `0x05` with RX header `FF FE` is used for camera responses. LiveView/engineering functions that are independently confirmed remain on short `0x1200`; normal photo/video capture no longer uses `0x1200/0x51` or `0x1200/0x50`.
++
++PotensicPro `UsbCameraHandler` confirms the normal capture payloads: photo `[01]`, video start `[00 01]`, video stop `[00 00]`. Recording state in TAF is updated from the camera response for command `0x00`, where data byte `1` means started and `0` means stopped.
+ 
+ ### Command format
+ 
+@@ -293,16 +295,32 @@
+ 
+ | Cmd | Description |
+ |-----|-------------|
+-| 0x50 | Toggle video recording |
+-| 0x51 | Take photo |
++| 0x50 | Engineering/live-view camera command; not used for normal PotensicPro USB recording |
++| 0x51 | Engineering/live-view camera command; not used for normal PotensicPro USB photo capture |
+ | 0x73 | Start live view (data: 0x00, 0x64) |
+ | 0xD8 | LiveViewParams (resolution + bitrate) |
+ | 0xD9 | Request IDR frame |
+ | 0xD2 | WifiDirectSwitch (data: 0x01=enter + 16 bytes phoneId) |
+ 
+-### PotensicPro-compatible USB camera settings/gallery path (short `0x0020`)
++### PotensicPro-compatible USB camera capture/settings/gallery path (short `0x0020`)
++
++The capture/settings/gallery/zoom path sends FE `0x15` APP_TO_CAMERA with inner header `FF FD` and receives FE `0x05` CAMERA_TO_APP with inner header `FF FE`. The inner message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
++
++Confirmed capture payloads from PotensicPro `UsbCameraHandler`:
++
++| Action | Command payload after function `0x0020` |
++|---|---|
++| Take photo | `01` |
++| Start video | `00 01` |
++| Stop video | `00 00` |
++
++Gallery metadata and download details confirmed from `RemoteFileThumbLoader`, `RemoteFileDownloader` and `DownloadData`:
+ 
+-The settings/gallery/zoom path sends FE `0x15` APP_TO_CAMERA with inner header `FF FD` and receives FE `0x05` CAMERA_TO_APP with inner header `FF FE`. The inner message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
++- `0x20` request: command byte followed by ASCII JSON `{"filelist":[...]}`; response JSON field `file_info` provides `file`, `len`, `lrv_len`, and `createtime`.
++- `0x1B` request: command byte + offset `uint64 LE` + requested length `uint64 LE` + filename; PotensicPro requests up to `102400` bytes per unit.
++- `0x1B` RX normal block after command/status: flag + offset `uint64 LE` + payload length `uint16 LE` + payload.
++- `0x1B` RX final block (flag `2`): flag + 32-byte final-block area + offset `uint64 LE` + payload length `uint16 LE` + payload.
++- PotensicPro retries after a 1-second unit timeout from the current local file offset and sends `0x1E` when the overall download timeout expires.
+ 
+ | Cmd | Direction | Description |
+ |-----|-----------|-------------|
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/README.md b/README.md
+--- a/README.md	2026-10-02 16:16:28.394088918 +0000
++++ b/README.md	2026-10-02 16:57:59.963542058 +0000
+@@ -70,7 +70,7 @@
+ 
+ The project now has two deliberately separate Android image libraries:
+ 
+-- **Normal Camera:** capture actions use the already captured ATOM camera-control path FE `0x15` / inner `FF FD` / function `0x1200`: photo `0x51`, video start/stop `0x50`. The `0x0020` USB-camera path remains responsible for settings and gallery/media commands (`0x18`-`0x22`). Camera gallery responses are accepted on FE `0x05` with inner RX header `FF FE`. Downloaded JPG/JPEG/PNG/DNG files are published through Android `MediaStore` under `Pictures/PotensicProxy/Camera`; MP4 files are published under `Movies/PotensicProxy/Camera`. Normal camera downloads are not automatically deleted from the aircraft.
++- **Normal Camera:** capture now follows the PotensicPro `UsbCameraHandler` path FE `0x15` / inner `FF FD` / function `0x0020`: photo payload `[0x01]`, video start `[0x00,0x01]`, video stop `[0x00,0x00]`. The same `0x0020` path carries gallery/media commands (`0x18`-`0x22`); responses are accepted on FE `0x05` with inner RX header `FF FE`. Gallery metadata command `0x20` is used for camera `createtime`, `len` and `lrv_len`, with filename timestamps only as fallback. Full-file command `0x1B` uses 102400-byte requests and PotensicPro's RX layout (u64 offset + u16 payload length; final frames include a 32-byte prefix before offset). Downloaded JPG/JPEG/PNG/DNG files are published through Android `MediaStore` under `Pictures/PotensicProxy/Camera`; MP4 files are published under `Movies/PotensicProxy/Camera`. Normal camera downloads are not automatically deleted from the aircraft.
+ - **Recognition:** all images intended for later image recognition are published under `Pictures/PotensicProxy/Recognition` and shown in the separate **Recognition** tab of the Gallery page.
+ 
+ Recognition has two capture sources that feed the same metadata/index pipeline:
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/app/src/main/java/com/potensic/proxy/DroneProtocol.kt b/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+--- a/app/src/main/java/com/potensic/proxy/DroneProtocol.kt	2026-10-02 16:16:28.392259519 +0000
++++ b/app/src/main/java/com/potensic/proxy/DroneProtocol.kt	2026-10-02 16:54:38.793068023 +0000
+@@ -163,11 +163,14 @@
+         return wrapFE(buildInnerCommandWithShort(0x0020, data), 0x15)
+     }
+ 
+-    /** Take photo on the captured ATOM camera-control path (0x1200 / 0x51). */
+-    fun buildTakePhoto(): ByteArray = buildCameraCommand(0x51.toByte())
++    /** PotensicPro UsbCameraHandler.takePhoto(): 0x0020 payload [0x01]. */
++    fun buildTakePhoto(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x01))
+ 
+-    /** Toggle video recording on the captured ATOM camera-control path (0x1200 / 0x50). */
+-    fun buildToggleRecord(): ByteArray = buildCameraCommand(0x50.toByte())
++    /** PotensicPro UsbCameraHandler.startRecord(): 0x0020 payload [0x00, 0x01]. */
++    fun buildStartRecord(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x00, 0x01))
++
++    /** PotensicPro UsbCameraHandler.stopRecord(): 0x0020 payload [0x00, 0x00]. */
++    fun buildStopRecord(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x00, 0x00))
+ 
+     private fun hexPkt(hex: String): ByteArray {
+         val clean = hex.replace(" ", "")
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/app/src/main/java/com/potensic/proxy/WebServer.kt b/app/src/main/java/com/potensic/proxy/WebServer.kt
+--- a/app/src/main/java/com/potensic/proxy/WebServer.kt	2026-10-02 15:19:47.636057243 +0000
++++ b/app/src/main/java/com/potensic/proxy/WebServer.kt	2026-10-02 16:54:38.793312373 +0000
+@@ -532,8 +532,11 @@
+                     call.respondText("""{"cmd":"photo"}""", ContentType.Application.Json)
+                 }
+                 post("/api/cmd/record") {
+-                    ProxyService.instance?.sendAny(PotensicProtocol.buildToggleRecord())
+-                    call.respondText("""{"cmd":"record"}""", ContentType.Application.Json)
++                    val action = call.request.queryParameters["action"]?.lowercase() ?: "start"
++                    val stop = action == "stop" || action == "0" || action == "false"
++                    val packet = if (stop) PotensicProtocol.buildStopRecord() else PotensicProtocol.buildStartRecord()
++                    ProxyService.instance?.sendAny(packet)
++                    call.respondText(JSONObject().apply { put("cmd", "record"); put("action", if (stop) "stop" else "start") }.toString(), ContentType.Application.Json)
+                 }
+                 // RF probe control (CMD 5656 / 0x1618 FpvReqFreqParams)
+                 post("/api/cmd/rf_probe") {
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt b/app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt
+--- a/app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt	2026-10-02 13:20:45.000000000 +0000
++++ b/app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt	2026-10-02 16:54:38.793149954 +0000
+@@ -21,7 +21,8 @@
+     fun buildCancelAutoFly() = DroneProtocol.buildCancelAutoFly()
+     fun buildEmergencyStop() = DroneProtocol.buildEmergencyStop()
+     fun buildTakePhoto() = DroneProtocol.buildTakePhoto()
+-    fun buildToggleRecord() = DroneProtocol.buildToggleRecord()
++    fun buildStartRecord() = DroneProtocol.buildStartRecord()
++    fun buildStopRecord() = DroneProtocol.buildStopRecord()
+     fun buildFourAxisControl(throttle: Short, yaw: Short, pitch: Short, roll: Short, gimbal: Short) =
+         DroneProtocol.buildFourAxisControl(throttle, yaw, pitch, roll, gimbal)
+     // Legacy HFD builder remains available only for diagnostics/backward comparison.
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/webui/src/components/cockpit/FlightActions.vue b/webui/src/components/cockpit/FlightActions.vue
+--- a/webui/src/components/cockpit/FlightActions.vue	2026-10-02 13:54:41.000000000 +0000
++++ b/webui/src/components/cockpit/FlightActions.vue	2026-10-02 16:54:38.792143498 +0000
+@@ -11,7 +11,7 @@
+     <div class="panel-title" style="margin-top: 10px;">📷 {{ t('actions.camera') }}</div>
+     <div class="btn-grid">
+       <button class="taf-btn" @click="DroneControlService.takePhoto()">📸 {{ t('actions.photo') }}</button>
+-      <button class="taf-btn" @click="DroneControlService.toggleRecord()">🎥 {{ t('actions.record') }}</button>
++      <button class="taf-btn" :class="{ 'taf-btn--danger': camera.recording }" :disabled="camera.recordingPending" @click="DroneControlService.toggleRecord()">🎥 {{ camera.recording ? t('actions.recordStop') : t('actions.recordStart') }}</button>
+       <button class="taf-btn taf-btn--primary" @click="DroneControlService.requestIdr()">🔄 {{ t('actions.keyframe') }}</button>
+       <button class="taf-btn" @click="DroneControlService.initLiveView()">📡 {{ t('actions.liveview') }}</button>
+     </div>
+@@ -33,9 +33,11 @@
+ import { ref } from 'vue'
+ import { DroneControlService } from '../../services/DroneControlService'
+ import { useDroneStore } from '../../stores/useDroneStore'
++import { useCameraStore } from '../../stores/useCameraStore'
+ import { useI18n } from '../../i18n'
+ const { t } = useI18n()
+ const store = useDroneStore()
++const camera = useCameraStore()
+ const { telemetry } = store
+ const emergencyConfirmOpen = ref(false)
+ 
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/webui/src/components/gallery/GalleryView.vue b/webui/src/components/gallery/GalleryView.vue
+--- a/webui/src/components/gallery/GalleryView.vue	2026-10-02 16:16:28.393682579 +0000
++++ b/webui/src/components/gallery/GalleryView.vue	2026-10-02 16:54:38.792925552 +0000
+@@ -248,7 +248,7 @@
+ }
+ function formatDate(value: number) { return value ? new Date(value).toLocaleString() : '—' }
+ function formatRemoteTimestamp(file: CameraMediaFile) {
+-  return file.timestamp ? new Date(file.timestamp).toLocaleString() : 'Kein Zeitstempel im Dateinamen'
++  return file.timestamp ? `${new Date(file.timestamp).toLocaleString()}${file.timestampSource === 'camera' ? ' · Kamera' : ' · Dateiname'}` : 'Zeitstempel nicht verfügbar'
+ }
+ function onAndroidMediaSaved(event: Event) {
+   const saved = (event as CustomEvent<AndroidStoredImage>).detail
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/webui/src/components/usb/PacketConstructor.vue b/webui/src/components/usb/PacketConstructor.vue
+--- a/webui/src/components/usb/PacketConstructor.vue	2026-09-29 10:08:32.000000000 +0000
++++ b/webui/src/components/usb/PacketConstructor.vue	2026-10-02 16:54:38.793423207 +0000
+@@ -137,8 +137,8 @@
+     case 'land': bytes = PacketBuilder.buildLand(); feType.value = '0x14'; break
+     case 'rth': bytes = PacketBuilder.buildRTH(); feType.value = '0x14'; break
+     case 'emergency': bytes = PacketBuilder.buildEmergencyStop(); feType.value = '0x14'; break
+-    case 'photo': bytes = PacketBuilder.buildTakePhoto(); feType.value = '0x15'; break
+-    case 'record': bytes = PacketBuilder.buildToggleRecord(); feType.value = '0x15'; break
++    case 'photo': bytes = PacketBuilder.buildCameraTakePhoto(); feType.value = '0x15'; break
++    case 'record': bytes = PacketBuilder.buildCameraStartRecord(); feType.value = '0x15'; break
+     case 'idr': bytes = PacketBuilder.buildIdrRequest(); feType.value = '0x15'; break
+     case 'liveview': bytes = PacketBuilder.buildLiveViewParams(); feType.value = '0x15'; break
+     case 'combined_joy':
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/webui/src/i18n/index.ts b/webui/src/i18n/index.ts
+--- a/webui/src/i18n/index.ts	2026-10-02 16:16:28.392564890 +0000
++++ b/webui/src/i18n/index.ts	2026-10-02 16:54:38.792243536 +0000
+@@ -34,7 +34,7 @@
+     'telemetry.phoneBattery': 'Phone', 'telemetry.controllerBattery': 'Controller', 'telemetry.droneBattery': 'Drone',
+     'actions.flight': 'Flight Actions', 'actions.takeoff': 'Takeoff', 'actions.takeoffConfirm': 'Confirm takeoff?', 'actions.land': 'Land', 'actions.landConfirm': 'Confirm landing?', 'actions.cancelLand': 'Cancel landing', 'actions.rth': 'RTH', 'actions.rthConfirm': 'Confirm return-to-home?', 'actions.cancelRth': 'Cancel RTH',
+     'actions.emergency': 'Emergency Stop', 'actions.emergencyConfirmTitle': 'Confirm emergency stop', 'actions.emergencyConfirmText': 'Emergency stop can stop the motors immediately. Really execute this action?', 'actions.emergencyExecute': 'Execute emergency stop', 'actions.cancel': 'Cancel', 'actions.camera': 'Camera & Video Control', 'actions.photo': 'Photo', 'actions.snapshotAndroid': 'Live Reco capture',
+-    'actions.record': 'Video Start/Stop', 'actions.keyframe': 'Request Keyframe (IDR)', 'actions.liveview': 'Initialize LiveView Parameters',
++    'actions.record': 'Video Start/Stop', 'actions.recordStart': 'Start Video', 'actions.recordStop': 'Stop Video', 'actions.keyframe': 'Request Keyframe (IDR)', 'actions.liveview': 'Initialize LiveView Parameters',
+     'video.waitingTitle': 'Waiting for drone video stream',
+     'video.waitingDesc': 'Currently using direct frontend USB passthrough mode. If the aircraft is powered on and paired, activate the stream to send the initialization sequence.',
+     'video.usbPassthrough': 'USB Passthrough Channel (WebSocket):', 'video.androidUsb': 'Android USB accessory:',
+@@ -66,7 +66,7 @@
+     'telemetry.phoneBattery': 'Handy', 'telemetry.controllerBattery': 'FB', 'telemetry.droneBattery': 'Drohne',
+     'actions.flight': 'Flugaktionen', 'actions.takeoff': 'Start', 'actions.takeoffConfirm': 'Start wirklich ausloesen?', 'actions.land': 'Landung', 'actions.landConfirm': 'Landung wirklich ausloesen?', 'actions.cancelLand': 'Landung abbrechen', 'actions.rth': 'RTH', 'actions.rthConfirm': 'Rueckkehr wirklich ausloesen?', 'actions.cancelRth': 'RTH abbrechen',
+     'actions.emergency': 'Not-Aus', 'actions.emergencyConfirmTitle': 'Not-Aus bestaetigen', 'actions.emergencyConfirmText': 'Not-Aus kann die Motoren sofort stoppen. Aktion wirklich ausfuehren?', 'actions.emergencyExecute': 'Not-Aus ausfuehren', 'actions.cancel': 'Abbrechen', 'actions.camera': 'Kamera & Video', 'actions.photo': 'Foto', 'actions.snapshotAndroid': 'Live Reco aufnehmen',
+-    'actions.record': 'Video Start/Stopp', 'actions.keyframe': 'Schlüsselbild anfordern (IDR)', 'actions.liveview': 'LiveView-Parameter initialisieren',
++    'actions.record': 'Video Start/Stopp', 'actions.recordStart': 'Video starten', 'actions.recordStop': 'Video stoppen', 'actions.keyframe': 'Schlüsselbild anfordern (IDR)', 'actions.liveview': 'LiveView-Parameter initialisieren',
+     'video.waitingTitle': 'Warte auf Drohnen-Videostream',
+     'video.waitingDesc': 'Direkter USB-Passthrough-Modus ist aktiv. Wenn die Drohne eingeschaltet und gekoppelt ist, den Stream aktivieren, um die Initialisierungssequenz zu senden.',
+     'video.usbPassthrough': 'USB-Passthrough-Kanal (WebSocket):', 'video.androidUsb': 'Android-USB-Zubehör:',
+@@ -94,7 +94,7 @@
+     'telemetry.horizontalDistance': '水平距离', 'telemetry.satellites': '卫星', 'telemetry.heading': '航向', 'telemetry.pitch': '俯仰',
+     'telemetry.roll': '横滚', 'telemetry.controllerVoltage': '遥控器电压', 'telemetry.phoneBattery': '手机', 'telemetry.controllerBattery': '遥控器', 'telemetry.droneBattery': '无人机',
+     'actions.flight': '飞行动作', 'actions.takeoff': '起飞', 'actions.takeoffConfirm': '确认起飞？', 'actions.land': '降落', 'actions.landConfirm': '确认降落？', 'actions.cancelLand': '取消降落', 'actions.rth': '返航', 'actions.rthConfirm': '确认返航？', 'actions.cancelRth': '取消返航', 'actions.emergency': '紧急停止', 'actions.emergencyConfirmTitle': '确认紧急停止', 'actions.emergencyConfirmText': '紧急停止可能立即停止电机。确定执行吗？', 'actions.emergencyExecute': '执行紧急停止', 'actions.cancel': '取消',
+-    'actions.camera': '相机与视频控制', 'actions.photo': '拍照', 'actions.snapshotAndroid': '保存 Live Reco 图像', 'actions.record': '视频开始/停止', 'actions.keyframe': '请求关键帧 (IDR)',
++    'actions.camera': '相机与视频控制', 'actions.photo': '拍照', 'actions.snapshotAndroid': '保存 Live Reco 图像', 'actions.record': '视频开始/停止', 'actions.recordStart': '开始录像', 'actions.recordStop': '停止录像', 'actions.keyframe': '请求关键帧 (IDR)',
+     'actions.liveview': '初始化 LiveView 参数',
+     'video.waitingTitle': '等待无人机视频流', 'video.waitingDesc': '当前使用前端 USB 直通模式。如果飞行器已开机并完成配对，请激活视频流以发送初始化序列。',
+     'video.usbPassthrough': 'USB 直通通道 (WebSocket)：', 'video.androidUsb': 'Android USB 附件：', 'video.rxLink': '遥控器 / 飞行器 RX 链路：',
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/webui/src/protocol/PacketBuilder.ts b/webui/src/protocol/PacketBuilder.ts
+--- a/webui/src/protocol/PacketBuilder.ts	2026-10-02 15:13:55.720042818 +0000
++++ b/webui/src/protocol/PacketBuilder.ts	2026-10-02 16:55:38.409537174 +0000
+@@ -131,15 +131,11 @@
+ 
+   // === Camera Commands ===
+ 
+-  static buildTakePhoto(): Uint8Array {
+-    const inner = FfFdCommand.buildWithCmdByte(CAMERA_CMDS.TAKE_PHOTO, null, CMD_SHORTS.CAMERA)
+-    return FeTransport.wrap(inner, 0x15)
+-  }
++  /** @deprecated Use buildCameraTakePhoto(); retained as a compatibility alias. */
++  static buildTakePhoto(): Uint8Array { return this.buildCameraTakePhoto() }
+ 
+-  static buildToggleRecord(): Uint8Array {
+-    const inner = FfFdCommand.buildWithCmdByte(CAMERA_CMDS.TOGGLE_RECORD, null, CMD_SHORTS.CAMERA)
+-    return FeTransport.wrap(inner, 0x15)
+-  }
++  /** @deprecated Recording is not a toggle in PotensicPro; this compatibility alias starts recording. */
++  static buildToggleRecord(): Uint8Array { return this.buildCameraStartRecord() }
+ 
+   /**
+    * PotensicPro USB camera protocol (2022/new FC):
+@@ -195,7 +191,9 @@
+     return this.buildLegacyCameraUsb(new Uint8Array([15, mode, encoded]))
+   }
+   static buildCameraTakePhoto(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.TAKE_PHOTO])) }
+-  static buildCameraRecord(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.RECORD])) }
++  static buildCameraStartRecord(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.RECORD, 0x01])) }
++  static buildCameraStopRecord(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.RECORD, 0x00])) }
++  static buildCameraRecord(): Uint8Array { return this.buildCameraStartRecord() }
+   static buildCameraEnterGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.ENTER_GALLERY])) }
+   static buildCameraQuitGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.QUIT_GALLERY])) }
+   static buildCameraGetFileCount(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.FILE_COUNT])) }
+@@ -215,6 +213,14 @@
+     data.set(name, 1)
+     return this.buildLegacyCameraUsb(data)
+   }
++  static buildCameraGetFileMetaList(fileNames: string[]): Uint8Array {
++    const json = JSON.stringify({ filelist: fileNames })
++    const encoded = new TextEncoder().encode(json)
++    const data = new Uint8Array(1 + encoded.length)
++    data[0] = CAMERA_USB.FILE_META_LIST
++    data.set(encoded, 1)
++    return this.buildLegacyCameraUsb(data)
++  }
+   static buildCameraDeleteFile(fileName: string): Uint8Array {
+     const name = new TextEncoder().encode(fileName)
+     const data = new Uint8Array(2 + name.length)
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/webui/src/services/CameraMediaService.ts b/webui/src/services/CameraMediaService.ts
+--- a/webui/src/services/CameraMediaService.ts	2026-10-02 16:17:34.780333176 +0000
++++ b/webui/src/services/CameraMediaService.ts	2026-10-02 16:56:45.582644178 +0000
+@@ -35,9 +35,17 @@
+   } = null
+   private static downloadTimer: ReturnType<typeof setTimeout> | null = null
+   private static downloadRetryCount = 0
+-  private static readonly DOWNLOAD_TIMEOUT_MS = 3000
+-  private static readonly DOWNLOAD_MAX_RETRIES = 3
+-  private static readonly DOWNLOAD_CHUNK_SIZE = 32768n
++  private static readonly DOWNLOAD_TIMEOUT_MS = 1000
++  private static readonly DOWNLOAD_MAX_RETRIES = 15
++  private static readonly DOWNLOAD_CHUNK_SIZE = 102400n
++  private static readonly DOWNLOAD_TOTAL_TIMEOUT_MS = 15000
++  private static downloadStartedAt = 0
++  private static metaQueue: string[][] = []
++  private static metaTimer: ReturnType<typeof setTimeout> | null = null
++  private static metaRetryCount = 0
++  private static currentMetaBatch: string[] | null = null
++  private static readonly META_TIMEOUT_MS = 2000
++  private static readonly META_MAX_RETRIES = 2
+   private static pendingDelete: null | {
+     fileName: string
+     resolve: () => void
+@@ -270,16 +278,20 @@
+     cam.download.active = true
+     cam.download.error = ''
+     try {
+-      const info = await this.getFileInfo(fileName)
++      const listed = cam.getGalleryFile(fileName)
++      let info: any = listed && listed.size && listed.size > 0 ? { len: listed.size, lrv_len: listed.lrvSize, createtime: listed.createTimeRaw } : null
++      if (!info) info = await this.getFileInfo(fileName)
+       const isVideo = /\.(mp4|mov)$/i.test(fileName)
+-      // The normal Camera Gallery downloads the selected original file. Thumbnail/LRV
+-      // transport is a separate path and must not be treated as a full-file download.
++      // The project requirement is the complete selected original file. PotensicPro's
++      // gallery playback downloader uses LRV for videos, but TAF deliberately keeps the
++      // original MP4 name here while adopting the confirmed 0x1B framing and block size.
+       const remoteName = fileName
+-      const totalNum = Number(info.filesize ?? info.len ?? 0)
++      const totalNum = Number(info.filesize ?? info.len ?? listed?.size ?? 0)
+       if (!Number.isFinite(totalNum) || totalNum <= 0) throw new Error('Camera returned no usable file size')
+       const total = BigInt(Math.trunc(totalNum))
+       const outputName = fileName.split('/').pop() || (isVideo ? 'camera-video.mp4' : 'camera-photo.jpg')
+       return await new Promise<AndroidStoredImage | undefined>((resolve, reject) => {
++        this.downloadStartedAt = Date.now()
+         this.activeDownload = {
+           fileName: remoteName,
+           originalFileName: fileName,
+@@ -327,13 +339,19 @@
+       const dl = this.activeDownload
+       if (!dl) return
+       if (dl.received !== offset) return
++      if (Date.now() - this.downloadStartedAt >= this.DOWNLOAD_TOTAL_TIMEOUT_MS) {
++        this.send(PacketBuilder.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.FILE_DOWNLOAD_CANCEL])))
++        this.failDownload(`Camera file download timed out after ${this.DOWNLOAD_TOTAL_TIMEOUT_MS / 1000}s at offset ${offset}`)
++        return
++      }
+       if (this.downloadRetryCount < this.DOWNLOAD_MAX_RETRIES) {
+         this.downloadRetryCount++
+-        useDroneStore().addLog('WARN', `Camera download timeout at ${offset}; retry ${this.downloadRetryCount}/${this.DOWNLOAD_MAX_RETRIES}`)
++        useDroneStore().addLog('WARN', `Camera download unit timeout at ${offset}; retry from current offset (${this.downloadRetryCount}/${this.DOWNLOAD_MAX_RETRIES})`)
+         this.send(PacketBuilder.buildCameraDownloadChunk(dl.fileName, offset, length))
+         this.armDownloadTimeout(offset, length)
+         return
+       }
++      this.send(PacketBuilder.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.FILE_DOWNLOAD_CANCEL])))
+       this.failDownload(`Timeout waiting for camera file data at offset ${offset}`)
+     }, this.DOWNLOAD_TIMEOUT_MS)
+   }
+@@ -486,6 +504,7 @@
+       }
+       const failure = statusText[status] || `status ${status}`
+       drone.addLog('WARN', `Camera command 0x${cmd.toString(16).padStart(2, '0')} failed: ${failure}`)
++      if (cmd === CAMERA_USB.RECORD) cam.recordingPending = false
+       if ([CAMERA_USB.ENTER_GALLERY, CAMERA_USB.FILE_COUNT, CAMERA_USB.FILE_LIST].includes(cmd as any)) {
+         this.failGallery(`Command 0x${cmd.toString(16).padStart(2, '0')} failed: ${failure}`)
+       }
+@@ -507,6 +526,18 @@
+     }
+ 
+     switch (cmd) {
++      case CAMERA_USB.RECORD:
++        if (data.length) {
++          cam.recording = data[0] === 1
++          cam.recordingPending = false
++          cam.lastCaptureMessage = cam.recording ? 'Video recording started' : 'Video recording stopped'
++          drone.addLog('INFO', cam.lastCaptureMessage)
++        }
++        break
++      case CAMERA_USB.TAKE_PHOTO:
++        cam.lastCaptureMessage = 'Photo captured successfully'
++        drone.addLog('INFO', cam.lastCaptureMessage)
++        break
+       case 4: // format SD response: card state in data[0]
+         if (data.length) cam.sd.state = data[0]
+         cam.sd.lastStatus = 'Format command acknowledged'
+@@ -638,6 +669,9 @@
+         }
+         break
+       }
++      case CAMERA_USB.FILE_META_LIST:
++        this.parseGalleryMetadata(data)
++        break
+       case CAMERA_USB.FILE_DOWNLOAD:
+         this.handleDownloadData(data)
+         break
+@@ -678,6 +712,7 @@
+         return
+       }
+       cam.setGalleryFiles(this.photoNames.slice(0, this.photoCount), this.videoNames.slice(0, this.videoCount))
++      this.requestGalleryMetadata([...this.videoNames.slice(0, this.videoCount), ...this.photoNames.slice(0, this.photoCount)])
+       return
+     }
+     const page = this.listQueue.shift()!
+@@ -689,6 +724,70 @@
+     )
+   }
+ 
++  private static requestGalleryMetadata(fileNames: string[]) {
++    if (this.metaTimer) clearTimeout(this.metaTimer)
++    this.metaTimer = null
++    this.metaRetryCount = 0
++    this.currentMetaBatch = null
++    this.metaQueue = []
++    for (let i = 0; i < fileNames.length; i += 25) this.metaQueue.push(fileNames.slice(i, i + 25))
++    this.requestNextMetadataBatch()
++  }
++
++  private static requestNextMetadataBatch() {
++    if (this.metaTimer) clearTimeout(this.metaTimer)
++    this.metaTimer = null
++    const batch = this.metaQueue.shift()
++    if (!batch || batch.length === 0) {
++      this.currentMetaBatch = null
++      return
++    }
++    this.currentMetaBatch = batch
++    this.metaRetryCount = 0
++    this.send(PacketBuilder.buildCameraGetFileMetaList(batch))
++    this.armMetadataTimeout()
++  }
++
++  private static armMetadataTimeout() {
++    if (this.metaTimer) clearTimeout(this.metaTimer)
++    this.metaTimer = setTimeout(() => {
++      if (!this.currentMetaBatch) return
++      if (this.metaRetryCount < this.META_MAX_RETRIES) {
++        this.metaRetryCount++
++        useDroneStore().addLog('WARN', `Camera metadata 0x20 timeout; retry ${this.metaRetryCount}/${this.META_MAX_RETRIES}`)
++        this.send(PacketBuilder.buildCameraGetFileMetaList(this.currentMetaBatch))
++        this.armMetadataTimeout()
++        return
++      }
++      useDroneStore().addLog('WARN', 'Camera metadata 0x20 unavailable; keeping filename timestamps as fallback')
++      this.currentMetaBatch = null
++      this.requestNextMetadataBatch()
++    }, this.META_TIMEOUT_MS)
++  }
++
++  private static parseGalleryMetadata(data: Uint8Array) {
++    if (this.metaTimer) clearTimeout(this.metaTimer)
++    this.metaTimer = null
++    const text = new TextDecoder('ascii').decode(data).replace(/\0+$/g, '').trim()
++    try {
++      const parsed = JSON.parse(text)
++      const raw = Array.isArray(parsed?.file_info) ? parsed.file_info : []
++      const entries = raw.map((entry: any) => {
++        if (typeof entry === 'string') {
++          try { return JSON.parse(entry) } catch { return null }
++        }
++        return entry
++      }).filter(Boolean)
++      useCameraStore().applyGalleryMetadata(entries)
++      useDroneStore().addLog('INFO', `Camera metadata 0x20 parsed for ${entries.length} files`)
++    } catch (e: any) {
++      useDroneStore().addLog('WARN', `Camera metadata 0x20 parse failed: ${e?.message || e}; payload=${text.slice(0, 160)}`)
++    } finally {
++      this.currentMetaBatch = null
++      this.requestNextMetadataBatch()
++    }
++  }
++
+   private static parseGalleryNames(data: Uint8Array) {
+     // PotensicPro starts the NUL-separated ASCII filename data two bytes into the
+     // command-specific response body (payloadIndex + 4 including cmd/status).
+@@ -712,70 +811,54 @@
+ 
+   private static handleDownloadData(body: Uint8Array) {
+     const dl = this.activeDownload
++    // PotensicPro DownloadData body after cmd/status:
++    // flag (1B), [32B final-block digest area], offset (u64 LE), payloadLen (u16 LE), payload.
+     if (!dl || body.length < 11) return
+     const cam = useCameraStore()
+     const drone = useDroneStore()
+     const flag = body[0]
+     const fileEnd = flag === 2
+-    const view = new DataView(body.buffer, body.byteOffset, body.byteLength)
+-
+-    type Candidate = { offset: bigint; start: number; length: number; layout: string }
+-    const candidates: Candidate[] = []
+-    const addCandidates = (base: number, tag: string) => {
+-      // Prefer the 64-bit length layout used by the request builder. If a firmware
+-      // variant returns the older 16-bit length field, the second candidate covers it.
+-      if (base + 16 <= body.length) {
+-        const offset = view.getBigUint64(base, true)
+-        const len64 = view.getBigUint64(base + 8, true)
+-        if (len64 > 0n && len64 <= BigInt(Number.MAX_SAFE_INTEGER)) {
+-          const n = Number(len64)
+-          const start64 = base + 16
+-          if (start64 + n <= body.length) candidates.push({ offset, start: start64, length: n, layout: `${tag}/u64` })
+-        }
+-      }
+-      if (base + 10 <= body.length) {
+-        const offset = view.getBigUint64(base, true)
+-        const len16 = view.getUint16(base + 8, true)
+-        const start16 = base + 10
+-        if (len16 > 0 && start16 + len16 <= body.length) candidates.push({ offset, start: start16, length: len16, layout: `${tag}/u16` })
+-      }
++    const unitEnd = flag === 1
++    const base = fileEnd ? 33 : 1
++    if (body.length < base + 10) {
++      drone.addLog('WARN', `Camera download frame too short: flag=${flag} body=${body.length}B`)
++      return
+     }
+-
+-    // Normal block: flag + offset + length + payload. Some end blocks add a 32-byte
+-    // integrity trailer before offset, matching the Potensic gallery downloader family.
+-    addCandidates(1, 'direct')
+-    if (fileEnd) addCandidates(33, 'end+32')
+-
+-    const candidate = candidates.find(c => c.offset === dl.received) || candidates[0]
+-    if (!candidate) {
+-      drone.addLog('WARN', `Camera download frame not decoded: flag=${flag} body=${body.length}B`)
++    const view = new DataView(body.buffer, body.byteOffset, body.byteLength)
++    const offset = view.getBigUint64(base, true)
++    const payloadLen = view.getUint16(base + 8, true)
++    const payloadStart = base + 10
++    if (payloadLen <= 0 || payloadStart + payloadLen > body.length) {
++      drone.addLog('WARN', `Camera download frame length invalid: flag=${flag} offset=${offset} len=${payloadLen} body=${body.length}B`)
+       return
+     }
+ 
+     this.clearDownloadTimeout()
+     this.downloadRetryCount = 0
+ 
+-    if (candidate.offset < dl.received) {
+-      const duplicateEnd = candidate.offset + BigInt(candidate.length)
++    if (offset < dl.received) {
++      const duplicateEnd = offset + BigInt(payloadLen)
+       if (duplicateEnd <= dl.received) {
+-        drone.addLog('WARN', `Ignoring duplicate camera download block at ${candidate.offset} (${candidate.length}B)`)
++        drone.addLog('WARN', `Ignoring duplicate camera download block at ${offset} (${payloadLen}B)`)
+         this.requestNextDownloadChunk()
+         return
+       }
+     }
+-    if (candidate.offset !== dl.received) {
+-      this.failDownload(`Unexpected camera file offset ${candidate.offset}; expected ${dl.received}`)
++    if (offset !== dl.received) {
++      drone.addLog('WARN', `Camera download offset mismatch: got ${offset}, current ${dl.received}; re-requesting from current offset`)
++      this.requestNextDownloadChunk()
+       return
+     }
+ 
+-    const chunk = body.slice(candidate.start, candidate.start + candidate.length)
++    const chunk = body.slice(payloadStart, payloadStart + payloadLen)
+     dl.chunks.push(chunk)
+     dl.received += BigInt(chunk.length)
+     const pct = Number(dl.received) * 100 / Number(dl.total)
+     cam.download.progress = Math.min(100, Math.round(pct * 10) / 10)
+-    drone.addLog('INFO', `Camera download block: ${candidate.layout}, ${chunk.length}B, ${cam.download.progress}%`)
++    drone.addLog('INFO', `Camera download block: ${chunk.length}B flag=${flag}${unitEnd ? ' unit-end' : ''}${fileEnd ? ' file-end' : ''}, ${cam.download.progress}%`)
+ 
+     if (fileEnd || dl.received >= dl.total) void this.finishDownload()
+     else this.requestNextDownloadChunk()
+   }
++
+ }
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/webui/src/services/DroneControlService.ts b/webui/src/services/DroneControlService.ts
+--- a/webui/src/services/DroneControlService.ts	2026-10-02 16:16:28.391579676 +0000
++++ b/webui/src/services/DroneControlService.ts	2026-10-02 16:54:38.792028509 +0000
+@@ -285,7 +285,7 @@
+     const store = useDroneStore()
+     const camera = useCameraStore()
+     const send = () => {
+-      store.addLog('INFO', `${label}: FE 0x15 / camera function 0x1200`)
++      store.addLog('INFO', `${label}: FE 0x15 / camera function 0x0020`)
+       this.transport.send(packet)
+     }
+ 
+@@ -304,11 +304,31 @@
+   }
+ 
+   static takePhoto() {
+-    this.sendCaptureCommand(PacketBuilder.buildTakePhoto(), 'Take photo (cmd 0x51)')
++    const camera = useCameraStore()
++    camera.lastCaptureMessage = 'Photo command sent'
++    this.sendCaptureCommand(PacketBuilder.buildCameraTakePhoto(), 'Take photo (PotensicPro 0x0020 / 0x01)')
++  }
++
++  static startRecord() {
++    const camera = useCameraStore()
++    if (camera.recordingPending || camera.recording) return
++    camera.recordingPending = true
++    camera.lastCaptureMessage = 'Video start command sent'
++    this.sendCaptureCommand(PacketBuilder.buildCameraStartRecord(), 'Start video (PotensicPro 0x0020 / 0x00 0x01)')
++  }
++
++  static stopRecord() {
++    const camera = useCameraStore()
++    if (camera.recordingPending || !camera.recording) return
++    camera.recordingPending = true
++    camera.lastCaptureMessage = 'Video stop command sent'
++    this.sendCaptureCommand(PacketBuilder.buildCameraStopRecord(), 'Stop video (PotensicPro 0x0020 / 0x00 0x00)')
+   }
+ 
+   static toggleRecord() {
+-    this.sendCaptureCommand(PacketBuilder.buildToggleRecord(), 'Video start/stop (cmd 0x50)')
++    const camera = useCameraStore()
++    if (camera.recording) this.stopRecord()
++    else this.startRecord()
+   }
+ 
+   static async saveLiveSnapshotToAndroid() {
+diff -ruN '--exclude=.git' '--exclude=node_modules' '--exclude=DOCUMENTATION' '--exclude=COMMIT_MESSAGE_POTENSICPRO_CAMERA_DOWNLOAD_2026-10-02_v1.2.txt' '--exclude=NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md' a/webui/src/stores/useCameraStore.ts b/webui/src/stores/useCameraStore.ts
+--- a/webui/src/stores/useCameraStore.ts	2026-10-02 16:16:28.393075854 +0000
++++ b/webui/src/stores/useCameraStore.ts	2026-10-02 16:54:38.791925567 +0000
+@@ -5,7 +5,10 @@
+   name: string
+   type: 'photo' | 'video'
+   timestamp?: number
+-  timestampSource?: 'filename'
++  timestampSource?: 'camera' | 'filename'
++  size?: number
++  lrvSize?: number
++  createTimeRaw?: string
+ }
+ 
+ export type GalleryState = 'CLOSED' | 'OPENING' | 'OPEN' | 'LOADING_COUNT' | 'LOADING_LIST' | 'READY' | 'ERROR'
+@@ -46,6 +49,9 @@
+   const photos = ref<CameraMediaFile[]>([])
+   const videos = ref<CameraMediaFile[]>([])
+   const galleryLoading = ref(false)
++  const recording = ref(false)
++  const recordingPending = ref(false)
++  const lastCaptureMessage = ref('')
+   const download = reactive({
+     fileName: '',
+     progress: 0,
+@@ -66,14 +72,56 @@
+     return Number.isFinite(ts) ? ts : undefined
+   }
+ 
++  function parseCameraCreateTime(value: unknown): number | undefined {
++    if (typeof value !== 'string' || !value.trim()) return undefined
++    const raw = value.trim()
++    const direct = Date.parse(raw)
++    if (Number.isFinite(direct)) return direct
++    const m = raw.match(/(20\d{2})[-/.]?(\d{2})[-/.]?(\d{2})[ T_-]?(\d{2})[:._-]?(\d{2})[:._-]?(\d{2})/)
++    if (!m) return undefined
++    const [, y, mo, d, h, mi, sec] = m
++    const ts = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec)).getTime()
++    return Number.isFinite(ts) ? ts : undefined
++  }
++
+   function setGalleryFiles(photoNames: string[], videoNames: string[]) {
+-    photos.value = photoNames.map(name => ({ name, type: 'photo' as const, timestamp: timestampFromCameraName(name), timestampSource: 'filename' as const }))
+-    videos.value = videoNames.map(name => ({ name, type: 'video' as const, timestamp: timestampFromCameraName(name), timestampSource: 'filename' as const }))
++    const previous = new Map(media.value.map(item => [item.name, item]))
++    const make = (name: string, type: 'photo' | 'video'): CameraMediaFile => {
++      const old = previous.get(name)
++      if (old) return { ...old, type }
++      const timestamp = timestampFromCameraName(name)
++      return { name, type, timestamp, timestampSource: timestamp ? 'filename' : undefined }
++    }
++    photos.value = photoNames.map(name => make(name, 'photo'))
++    videos.value = videoNames.map(name => make(name, 'video'))
+     galleryLoading.value = false
+     galleryState.value = 'READY'
+     galleryError.value = ''
+   }
+ 
++  function applyGalleryMetadata(entries: Array<{ file?: string; len?: number; lrv_len?: number; createtime?: string }>) {
++    const byName = new Map(entries.map(entry => [String(entry.file || '').trim(), entry]))
++    const apply = (item: CameraMediaFile): CameraMediaFile => {
++      const entry = byName.get(item.name.trim())
++      if (!entry) return item
++      const cameraTimestamp = parseCameraCreateTime(entry.createtime)
++      return {
++        ...item,
++        timestamp: cameraTimestamp ?? item.timestamp,
++        timestampSource: cameraTimestamp ? 'camera' : item.timestampSource,
++        size: Number.isFinite(Number(entry.len)) ? Number(entry.len) : item.size,
++        lrvSize: Number.isFinite(Number(entry.lrv_len)) ? Number(entry.lrv_len) : item.lrvSize,
++        createTimeRaw: entry.createtime || item.createTimeRaw
++      }
++    }
++    photos.value = photos.value.map(apply)
++    videos.value = videos.value.map(apply)
++  }
++
++  function getGalleryFile(name: string): CameraMediaFile | undefined {
++    return media.value.find(item => item.name === name)
++  }
++
+   return {
+     videoResolutionIndex,
+     photoResolutionIndex,
+@@ -94,8 +142,13 @@
+     videos,
+     media,
+     galleryLoading,
++    recording,
++    recordingPending,
++    lastCaptureMessage,
+     download,
+     lastResponse,
+-    setGalleryFiles
++    setGalleryFiles,
++    applyGalleryMetadata,
++    getGalleryFile
+   }
+ })

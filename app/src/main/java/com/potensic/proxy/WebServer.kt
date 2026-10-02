@@ -532,8 +532,11 @@ class WebServer(
                     call.respondText("""{"cmd":"photo"}""", ContentType.Application.Json)
                 }
                 post("/api/cmd/record") {
-                    ProxyService.instance?.sendAny(PotensicProtocol.buildToggleRecord())
-                    call.respondText("""{"cmd":"record"}""", ContentType.Application.Json)
+                    val action = call.request.queryParameters["action"]?.lowercase() ?: "start"
+                    val stop = action == "stop" || action == "0" || action == "false"
+                    val packet = if (stop) PotensicProtocol.buildStopRecord() else PotensicProtocol.buildStartRecord()
+                    ProxyService.instance?.sendAny(packet)
+                    call.respondText(JSONObject().apply { put("cmd", "record"); put("action", if (stop) "stop" else "start") }.toString(), ContentType.Application.Json)
                 }
                 // RF probe control (CMD 5656 / 0x1618 FpvReqFreqParams)
                 post("/api/cmd/rf_probe") {

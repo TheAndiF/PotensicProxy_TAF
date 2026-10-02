@@ -285,7 +285,7 @@ export class DroneControlService {
     const store = useDroneStore()
     const camera = useCameraStore()
     const send = () => {
-      store.addLog('INFO', `${label}: FE 0x15 / camera function 0x1200`)
+      store.addLog('INFO', `${label}: FE 0x15 / camera function 0x0020`)
       this.transport.send(packet)
     }
 
@@ -304,11 +304,31 @@ export class DroneControlService {
   }
 
   static takePhoto() {
-    this.sendCaptureCommand(PacketBuilder.buildTakePhoto(), 'Take photo (cmd 0x51)')
+    const camera = useCameraStore()
+    camera.lastCaptureMessage = 'Photo command sent'
+    this.sendCaptureCommand(PacketBuilder.buildCameraTakePhoto(), 'Take photo (PotensicPro 0x0020 / 0x01)')
+  }
+
+  static startRecord() {
+    const camera = useCameraStore()
+    if (camera.recordingPending || camera.recording) return
+    camera.recordingPending = true
+    camera.lastCaptureMessage = 'Video start command sent'
+    this.sendCaptureCommand(PacketBuilder.buildCameraStartRecord(), 'Start video (PotensicPro 0x0020 / 0x00 0x01)')
+  }
+
+  static stopRecord() {
+    const camera = useCameraStore()
+    if (camera.recordingPending || !camera.recording) return
+    camera.recordingPending = true
+    camera.lastCaptureMessage = 'Video stop command sent'
+    this.sendCaptureCommand(PacketBuilder.buildCameraStopRecord(), 'Stop video (PotensicPro 0x0020 / 0x00 0x00)')
   }
 
   static toggleRecord() {
-    this.sendCaptureCommand(PacketBuilder.buildToggleRecord(), 'Video start/stop (cmd 0x50)')
+    const camera = useCameraStore()
+    if (camera.recording) this.stopRecord()
+    else this.startRecord()
   }
 
   static async saveLiveSnapshotToAndroid() {

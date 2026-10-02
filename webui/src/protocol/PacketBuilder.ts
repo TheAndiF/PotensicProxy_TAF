@@ -131,15 +131,11 @@ export class PacketBuilder {
 
   // === Camera Commands ===
 
-  static buildTakePhoto(): Uint8Array {
-    const inner = FfFdCommand.buildWithCmdByte(CAMERA_CMDS.TAKE_PHOTO, null, CMD_SHORTS.CAMERA)
-    return FeTransport.wrap(inner, 0x15)
-  }
+  /** @deprecated Use buildCameraTakePhoto(); retained as a compatibility alias. */
+  static buildTakePhoto(): Uint8Array { return this.buildCameraTakePhoto() }
 
-  static buildToggleRecord(): Uint8Array {
-    const inner = FfFdCommand.buildWithCmdByte(CAMERA_CMDS.TOGGLE_RECORD, null, CMD_SHORTS.CAMERA)
-    return FeTransport.wrap(inner, 0x15)
-  }
+  /** @deprecated Recording is not a toggle in PotensicPro; this compatibility alias starts recording. */
+  static buildToggleRecord(): Uint8Array { return this.buildCameraStartRecord() }
 
   /**
    * PotensicPro USB camera protocol (2022/new FC):
@@ -195,7 +191,9 @@ export class PacketBuilder {
     return this.buildLegacyCameraUsb(new Uint8Array([15, mode, encoded]))
   }
   static buildCameraTakePhoto(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.TAKE_PHOTO])) }
-  static buildCameraRecord(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.RECORD])) }
+  static buildCameraStartRecord(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.RECORD, 0x01])) }
+  static buildCameraStopRecord(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.RECORD, 0x00])) }
+  static buildCameraRecord(): Uint8Array { return this.buildCameraStartRecord() }
   static buildCameraEnterGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.ENTER_GALLERY])) }
   static buildCameraQuitGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.QUIT_GALLERY])) }
   static buildCameraGetFileCount(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.FILE_COUNT])) }
@@ -213,6 +211,14 @@ export class PacketBuilder {
     const data = new Uint8Array(1 + name.length)
     data[0] = CAMERA_USB.FILE_INFO
     data.set(name, 1)
+    return this.buildLegacyCameraUsb(data)
+  }
+  static buildCameraGetFileMetaList(fileNames: string[]): Uint8Array {
+    const json = JSON.stringify({ filelist: fileNames })
+    const encoded = new TextEncoder().encode(json)
+    const data = new Uint8Array(1 + encoded.length)
+    data[0] = CAMERA_USB.FILE_META_LIST
+    data.set(encoded, 1)
     return this.buildLegacyCameraUsb(data)
   }
   static buildCameraDeleteFile(fileName: string): Uint8Array {

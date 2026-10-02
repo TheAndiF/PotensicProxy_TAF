@@ -11,7 +11,7 @@
     <div class="panel-title" style="margin-top: 10px;">📷 {{ t('actions.camera') }}</div>
     <div class="btn-grid">
       <button class="taf-btn" @click="DroneControlService.takePhoto()">📸 {{ t('actions.photo') }}</button>
-      <button class="taf-btn" @click="DroneControlService.toggleRecord()">🎥 {{ t('actions.record') }}</button>
+      <button class="taf-btn" :class="{ 'taf-btn--danger': camera.recording }" :disabled="camera.recordingPending" @click="DroneControlService.toggleRecord()">🎥 {{ camera.recording ? t('actions.recordStop') : t('actions.recordStart') }}</button>
       <button class="taf-btn taf-btn--primary" @click="DroneControlService.requestIdr()">🔄 {{ t('actions.keyframe') }}</button>
       <button class="taf-btn" @click="DroneControlService.initLiveView()">📡 {{ t('actions.liveview') }}</button>
     </div>
@@ -33,9 +33,11 @@
 import { ref } from 'vue'
 import { DroneControlService } from '../../services/DroneControlService'
 import { useDroneStore } from '../../stores/useDroneStore'
+import { useCameraStore } from '../../stores/useCameraStore'
 import { useI18n } from '../../i18n'
 const { t } = useI18n()
 const store = useDroneStore()
+const camera = useCameraStore()
 const { telemetry } = store
 const emergencyConfirmOpen = ref(false)
 

@@ -1,0 +1,27 @@
+BL_Align camera capture and media download with PotensicPro
+Date: 2026-10-02
+Summary:
+- Switched normal photo capture to the PotensicPro USB camera function 0x0020 with payload 0x01.
+- Split video recording into confirmed start (00 01) and stop (00 00) payloads and synchronize UI recording state from camera responses.
+- Added gallery metadata request 0x20 and use camera-provided createtime/length values with filename timestamp fallback.
+- Aligned 0x1B downloads with PotensicPro: 102400-byte request units, uint64 offset, uint16 RX payload length, final-frame +32-byte layout, 1-second unit retry and 0x1E abort.
+- Kept TAF's project requirement to request the selected original MP4 rather than silently switching video downloads to PotensicPro's LRV playback file.
+- Updated README, protocol reference and project documentation.
+
+Changed files:
+- README.md
+- PROTOCOL.md
+- app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt
+- webui/src/components/cockpit/FlightActions.vue
+- webui/src/components/gallery/GalleryView.vue
+- webui/src/components/usb/PacketConstructor.vue
+- webui/src/i18n/index.ts
+- webui/src/protocol/PacketBuilder.ts
+- webui/src/services/CameraMediaService.ts
+- webui/src/services/DroneControlService.ts
+- webui/src/stores/useCameraStore.ts
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - PotensicPro-Kamera-Download-Abgleich - v1.2.docx
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - PotensicPro-Kamera-Download-Abgleich - v1.2.pdf
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_POTENSICPRO_KAMERA_DOWNLOAD_v1.2.md

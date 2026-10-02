@@ -283,7 +283,9 @@ The older TAF `buildFlightCommand(group, subcmd)` / short `0x0301` path remains 
 
 ## Camera Commands (TX)
 
-TAF uses two camera paths. LiveView/engineering **and capture actions** use **short 0x1200**; on the tested ATOM path photo is command `0x51` and video start/stop is `0x50`. The PotensicPro USB camera function **0x0020** remains in use for settings and gallery/media transfer. Both send with FE type `0x15`. This split was restored after device feedback showed that `0x0020/0x01` did not create a photo although gallery RX worked.
+TAF uses the PotensicPro USB camera function **0x0020** for normal capture, settings and gallery/media transfer. FE type `0x15` with inner TX header `FF FD` is used for requests; FE type `0x05` with RX header `FF FE` is used for camera responses. LiveView/engineering functions that are independently confirmed remain on short `0x1200`; normal photo/video capture no longer uses `0x1200/0x51` or `0x1200/0x50`.
+
+PotensicPro `UsbCameraHandler` confirms the normal capture payloads: photo `[01]`, video start `[00 01]`, video stop `[00 00]`. Recording state in TAF is updated from the camera response for command `0x00`, where data byte `1` means started and `0` means stopped.
 
 ### Command format
 
@@ -293,16 +295,32 @@ FF FD [len_LE] [00 12] [cmd_byte] [data...] [xor]
 
 | Cmd | Description |
 |-----|-------------|
-| 0x50 | Toggle video recording |
-| 0x51 | Take photo |
+| 0x50 | Engineering/live-view camera command; not used for normal PotensicPro USB recording |
+| 0x51 | Engineering/live-view camera command; not used for normal PotensicPro USB photo capture |
 | 0x73 | Start live view (data: 0x00, 0x64) |
 | 0xD8 | LiveViewParams (resolution + bitrate) |
 | 0xD9 | Request IDR frame |
 | 0xD2 | WifiDirectSwitch (data: 0x01=enter + 16 bytes phoneId) |
 
-### PotensicPro-compatible USB camera settings/gallery path (short `0x0020`)
+### PotensicPro-compatible USB camera capture/settings/gallery path (short `0x0020`)
 
-The settings/gallery/zoom path sends FE `0x15` APP_TO_CAMERA with inner header `FF FD` and receives FE `0x05` CAMERA_TO_APP with inner header `FF FE`. The inner message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
+The capture/settings/gallery/zoom path sends FE `0x15` APP_TO_CAMERA with inner header `FF FD` and receives FE `0x05` CAMERA_TO_APP with inner header `FF FE`. The inner message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
+
+Confirmed capture payloads from PotensicPro `UsbCameraHandler`:
+
+| Action | Command payload after function `0x0020` |
+|---|---|
+| Take photo | `01` |
+| Start video | `00 01` |
+| Stop video | `00 00` |
+
+Gallery metadata and download details confirmed from `RemoteFileThumbLoader`, `RemoteFileDownloader` and `DownloadData`:
+
+- `0x20` request: command byte followed by ASCII JSON `{"filelist":[...]}`; response JSON field `file_info` provides `file`, `len`, `lrv_len`, and `createtime`.
+- `0x1B` request: command byte + offset `uint64 LE` + requested length `uint64 LE` + filename; PotensicPro requests up to `102400` bytes per unit.
+- `0x1B` RX normal block after command/status: flag + offset `uint64 LE` + payload length `uint16 LE` + payload.
+- `0x1B` RX final block (flag `2`): flag + 32-byte final-block area + offset `uint64 LE` + payload length `uint16 LE` + payload.
+- PotensicPro retries after a 1-second unit timeout from the current local file offset and sends `0x1E` when the overall download timeout expires.
 
 | Cmd | Direction | Description |
 |-----|-----------|-------------|

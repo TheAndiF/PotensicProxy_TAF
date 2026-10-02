@@ -248,7 +248,7 @@ function formatSize(bytes: number) {
 }
 function formatDate(value: number) { return value ? new Date(value).toLocaleString() : '—' }
 function formatRemoteTimestamp(file: CameraMediaFile) {
-  return file.timestamp ? new Date(file.timestamp).toLocaleString() : 'Kein Zeitstempel im Dateinamen'
+  return file.timestamp ? `${new Date(file.timestamp).toLocaleString()}${file.timestampSource === 'camera' ? ' · Kamera' : ' · Dateiname'}` : 'Zeitstempel nicht verfügbar'
 }
 function onAndroidMediaSaved(event: Event) {
   const saved = (event as CustomEvent<AndroidStoredImage>).detail
