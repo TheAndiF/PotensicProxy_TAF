@@ -468,32 +468,34 @@ class WebServer(
 
                 // Flight commands
                 post("/api/cmd/takeoff") {
-                    // Send multiple times like official app (hold button behavior)
-                    CoroutineScope(Dispatchers.IO).launch {
-                        repeat(20) {
-                            (ProxyService.instance ?: return@launch).sendDirectAny(PotensicProtocol.buildTakeoff())
-                            kotlinx.coroutines.delay(50)
-                        }
-                    }
-                    call.respondText("""{"cmd":"takeoff","repeats":20}""", ContentType.Application.Json)
+                    val packet = PotensicProtocol.buildTakeoff()
+                    Log.i("[Flight TX] Takeoff FE=0x14 function=0x0014 payloadLen=32 frame=${PotensicProtocol.bytesToHex(packet)}")
+                    ProxyService.instance?.sendDirectAny(packet)
+                    call.respondText("""{"cmd":"takeoff","repeats":1}""", ContentType.Application.Json)
                 }
                 post("/api/cmd/land") {
-                    CoroutineScope(Dispatchers.IO).launch {
-                        repeat(20) {
-                            (ProxyService.instance ?: return@launch).sendDirectAny(PotensicProtocol.buildLand())
-                            kotlinx.coroutines.delay(50)
-                        }
-                    }
-                    call.respondText("""{"cmd":"land","repeats":20}""", ContentType.Application.Json)
+                    val packet = PotensicProtocol.buildLand()
+                    Log.i("[Flight TX] Land FE=0x14 function=0x0014 payloadLen=32 frame=${PotensicProtocol.bytesToHex(packet)}")
+                    ProxyService.instance?.sendDirectAny(packet)
+                    call.respondText("""{"cmd":"land","repeats":1}""", ContentType.Application.Json)
+                }
+                post("/api/cmd/cancel-land") {
+                    val packet = PotensicProtocol.buildCancelLand()
+                    Log.i("[Flight TX] Cancel Land FE=0x14 function=0x0014 payloadLen=32 frame=${PotensicProtocol.bytesToHex(packet)}")
+                    ProxyService.instance?.sendDirectAny(packet)
+                    call.respondText("""{"cmd":"cancel-land","repeats":1}""", ContentType.Application.Json)
                 }
                 post("/api/cmd/rth") {
-                    CoroutineScope(Dispatchers.IO).launch {
-                        repeat(20) {
-                            (ProxyService.instance ?: return@launch).sendDirectAny(PotensicProtocol.buildRTH())
-                            kotlinx.coroutines.delay(50)
-                        }
-                    }
-                    call.respondText("""{"cmd":"rth","repeats":20}""", ContentType.Application.Json)
+                    val packet = PotensicProtocol.buildRTH()
+                    Log.i("[Flight TX] RTH FE=0x14 function=0x0014 payloadLen=32 frame=${PotensicProtocol.bytesToHex(packet)}")
+                    ProxyService.instance?.sendDirectAny(packet)
+                    call.respondText("""{"cmd":"rth","repeats":1}""", ContentType.Application.Json)
+                }
+                post("/api/cmd/cancel-auto-fly") {
+                    val packet = PotensicProtocol.buildCancelAutoFly()
+                    Log.i("[Flight TX] Cancel Auto Fly FE=0x14 function=0x0014 payloadLen=32 frame=${PotensicProtocol.bytesToHex(packet)}")
+                    ProxyService.instance?.sendDirectAny(packet)
+                    call.respondText("""{"cmd":"cancel-auto-fly","repeats":1}""", ContentType.Application.Json)
                 }
                 post("/api/cmd/emergency") {
                     // Emergency: send immediately and repeatedly

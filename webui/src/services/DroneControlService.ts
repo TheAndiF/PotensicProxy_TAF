@@ -26,32 +26,48 @@ export class DroneControlService {
 
   // === Flight Actions ===
 
-  static takeoff() {
+  private static logCtrlAction(action: string, packet: Uint8Array) {
     const store = useDroneStore()
-    store.addLog('INFO', 'Send takeoff command (repeat 20 times)')
+    const feType = packet.length > 7 ? packet[7] : -1
+    const functionId = packet.length > 21 ? (packet[20] | (packet[21] << 8)) : -1
+    // New-FC FF-FD frame starts at FE payload +0; its application payload begins at +6.
+    const ctrlPayload = packet.length >= 54 ? packet.slice(22, 54) : new Uint8Array(0)
+    store.addLog(
+      'INFO',
+      `[Flight TX] action=${action} FE=0x${feType.toString(16).padStart(2, '0')} ` +
+      `function=0x${functionId.toString(16).padStart(4, '0')} payloadLen=${ctrlPayload.length} ` +
+      `payload=${ByteUtils.bytesToHex(ctrlPayload)} frame=${ByteUtils.bytesToHex(packet)}`
+    )
+  }
+
+  static takeoff() {
     const packet = PacketBuilder.buildTakeoff()
-    this.sendPacketWithRepeats(packet, 20, 50)
+    this.logCtrlAction('Takeoff', packet)
+    this.transport.send(packet)
   }
 
   static land() {
-    const store = useDroneStore()
-    store.addLog('INFO', 'Send landing command (repeat 20 times)')
     const packet = PacketBuilder.buildLand()
-    this.sendPacketWithRepeats(packet, 20, 50)
+    this.logCtrlAction('Land', packet)
+    this.transport.send(packet)
+  }
+
+  static cancelLand() {
+    const packet = PacketBuilder.buildCancelLand()
+    this.logCtrlAction('Cancel Land', packet)
+    this.transport.send(packet)
   }
 
   static rth() {
-    const store = useDroneStore()
-    store.addLog('INFO', 'Send RTH command (repeat 20 times)')
     const packet = PacketBuilder.buildRTH()
-    this.sendPacketWithRepeats(packet, 20, 50)
+    this.logCtrlAction('RTH', packet)
+    this.transport.send(packet)
   }
 
   static cancelRth() {
-    const store = useDroneStore()
-    store.addLog('INFO', 'Cancel RTH')
     const packet = PacketBuilder.buildCancelRTH()
-    this.sendPacketWithRepeats(packet, 5, 50)
+    this.logCtrlAction('Cancel Auto Fly', packet)
+    this.transport.send(packet)
   }
 
   static emergencyStop() {

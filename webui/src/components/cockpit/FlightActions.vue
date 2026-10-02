@@ -2,9 +2,9 @@
   <div class="actions-container">
     <div class="panel-title">✈️ {{ t('actions.flight') }}</div>
     <div class="btn-grid">
-      <button class="taf-btn taf-btn--success" @click="DroneControlService.takeoff()">🛫 {{ t('actions.takeoff') }}</button>
-      <button class="taf-btn" @click="DroneControlService.land()">🛬 {{ t('actions.land') }}</button>
-      <button class="taf-btn" @click="DroneControlService.rth()">🏠 {{ t('actions.rth') }}</button>
+      <button class="taf-btn taf-btn--success" :disabled="telemetry.flying || telemetry.takingOff" @click="confirmTakeoff">🛫 {{ t('actions.takeoff') }}</button>
+      <button class="taf-btn" :class="{ 'taf-btn--danger': telemetry.landing }" :disabled="!telemetry.flying && !telemetry.landing" @click="landOrCancel">🛬 {{ telemetry.landing ? t('actions.cancelLand') : t('actions.land') }}</button>
+      <button class="taf-btn" :disabled="!telemetry.flying" @click="DroneControlService.rth()">🏠 {{ t('actions.rth') }}</button>
       <button class="taf-btn taf-btn--danger" @click="DroneControlService.emergencyStop()">⛔ {{ t('actions.emergency') }}</button>
     </div>
 
@@ -20,8 +20,19 @@
 
 <script setup lang="ts">
 import { DroneControlService } from '../../services/DroneControlService'
+import { useDroneStore } from '../../stores/useDroneStore'
 import { useI18n } from '../../i18n'
 const { t } = useI18n()
+const { telemetry } = useDroneStore()
+
+function confirmTakeoff() {
+  if (window.confirm(t('actions.takeoffConfirm'))) DroneControlService.takeoff()
+}
+
+function landOrCancel() {
+  if (telemetry.landing) DroneControlService.cancelLand()
+  else DroneControlService.land()
+}
 </script>
 
 <style scoped>

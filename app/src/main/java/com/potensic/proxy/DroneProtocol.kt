@@ -79,28 +79,38 @@ object DroneProtocol {
         return wrapFE(buildInnerCommand(0xD7.toByte(), deviceHash), 0x15)
     }
 
-    // === Flight commands (reversed from np1.java / mp1.java enum) ===
-    // Inner short: 0x0301, FE type: 0x14
-    // Format: FF FD [len] [01 03] [group] [subcmd] [xor_checksum]
-    // mp1 enum: TAKEOFF=group 0x01, LAND=group 0x02, RETURN=group 0x03
-    // subcmd: 0x01=execute, 0x00=cancel
+    // === Flight actions ===
+    // PotensicPro SendCtrlData: function 0x0014 over APP_TO_FLIGHT / FE type 0x14.
+    // Payload is always 32 bytes. Only command (+2, uint16 LE) and
+    // result_param2 (+20, int32 LE) are populated; all other bytes remain zero.
 
-    /** Takeoff */
-    fun buildTakeoff(): ByteArray = buildFlightCommand(0x01, 0x01)
-
-    /** Land */
-    fun buildLand(): ByteArray = buildFlightCommand(0x02, 0x01)
-
-    /** Return to home */
-    fun buildRTH(): ByteArray = buildFlightCommand(0x03, 0x01)
-
-    /** Cancel RTH */
-    fun buildCancelRTH(): ByteArray = buildFlightCommand(0x03, 0x00)
-
-    /** Emergency stop — cancel all */
-    fun buildEmergencyStop(): ByteArray {
-        return buildFlightCommand(0x01, 0x00)
+    fun buildCtrlType(command: Int, resultParam2: Int = 0): ByteArray {
+        val data = ByteArray(32)
+        writeShortLE(data, 2, command)
+        writeIntLE(data, 20, resultParam2)
+        return wrapFE(buildInnerCommandWithShort(0x0014, data), 0x14)
     }
+
+    /** PotensicPro TYPE_TAKE_OFF: command=3, result_param2=0. */
+    fun buildTakeoff(): ByteArray = buildCtrlType(3, 0)
+
+    /** PotensicPro TYPE_LAND: command=4, result_param2=0x55. */
+    fun buildLand(): ByteArray = buildCtrlType(4, 0x55)
+
+    /** PotensicPro TYPE_CANCEL_LAND: command=4, result_param2=0xAA. */
+    fun buildCancelLand(): ByteArray = buildCtrlType(4, 0xAA)
+
+    /** PotensicPro TYPE_RETURN: command=8, result_param2=0. */
+    fun buildRTH(): ByteArray = buildCtrlType(8, 0)
+
+    /** PotensicPro TYPE_CANCEL_AUTO_FLY: command=99, result_param2=0. */
+    fun buildCancelAutoFly(): ByteArray = buildCtrlType(99, 0)
+
+    /** Cancel RTH uses the app's generic automatic-flight cancellation. */
+    fun buildCancelRTH(): ByteArray = buildCancelAutoFly()
+
+    /** Emergency stop remains on the legacy path; no SendCtrlData mapping is documented for it. */
+    fun buildEmergencyStop(): ByteArray = buildFlightCommand(0x01, 0x00)
 
     /**
      * Build a flight command with short 0x0301.

@@ -1,0 +1,27 @@
+BL_Use SendCtrlData for takeoff landing and RTH
+Date: 2026-10-02
+Summary:
+- Replaced the legacy 0x0301 takeoff, landing and RTH path with PotensicPro SendCtrlData function 0x0014.
+- Added Cancel Land and Cancel Auto Fly builders.
+- Removed the unsupported 20x/50 ms repetition for SendCtrlData flight actions.
+- Added state-aware takeoff confirmation and landing cancellation UI behavior.
+- Added pre-send engineering logging for action, FE type, function ID, payload and full frame.
+- Updated the protocol reference and project documentation.
+
+Changed files:
+- app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+- app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- webui/src/protocol/PacketBuilder.ts
+- webui/src/services/DroneControlService.ts
+- webui/src/components/cockpit/FlightActions.vue
+- webui/src/i18n/index.ts
+- webui/src/types/packet.ts
+- PROTOCOL.md
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Start-und-Landung-SendCtrlData - v1.0.docx
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Start-und-Landung-SendCtrlData - v1.0.pdf
+- DOCUMENTATION/2026-10-02 - Potensic_Atom_2 - Protokollreferenz - Start-Landung-SendCtrlData - v0.7.docx
+- DOCUMENTATION/2026-10-02 - Potensic_Atom_2 - Protokollreferenz - Start-Landung-SendCtrlData - v0.7.pdf
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_START_LANDUNG_v1.0.md
+- COMMIT_MESSAGE_START_LANDING_SENDCTRLDATA_2026-10-02.txt
+- PATCH_START_LANDING_SENDCTRLDATA_2026-10-02.patch

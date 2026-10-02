@@ -26,19 +26,23 @@ export class PacketBuilder {
   }
 
   static buildTakeoff(): Uint8Array {
-    return this.buildFlightCommand(0x01, 0x01)
+    return this.buildCtrlType(3, 0)
   }
 
   static buildLand(): Uint8Array {
-    return this.buildFlightCommand(0x02, 0x01)
+    return this.buildCtrlType(4, 0x55)
+  }
+
+  static buildCancelLand(): Uint8Array {
+    return this.buildCtrlType(4, 0xaa)
   }
 
   static buildRTH(): Uint8Array {
-    return this.buildFlightCommand(0x03, 0x01)
+    return this.buildCtrlType(8, 0)
   }
 
   static buildCancelRTH(): Uint8Array {
-    return this.buildFlightCommand(0x03, 0x00)
+    return this.buildCancelAutoFly()
   }
 
   static buildEmergencyStop(): Uint8Array {

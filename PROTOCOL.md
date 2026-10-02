@@ -253,31 +253,31 @@ Contains real-time frequency, MCS, SNR, and noise floor per antenna channel.
 
 ## Flight Commands (TX)
 
-All flight commands use **short 0x0301**, **FE type 0x14**.
+### App-confirmed flight actions: SendCtrlData / function 0x0014
 
-### Command format (np1.java)
+Takeoff, landing, cancel landing, Return-to-Home and cancel automatic flight use PotensicPro `SendCtrlData` on **FE type 0x14 (APP_TO_FLIGHT)**. The application payload is always 32 bytes. Only `command` and `result_param2` are written; all other payload bytes remain zero.
 
-```
-FF FD [len_LE] [01 03] [04] [seq_lo] [seq_hi] [group] [subcmd] [xor]
-                        ^^^
-                        cmd byte (np1 registered as byte 4 in cr1.java)
-```
+| Payload offset | Length | Encoding | Meaning |
+|---:|---:|---|---|
+| +0..+1 | 2 | `00 00` | reserved / zero |
+| +2..+3 | 2 | uint16 LE | `command` |
+| +4..+19 | 16 | `00` | reserved / zero |
+| +20..+23 | 4 | int32 LE | `result_param2` |
+| +24..+31 | 8 | `00` | reserved / zero |
 
-Sequence counter starts at 125, increments per call (fk5.java).
+| Action | Function | command | result_param2 | TAF builder |
+|---|---:|---:|---:|---|
+| Takeoff | 0x0014 | 3 | 0 | `buildTakeoff()` |
+| Land | 0x0014 | 4 | 0x55 | `buildLand()` |
+| Cancel Land | 0x0014 | 4 | 0xAA | `buildCancelLand()` |
+| RTH | 0x0014 | 8 | 0 | `buildRTH()` |
+| Cancel Auto Fly | 0x0014 | 99 | 0 | `buildCancelAutoFly()` |
 
-### Commands (mp1.java enum)
+The inner FF-FD frame continues to use the normal New-FC 16-bit function field and is transported in the existing 16-byte FE wrapper with **FE type 0x14**. `SendReplyTakeoff` function `0x0015` is a different reply frame. Its documented 5x/50-ms send sequence must not be transferred to `SendCtrlData` takeoff. TAF therefore sends the above `0x0014` actions once per confirmed UI action and does not apply the former 20x/50-ms repetition.
 
-| Command | Group | Subcmd | Description |
-|---------|-------|--------|-------------|
-| TAKEOFF | 0x01 | 0x01 | Auto takeoff (hover at ~1.2m) |
-| CANCEL_TAKEOFF | 0x01 | 0x00 | Cancel takeoff |
-| LAND | 0x02 | 0x01 | Auto land |
-| CANCEL_LAND | 0x02 | 0x00 | Cancel landing |
-| RETURN | 0x03 | 0x01 | Return to home |
-| CANCEL_RETURN | 0x03 | 0x00 | Cancel RTH |
-| WAYPOINT | 0x04 | 0x01 | Start waypoint mission |
+### Legacy 0x0301 path
 
-**Important:** Commands must be sent **repeatedly** (20x at 50ms intervals) to simulate button hold, as the official app does.
+The older TAF `buildFlightCommand(group, subcmd)` / short `0x0301` path remains only for functions for which no replacement is documented (currently the emergency-stop implementation). It is **not** used for Takeoff, Land, Cancel Land or RTH.
 
 ---
 

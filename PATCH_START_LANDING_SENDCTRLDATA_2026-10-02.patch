@@ -1,0 +1,368 @@
+diff --git a/PROTOCOL.md b/PROTOCOL.md
+index 2e2b845..bc89bb9 100644
+--- a/PROTOCOL.md
++++ b/PROTOCOL.md
+@@ -253,31 +253,31 @@ Contains real-time frequency, MCS, SNR, and noise floor per antenna channel.
+ 
+ ## Flight Commands (TX)
+ 
+-All flight commands use **short 0x0301**, **FE type 0x14**.
++### App-confirmed flight actions: SendCtrlData / function 0x0014
+ 
+-### Command format (np1.java)
++Takeoff, landing, cancel landing, Return-to-Home and cancel automatic flight use PotensicPro `SendCtrlData` on **FE type 0x14 (APP_TO_FLIGHT)**. The application payload is always 32 bytes. Only `command` and `result_param2` are written; all other payload bytes remain zero.
+ 
+-```
+-FF FD [len_LE] [01 03] [04] [seq_lo] [seq_hi] [group] [subcmd] [xor]
+-                        ^^^
+-                        cmd byte (np1 registered as byte 4 in cr1.java)
+-```
++| Payload offset | Length | Encoding | Meaning |
++|---:|---:|---|---|
++| +0..+1 | 2 | `00 00` | reserved / zero |
++| +2..+3 | 2 | uint16 LE | `command` |
++| +4..+19 | 16 | `00` | reserved / zero |
++| +20..+23 | 4 | int32 LE | `result_param2` |
++| +24..+31 | 8 | `00` | reserved / zero |
+ 
+-Sequence counter starts at 125, increments per call (fk5.java).
++| Action | Function | command | result_param2 | TAF builder |
++|---|---:|---:|---:|---|
++| Takeoff | 0x0014 | 3 | 0 | `buildTakeoff()` |
++| Land | 0x0014 | 4 | 0x55 | `buildLand()` |
++| Cancel Land | 0x0014 | 4 | 0xAA | `buildCancelLand()` |
++| RTH | 0x0014 | 8 | 0 | `buildRTH()` |
++| Cancel Auto Fly | 0x0014 | 99 | 0 | `buildCancelAutoFly()` |
+ 
+-### Commands (mp1.java enum)
++The inner FF-FD frame continues to use the normal New-FC 16-bit function field and is transported in the existing 16-byte FE wrapper with **FE type 0x14**. `SendReplyTakeoff` function `0x0015` is a different reply frame. Its documented 5x/50-ms send sequence must not be transferred to `SendCtrlData` takeoff. TAF therefore sends the above `0x0014` actions once per confirmed UI action and does not apply the former 20x/50-ms repetition.
+ 
+-| Command | Group | Subcmd | Description |
+-|---------|-------|--------|-------------|
+-| TAKEOFF | 0x01 | 0x01 | Auto takeoff (hover at ~1.2m) |
+-| CANCEL_TAKEOFF | 0x01 | 0x00 | Cancel takeoff |
+-| LAND | 0x02 | 0x01 | Auto land |
+-| CANCEL_LAND | 0x02 | 0x00 | Cancel landing |
+-| RETURN | 0x03 | 0x01 | Return to home |
+-| CANCEL_RETURN | 0x03 | 0x00 | Cancel RTH |
+-| WAYPOINT | 0x04 | 0x01 | Start waypoint mission |
++### Legacy 0x0301 path
+ 
+-**Important:** Commands must be sent **repeatedly** (20x at 50ms intervals) to simulate button hold, as the official app does.
++The older TAF `buildFlightCommand(group, subcmd)` / short `0x0301` path remains only for functions for which no replacement is documented (currently the emergency-stop implementation). It is **not** used for Takeoff, Land, Cancel Land or RTH.
+ 
+ ---
+ 
+diff --git a/app/src/main/java/com/potensic/proxy/DroneProtocol.kt b/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+index 71e8870..cd2d517 100644
+--- a/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
++++ b/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+@@ -79,28 +79,38 @@ object DroneProtocol {
+         return wrapFE(buildInnerCommand(0xD7.toByte(), deviceHash), 0x15)
+     }
+ 
+-    // === Flight commands (reversed from np1.java / mp1.java enum) ===
+-    // Inner short: 0x0301, FE type: 0x14
+-    // Format: FF FD [len] [01 03] [group] [subcmd] [xor_checksum]
+-    // mp1 enum: TAKEOFF=group 0x01, LAND=group 0x02, RETURN=group 0x03
+-    // subcmd: 0x01=execute, 0x00=cancel
++    // === Flight actions ===
++    // PotensicPro SendCtrlData: function 0x0014 over APP_TO_FLIGHT / FE type 0x14.
++    // Payload is always 32 bytes. Only command (+2, uint16 LE) and
++    // result_param2 (+20, int32 LE) are populated; all other bytes remain zero.
++
++    fun buildCtrlType(command: Int, resultParam2: Int = 0): ByteArray {
++        val data = ByteArray(32)
++        writeShortLE(data, 2, command)
++        writeIntLE(data, 20, resultParam2)
++        return wrapFE(buildInnerCommandWithShort(0x0014, data), 0x14)
++    }
+ 
+-    /** Takeoff */
+-    fun buildTakeoff(): ByteArray = buildFlightCommand(0x01, 0x01)
++    /** PotensicPro TYPE_TAKE_OFF: command=3, result_param2=0. */
++    fun buildTakeoff(): ByteArray = buildCtrlType(3, 0)
+ 
+-    /** Land */
+-    fun buildLand(): ByteArray = buildFlightCommand(0x02, 0x01)
++    /** PotensicPro TYPE_LAND: command=4, result_param2=0x55. */
++    fun buildLand(): ByteArray = buildCtrlType(4, 0x55)
+ 
+-    /** Return to home */
+-    fun buildRTH(): ByteArray = buildFlightCommand(0x03, 0x01)
++    /** PotensicPro TYPE_CANCEL_LAND: command=4, result_param2=0xAA. */
++    fun buildCancelLand(): ByteArray = buildCtrlType(4, 0xAA)
+ 
+-    /** Cancel RTH */
+-    fun buildCancelRTH(): ByteArray = buildFlightCommand(0x03, 0x00)
++    /** PotensicPro TYPE_RETURN: command=8, result_param2=0. */
++    fun buildRTH(): ByteArray = buildCtrlType(8, 0)
+ 
+-    /** Emergency stop — cancel all */
+-    fun buildEmergencyStop(): ByteArray {
+-        return buildFlightCommand(0x01, 0x00)
+-    }
++    /** PotensicPro TYPE_CANCEL_AUTO_FLY: command=99, result_param2=0. */
++    fun buildCancelAutoFly(): ByteArray = buildCtrlType(99, 0)
++
++    /** Cancel RTH uses the app's generic automatic-flight cancellation. */
++    fun buildCancelRTH(): ByteArray = buildCancelAutoFly()
++
++    /** Emergency stop remains on the legacy path; no SendCtrlData mapping is documented for it. */
++    fun buildEmergencyStop(): ByteArray = buildFlightCommand(0x01, 0x00)
+ 
+     /**
+      * Build a flight command with short 0x0301.
+diff --git a/app/src/main/java/com/potensic/proxy/WebServer.kt b/app/src/main/java/com/potensic/proxy/WebServer.kt
+index 9a63fe7..25b161b 100644
+--- a/app/src/main/java/com/potensic/proxy/WebServer.kt
++++ b/app/src/main/java/com/potensic/proxy/WebServer.kt
+@@ -468,32 +468,34 @@ class WebServer(
+ 
+                 // Flight commands
+                 post("/api/cmd/takeoff") {
+-                    // Send multiple times like official app (hold button behavior)
+-                    CoroutineScope(Dispatchers.IO).launch {
+-                        repeat(20) {
+-                            (ProxyService.instance ?: return@launch).sendDirectAny(PotensicProtocol.buildTakeoff())
+-                            kotlinx.coroutines.delay(50)
+-                        }
+-                    }
+-                    call.respondText("""{"cmd":"takeoff","repeats":20}""", ContentType.Application.Json)
++                    val packet = PotensicProtocol.buildTakeoff()
++                    Log.i("[Flight TX] Takeoff FE=0x14 function=0x0014 payloadLen=32 frame=${PotensicProtocol.bytesToHex(packet)}")
++                    ProxyService.instance?.sendDirectAny(packet)
++                    call.respondText("""{"cmd":"takeoff","repeats":1}""", ContentType.Application.Json)
+                 }
+                 post("/api/cmd/land") {
+-                    CoroutineScope(Dispatchers.IO).launch {
+-                        repeat(20) {
+-                            (ProxyService.instance ?: return@launch).sendDirectAny(PotensicProtocol.buildLand())
+-                            kotlinx.coroutines.delay(50)
+-                        }
+-                    }
+-                    call.respondText("""{"cmd":"land","repeats":20}""", ContentType.Application.Json)
++                    val packet = PotensicProtocol.buildLand()
++                    Log.i("[Flight TX] Land FE=0x14 function=0x0014 payloadLen=32 frame=${PotensicProtocol.bytesToHex(packet)}")
++                    ProxyService.instance?.sendDirectAny(packet)
++                    call.respondText("""{"cmd":"land","repeats":1}""", ContentType.Application.Json)
++                }
++                post("/api/cmd/cancel-land") {
++                    val packet = PotensicProtocol.buildCancelLand()
++                    Log.i("[Flight TX] Cancel Land FE=0x14 function=0x0014 payloadLen=32 frame=${PotensicProtocol.bytesToHex(packet)}")
++                    ProxyService.instance?.sendDirectAny(packet)
++                    call.respondText("""{"cmd":"cancel-land","repeats":1}""", ContentType.Application.Json)
+                 }
+                 post("/api/cmd/rth") {
+-                    CoroutineScope(Dispatchers.IO).launch {
+-                        repeat(20) {
+-                            (ProxyService.instance ?: return@launch).sendDirectAny(PotensicProtocol.buildRTH())
+-                            kotlinx.coroutines.delay(50)
+-                        }
+-                    }
+-                    call.respondText("""{"cmd":"rth","repeats":20}""", ContentType.Application.Json)
++                    val packet = PotensicProtocol.buildRTH()
++                    Log.i("[Flight TX] RTH FE=0x14 function=0x0014 payloadLen=32 frame=${PotensicProtocol.bytesToHex(packet)}")
++                    ProxyService.instance?.sendDirectAny(packet)
++                    call.respondText("""{"cmd":"rth","repeats":1}""", ContentType.Application.Json)
++                }
++                post("/api/cmd/cancel-auto-fly") {
++                    val packet = PotensicProtocol.buildCancelAutoFly()
++                    Log.i("[Flight TX] Cancel Auto Fly FE=0x14 function=0x0014 payloadLen=32 frame=${PotensicProtocol.bytesToHex(packet)}")
++                    ProxyService.instance?.sendDirectAny(packet)
++                    call.respondText("""{"cmd":"cancel-auto-fly","repeats":1}""", ContentType.Application.Json)
+                 }
+                 post("/api/cmd/emergency") {
+                     // Emergency: send immediately and repeatedly
+diff --git a/app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt b/app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt
+index a5e85da..cf9afdf 100644
+--- a/app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt
++++ b/app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt
+@@ -16,7 +16,9 @@ object PotensicProtocol {
+     fun buildIDRRequestD7(deviceHash: ByteArray) = DroneProtocol.buildIDRRequestD7(deviceHash)
+     fun buildTakeoff() = DroneProtocol.buildTakeoff()
+     fun buildLand() = DroneProtocol.buildLand()
++    fun buildCancelLand() = DroneProtocol.buildCancelLand()
+     fun buildRTH() = DroneProtocol.buildRTH()
++    fun buildCancelAutoFly() = DroneProtocol.buildCancelAutoFly()
+     fun buildEmergencyStop() = DroneProtocol.buildEmergencyStop()
+     fun buildTakePhoto() = DroneProtocol.buildTakePhoto()
+     fun buildToggleRecord() = DroneProtocol.buildToggleRecord()
+diff --git a/webui/src/components/cockpit/FlightActions.vue b/webui/src/components/cockpit/FlightActions.vue
+index b55fd45..1a5811d 100644
+--- a/webui/src/components/cockpit/FlightActions.vue
++++ b/webui/src/components/cockpit/FlightActions.vue
+@@ -2,9 +2,9 @@
+   <div class="actions-container">
+     <div class="panel-title">✈️ {{ t('actions.flight') }}</div>
+     <div class="btn-grid">
+-      <button class="taf-btn taf-btn--success" @click="DroneControlService.takeoff()">🛫 {{ t('actions.takeoff') }}</button>
+-      <button class="taf-btn" @click="DroneControlService.land()">🛬 {{ t('actions.land') }}</button>
+-      <button class="taf-btn" @click="DroneControlService.rth()">🏠 {{ t('actions.rth') }}</button>
++      <button class="taf-btn taf-btn--success" :disabled="telemetry.flying || telemetry.takingOff" @click="confirmTakeoff">🛫 {{ t('actions.takeoff') }}</button>
++      <button class="taf-btn" :class="{ 'taf-btn--danger': telemetry.landing }" :disabled="!telemetry.flying && !telemetry.landing" @click="landOrCancel">🛬 {{ telemetry.landing ? t('actions.cancelLand') : t('actions.land') }}</button>
++      <button class="taf-btn" :disabled="!telemetry.flying" @click="DroneControlService.rth()">🏠 {{ t('actions.rth') }}</button>
+       <button class="taf-btn taf-btn--danger" @click="DroneControlService.emergencyStop()">⛔ {{ t('actions.emergency') }}</button>
+     </div>
+ 
+@@ -20,8 +20,19 @@
+ 
+ <script setup lang="ts">
+ import { DroneControlService } from '../../services/DroneControlService'
++import { useDroneStore } from '../../stores/useDroneStore'
+ import { useI18n } from '../../i18n'
+ const { t } = useI18n()
++const { telemetry } = useDroneStore()
++
++function confirmTakeoff() {
++  if (window.confirm(t('actions.takeoffConfirm'))) DroneControlService.takeoff()
++}
++
++function landOrCancel() {
++  if (telemetry.landing) DroneControlService.cancelLand()
++  else DroneControlService.land()
++}
+ </script>
+ 
+ <style scoped>
+diff --git a/webui/src/i18n/index.ts b/webui/src/i18n/index.ts
+index 90e27d9..7952d06 100644
+--- a/webui/src/i18n/index.ts
++++ b/webui/src/i18n/index.ts
+@@ -32,7 +32,7 @@ const messages: Record<EffectiveLocale, Record<string, string>> = {
+     'telemetry.verticalSpeed': 'Vertical Speed', 'telemetry.horizontalDistance': 'Horizontal Distance', 'telemetry.satellites': 'Satellites',
+     'telemetry.heading': 'Heading', 'telemetry.pitch': 'Pitch', 'telemetry.roll': 'Roll', 'telemetry.controllerVoltage': 'Controller Voltage',
+     'telemetry.phoneBattery': 'Phone', 'telemetry.controllerBattery': 'Controller', 'telemetry.droneBattery': 'Drone',
+-    'actions.flight': 'Flight Actions', 'actions.takeoff': 'Takeoff', 'actions.land': 'Land', 'actions.rth': 'RTH',
++    'actions.flight': 'Flight Actions', 'actions.takeoff': 'Takeoff', 'actions.takeoffConfirm': 'Confirm takeoff?', 'actions.land': 'Land', 'actions.cancelLand': 'Cancel landing', 'actions.rth': 'RTH',
+     'actions.emergency': 'Emergency Stop', 'actions.camera': 'Camera & Video Control', 'actions.photo': 'Photo', 'actions.snapshotAndroid': 'Live Reco capture',
+     'actions.record': 'Record Toggle', 'actions.keyframe': 'Request Keyframe (IDR)', 'actions.liveview': 'Initialize LiveView Parameters',
+     'video.waitingTitle': 'Waiting for drone video stream',
+@@ -64,7 +64,7 @@ const messages: Record<EffectiveLocale, Record<string, string>> = {
+     'telemetry.verticalSpeed': 'Vertikale Geschwindigkeit', 'telemetry.horizontalDistance': 'Horizontale Entfernung', 'telemetry.satellites': 'Satelliten',
+     'telemetry.heading': 'Kurs', 'telemetry.pitch': 'Nick', 'telemetry.roll': 'Roll', 'telemetry.controllerVoltage': 'Controller-Spannung',
+     'telemetry.phoneBattery': 'Handy', 'telemetry.controllerBattery': 'FB', 'telemetry.droneBattery': 'Drohne',
+-    'actions.flight': 'Flugaktionen', 'actions.takeoff': 'Start', 'actions.land': 'Landung', 'actions.rth': 'RTH',
++    'actions.flight': 'Flugaktionen', 'actions.takeoff': 'Start', 'actions.takeoffConfirm': 'Start wirklich ausloesen?', 'actions.land': 'Landung', 'actions.cancelLand': 'Landung abbrechen', 'actions.rth': 'RTH',
+     'actions.emergency': 'Not-Aus', 'actions.camera': 'Kamera & Video', 'actions.photo': 'Foto', 'actions.snapshotAndroid': 'Live Reco aufnehmen',
+     'actions.record': 'Aufnahme umschalten', 'actions.keyframe': 'Schlüsselbild anfordern (IDR)', 'actions.liveview': 'LiveView-Parameter initialisieren',
+     'video.waitingTitle': 'Warte auf Drohnen-Videostream',
+@@ -93,7 +93,7 @@ const messages: Record<EffectiveLocale, Record<string, string>> = {
+     'telemetry.battery': '电量', 'telemetry.altitude': '高度', 'telemetry.horizontalSpeed': '水平速度', 'telemetry.verticalSpeed': '垂直速度',
+     'telemetry.horizontalDistance': '水平距离', 'telemetry.satellites': '卫星', 'telemetry.heading': '航向', 'telemetry.pitch': '俯仰',
+     'telemetry.roll': '横滚', 'telemetry.controllerVoltage': '遥控器电压', 'telemetry.phoneBattery': '手机', 'telemetry.controllerBattery': '遥控器', 'telemetry.droneBattery': '无人机',
+-    'actions.flight': '飞行动作', 'actions.takeoff': '起飞', 'actions.land': '降落', 'actions.rth': '返航', 'actions.emergency': '紧急停止',
++    'actions.flight': '飞行动作', 'actions.takeoff': '起飞', 'actions.takeoffConfirm': '确认起飞？', 'actions.land': '降落', 'actions.cancelLand': '取消降落', 'actions.rth': '返航', 'actions.emergency': '紧急停止',
+     'actions.camera': '相机与视频控制', 'actions.photo': '拍照', 'actions.snapshotAndroid': '保存 Live Reco 图像', 'actions.record': '录像切换', 'actions.keyframe': '请求关键帧 (IDR)',
+     'actions.liveview': '初始化 LiveView 参数',
+     'video.waitingTitle': '等待无人机视频流', 'video.waitingDesc': '当前使用前端 USB 直通模式。如果飞行器已开机并完成配对，请激活视频流以发送初始化序列。',
+diff --git a/webui/src/protocol/PacketBuilder.ts b/webui/src/protocol/PacketBuilder.ts
+index f587e39..9411930 100644
+--- a/webui/src/protocol/PacketBuilder.ts
++++ b/webui/src/protocol/PacketBuilder.ts
+@@ -26,19 +26,23 @@ export class PacketBuilder {
+   }
+ 
+   static buildTakeoff(): Uint8Array {
+-    return this.buildFlightCommand(0x01, 0x01)
++    return this.buildCtrlType(3, 0)
+   }
+ 
+   static buildLand(): Uint8Array {
+-    return this.buildFlightCommand(0x02, 0x01)
++    return this.buildCtrlType(4, 0x55)
++  }
++
++  static buildCancelLand(): Uint8Array {
++    return this.buildCtrlType(4, 0xaa)
+   }
+ 
+   static buildRTH(): Uint8Array {
+-    return this.buildFlightCommand(0x03, 0x01)
++    return this.buildCtrlType(8, 0)
+   }
+ 
+   static buildCancelRTH(): Uint8Array {
+-    return this.buildFlightCommand(0x03, 0x00)
++    return this.buildCancelAutoFly()
+   }
+ 
+   static buildEmergencyStop(): Uint8Array {
+diff --git a/webui/src/services/DroneControlService.ts b/webui/src/services/DroneControlService.ts
+index 3ab743c..cb27144 100644
+--- a/webui/src/services/DroneControlService.ts
++++ b/webui/src/services/DroneControlService.ts
+@@ -26,32 +26,48 @@ export class DroneControlService {
+ 
+   // === Flight Actions ===
+ 
++  private static logCtrlAction(action: string, packet: Uint8Array) {
++    const store = useDroneStore()
++    const feType = packet.length > 7 ? packet[7] : -1
++    const functionId = packet.length > 21 ? (packet[20] | (packet[21] << 8)) : -1
++    // New-FC FF-FD frame starts at FE payload +0; its application payload begins at +6.
++    const ctrlPayload = packet.length >= 54 ? packet.slice(22, 54) : new Uint8Array(0)
++    store.addLog(
++      'INFO',
++      `[Flight TX] action=${action} FE=0x${feType.toString(16).padStart(2, '0')} ` +
++      `function=0x${functionId.toString(16).padStart(4, '0')} payloadLen=${ctrlPayload.length} ` +
++      `payload=${ByteUtils.bytesToHex(ctrlPayload)} frame=${ByteUtils.bytesToHex(packet)}`
++    )
++  }
++
+   static takeoff() {
+-    const store = useDroneStore()
+-    store.addLog('INFO', 'Send takeoff command (repeat 20 times)')
+     const packet = PacketBuilder.buildTakeoff()
+-    this.sendPacketWithRepeats(packet, 20, 50)
++    this.logCtrlAction('Takeoff', packet)
++    this.transport.send(packet)
+   }
+ 
+   static land() {
+-    const store = useDroneStore()
+-    store.addLog('INFO', 'Send landing command (repeat 20 times)')
+     const packet = PacketBuilder.buildLand()
+-    this.sendPacketWithRepeats(packet, 20, 50)
++    this.logCtrlAction('Land', packet)
++    this.transport.send(packet)
++  }
++
++  static cancelLand() {
++    const packet = PacketBuilder.buildCancelLand()
++    this.logCtrlAction('Cancel Land', packet)
++    this.transport.send(packet)
+   }
+ 
+   static rth() {
+-    const store = useDroneStore()
+-    store.addLog('INFO', 'Send RTH command (repeat 20 times)')
+     const packet = PacketBuilder.buildRTH()
+-    this.sendPacketWithRepeats(packet, 20, 50)
++    this.logCtrlAction('RTH', packet)
++    this.transport.send(packet)
+   }
+ 
+   static cancelRth() {
+-    const store = useDroneStore()
+-    store.addLog('INFO', 'Cancel RTH')
+     const packet = PacketBuilder.buildCancelRTH()
+-    this.sendPacketWithRepeats(packet, 5, 50)
++    this.logCtrlAction('Cancel Auto Fly', packet)
++    this.transport.send(packet)
+   }
+ 
+   static emergencyStop() {
+diff --git a/webui/src/types/packet.ts b/webui/src/types/packet.ts
+index 46ef5a9..fb15626 100644
+--- a/webui/src/types/packet.ts
++++ b/webui/src/types/packet.ts
+@@ -11,7 +11,7 @@ export type PacketCategory =
+   | 'remoter'     // controller buttons and battery (0x41)
+   | 'video'       // H.265 video packet (FE 0x06)
+   | 'camera'      // Camera & Terminalcontrol (0x1200 / 0x15)
+-  | 'flight_cmd'  // flight-control takeoff/landing command (0x0301 / 0x14)
++  | 'flight_cmd'  // flight-control action (SendCtrlData function 0x0014 / FE 0x14)
+   | 'rf_fpv'      // RF and LiveView parameters (FE 0x16, 5913, 5656)
+   | 'other'       // Other/raw data
+ 

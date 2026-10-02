@@ -11,7 +11,7 @@ export type PacketCategory =
   | 'remoter'     // controller buttons and battery (0x41)
   | 'video'       // H.265 video packet (FE 0x06)
   | 'camera'      // Camera & Terminalcontrol (0x1200 / 0x15)
-  | 'flight_cmd'  // flight-control takeoff/landing command (0x0301 / 0x14)
+  | 'flight_cmd'  // flight-control action (SendCtrlData function 0x0014 / FE 0x14)
   | 'rf_fpv'      // RF and LiveView parameters (FE 0x16, 5913, 5656)
   | 'other'       // Other/raw data
 
