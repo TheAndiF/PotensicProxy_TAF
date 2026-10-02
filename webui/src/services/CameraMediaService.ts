@@ -38,19 +38,24 @@ export class CameraMediaService {
   private static readonly DOWNLOAD_TIMEOUT_MS = 1000
   private static readonly DOWNLOAD_MAX_RETRIES = 15
   private static readonly DOWNLOAD_CHUNK_SIZE = 102400n
-  private static readonly DOWNLOAD_TOTAL_TIMEOUT_MS = 15000
-  private static downloadStartedAt = 0
+  private static readonly DOWNLOAD_INACTIVITY_TIMEOUT_MS = 15000
+  private static downloadLastProgressAt = 0
+  private static downloadFrameBuffer = new Uint8Array(0)
   private static metaQueue: string[][] = []
   private static metaTimer: ReturnType<typeof setTimeout> | null = null
   private static metaRetryCount = 0
   private static currentMetaBatch: string[] | null = null
   private static readonly META_TIMEOUT_MS = 2000
   private static readonly META_MAX_RETRIES = 2
+  private static metadataAccumulator = ''
+  private static readonly MAX_METADATA_ACCUMULATOR = 1_000_000
 
   private static pendingCaptureAction: 'photo' | 'record-start' | 'record-stop' | null = null
   private static captureTimer: ReturnType<typeof setTimeout> | null = null
   private static captureRetriedAfterModeError = false
+  private static captureBackoffTimer: ReturnType<typeof setTimeout> | null = null
   private static readonly CAPTURE_STAGE_TIMEOUT_MS = 2500
+  private static readonly CAPTURE_BUSY_BACKOFF_MS = 350
 
   private static pendingDelete: null | {
     fileName: string
@@ -61,6 +66,66 @@ export class CameraMediaService {
 
   static setSender(sender: (bytes: Uint8Array) => void) {
     this.sender = sender
+  }
+
+  /** Reset transient camera/media state when browser passthrough is interrupted. */
+  static handleTransportDisconnect() {
+    const cam = useCameraStore()
+    const drone = useDroneStore()
+
+    this.clearCaptureTimer()
+    if (this.captureBackoffTimer) clearTimeout(this.captureBackoffTimer)
+    this.captureBackoffTimer = null
+    if (this.pendingCaptureAction) {
+      cam.captureFlowState = 'ERROR'
+      cam.recordingPending = false
+      cam.lastCaptureMessage = 'Camera operation interrupted by passthrough disconnect'
+    }
+    this.pendingCaptureAction = null
+    this.captureRetriedAfterModeError = false
+
+    this.resetGalleryRequestState()
+    if (this.metaTimer) clearTimeout(this.metaTimer)
+    this.metaTimer = null
+    this.metaQueue = []
+    this.currentMetaBatch = null
+    this.metadataAccumulator = ''
+
+    for (const [, pending] of this.pendingInfo) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error('Camera metadata request interrupted by passthrough disconnect'))
+    }
+    this.pendingInfo.clear()
+
+    if (this.pendingDelete) {
+      const pending = this.pendingDelete
+      clearTimeout(pending.timer)
+      this.pendingDelete = null
+      pending.reject(new Error('Camera delete interrupted by passthrough disconnect'))
+    }
+
+    if (this.activeDownload) {
+      const dl = this.activeDownload
+      this.clearDownloadTimeout()
+      cam.download.active = false
+      cam.download.error = `Camera download interrupted at offset ${dl.received}; restart required after reconnect`
+      this.activeDownload = null
+      this.downloadFrameBuffer = new Uint8Array(0)
+      dl.reject(new Error(cam.download.error))
+    }
+
+    cam.galleryEntered = false
+    cam.galleryLoading = false
+    cam.galleryState = 'CLOSED'
+    drone.addLog('WARN', '[Camera] transient capture/gallery/download state reset after passthrough disconnect')
+  }
+
+  /** Re-synchronize camera state before accepting new actions after reconnect. */
+  static handleTransportReconnect() {
+    const cam = useCameraStore()
+    cam.captureMode = 'UNKNOWN'
+    useDroneStore().addLog('INFO', '[Camera] passthrough reconnected; synchronizing camera status (0x02)')
+    this.send(PacketBuilder.buildCameraGetStatus())
   }
 
   private static send(packet: Uint8Array) {
@@ -95,6 +160,44 @@ export class CameraMediaService {
     this.captureTimer = null
   }
 
+  private static cameraTransferBusy(): string | null {
+    const cam = useCameraStore()
+    if (this.activeDownload || cam.download.active) return 'file download active'
+    if (this.pendingInfo.size > 0) return 'file metadata request active'
+    return null
+  }
+
+  private static prepareExclusiveCaptureState(): boolean {
+    const cam = useCameraStore()
+    const drone = useDroneStore()
+    const busy = this.cameraTransferBusy()
+    if (busy) {
+      drone.addLog('WARN', `[Camera capture] cannot start while ${busy}`)
+      cam.lastCaptureMessage = `Camera busy: ${busy}`
+      return false
+    }
+
+    if (this.metaTimer) clearTimeout(this.metaTimer)
+    this.metaTimer = null
+    this.metaQueue = []
+    this.currentMetaBatch = null
+    this.metadataAccumulator = ''
+
+    if (cam.galleryEntered || cam.galleryLoading || this.currentListPage || this.listQueue.length) {
+      drone.addLog('INFO', '[Camera capture] closing gallery/list state before capture')
+      this.resetGalleryRequestState()
+      this.listQueue = []
+      this.currentListPage = null
+      this.photoNames = []
+      this.videoNames = []
+      this.send(PacketBuilder.buildCameraQuitGallery())
+      cam.galleryEntered = false
+      cam.galleryLoading = false
+      cam.galleryState = 'CLOSED'
+    }
+    return true
+  }
+
   private static armCaptureTimer(stage: string) {
     this.clearCaptureTimer()
     this.captureTimer = setTimeout(() => {
@@ -112,6 +215,11 @@ export class CameraMediaService {
 
   private static desiredMode(action: 'photo' | 'record-start' | 'record-stop'): 'PHOTO' | 'VIDEO' {
     return action === 'photo' ? 'PHOTO' : 'VIDEO'
+  }
+
+  private static captureCommandInFlight(): boolean {
+    const state = useCameraStore().captureFlowState
+    return state === 'PHOTO_PENDING' || state === 'VIDEO_START_PENDING' || state === 'VIDEO_STOP_PENDING'
   }
 
   private static sendCapturePayload(action: 'photo' | 'record-start' | 'record-stop') {
@@ -142,7 +250,7 @@ export class CameraMediaService {
 
   private static switchModeForPendingAction() {
     const action = this.pendingCaptureAction
-    if (!action) return
+    if (!action || this.captureCommandInFlight()) return
     const cam = useCameraStore()
     const desired = this.desiredMode(action)
     cam.captureFlowState = desired === 'PHOTO' ? 'SWITCHING_TO_PHOTO' : 'SWITCHING_TO_VIDEO'
@@ -154,7 +262,7 @@ export class CameraMediaService {
 
   private static continuePendingCaptureFromKnownMode() {
     const action = this.pendingCaptureAction
-    if (!action) return
+    if (!action || this.captureCommandInFlight()) return
     const cam = useCameraStore()
     const desired = this.desiredMode(action)
     if (cam.captureMode === desired) this.sendCapturePayload(action)
@@ -168,6 +276,8 @@ export class CameraMediaService {
       drone.addLog('WARN', `[Camera capture] ignored ${action}; another capture transition is active (${cam.captureFlowState})`)
       return
     }
+    const galleryWasActive = cam.galleryEntered || cam.galleryLoading || this.currentListPage !== null || this.listQueue.length > 0
+    if (!this.prepareExclusiveCaptureState()) return
     this.pendingCaptureAction = action
     this.captureRetriedAfterModeError = false
     cam.captureFlowState = 'SYNCING'
@@ -185,17 +295,10 @@ export class CameraMediaService {
       }
     }
 
-    if (cam.galleryEntered) {
-      drone.addLog('INFO', '[Camera capture] leave gallery before capture (0x22)')
-      this.send(PacketBuilder.buildCameraQuitGallery())
-      cam.galleryEntered = false
-      cam.galleryLoading = false
-      cam.galleryState = 'CLOSED'
-      // Gallery quit has its own ACK path; a short settle is retained only for the playback->capture transition.
-      setTimeout(proceed, 250)
-    } else {
-      proceed()
-    }
+    // The gallery close command was emitted by prepareExclusiveCaptureState(). Keep the
+    // existing short playback->capture settle so capture is not sent in the same turn.
+    if (galleryWasActive) setTimeout(proceed, 250)
+    else proceed()
   }
 
   static takePhoto() {
@@ -313,6 +416,7 @@ export class CameraMediaService {
     this.videoNames = []
     this.listQueue = []
     this.currentListPage = null
+    this.metadataAccumulator = ''
   }
 
   static refreshGallery() {
@@ -429,7 +533,8 @@ export class CameraMediaService {
       const total = BigInt(Math.trunc(totalNum))
       const outputName = fileName.split('/').pop() || (isVideo ? 'camera-video.mp4' : 'camera-photo.jpg')
       return await new Promise<AndroidStoredImage | undefined>((resolve, reject) => {
-        this.downloadStartedAt = Date.now()
+        this.downloadLastProgressAt = Date.now()
+        this.downloadFrameBuffer = new Uint8Array(0)
         this.activeDownload = {
           fileName: remoteName,
           originalFileName: fileName,
@@ -477,9 +582,9 @@ export class CameraMediaService {
       const dl = this.activeDownload
       if (!dl) return
       if (dl.received !== offset) return
-      if (Date.now() - this.downloadStartedAt >= this.DOWNLOAD_TOTAL_TIMEOUT_MS) {
+      if (Date.now() - this.downloadLastProgressAt >= this.DOWNLOAD_INACTIVITY_TIMEOUT_MS) {
         this.send(PacketBuilder.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.FILE_DOWNLOAD_CANCEL])))
-        this.failDownload(`Camera file download timed out after ${this.DOWNLOAD_TOTAL_TIMEOUT_MS / 1000}s at offset ${offset}`)
+        this.failDownload(`Camera file download stalled for ${this.DOWNLOAD_INACTIVITY_TIMEOUT_MS / 1000}s at offset ${offset}`)
         return
       }
       if (this.downloadRetryCount < this.DOWNLOAD_MAX_RETRIES) {
@@ -502,6 +607,7 @@ export class CameraMediaService {
     cam.download.active = false
     cam.download.error = message
     this.activeDownload = null
+    this.downloadFrameBuffer = new Uint8Array(0)
     dl.reject(new Error(message))
   }
 
@@ -556,6 +662,7 @@ export class CameraMediaService {
     } finally {
       cam.download.active = false
       if (this.activeDownload === dl) this.activeDownload = null
+      this.downloadFrameBuffer = new Uint8Array(0)
     }
   }
 
@@ -615,6 +722,135 @@ export class CameraMediaService {
     }
   }
 
+  private static decodeCameraLog(raw: Uint8Array) {
+    // CameraLogData (0x39) is asynchronous and therefore has no command-status byte.
+    // Firmware variants prefix the ASCII text with a small source selector; preserve
+    // unknown selectors without letting them affect the normal command state machine.
+    const sourceNames: Record<number, string> = {
+      0: 'LINUX',
+      1: 'LITEOS',
+      2: 'GIMBAL'
+    }
+    const trimmed = raw.subarray(0, Math.max(0, raw.length - (raw.length && raw[raw.length - 1] === 0 ? 1 : 0)))
+    let source = 'CAMERA'
+    let textBytes = trimmed
+    if (trimmed.length > 1 && sourceNames[trimmed[0]]) {
+      source = sourceNames[trimmed[0]]
+      textBytes = trimmed.subarray(1)
+    }
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(textBytes).replace(/\0+/g, '').trim()
+    useDroneStore().addLog('INFO', `[CAMERA/${source}] ${text || '(empty camera log record)'}`)
+  }
+
+  private static confirmCaptureReady(modeByte: number | undefined, source: string) {
+    const action = this.pendingCaptureAction
+    if (!action || this.captureCommandInFlight()) return
+    const cam = useCameraStore()
+    const drone = useDroneStore()
+    if (modeByte === 0) cam.captureMode = 'VIDEO'
+    else if (modeByte === 1) cam.captureMode = 'PHOTO'
+    const desired = this.desiredMode(action)
+    if (cam.captureMode !== desired) {
+      drone.addLog('WARN', `[Camera capture] ${source} reports mode=${cam.captureMode}, waiting for ${desired}`)
+      this.send(PacketBuilder.buildCameraGetStatus())
+      this.armCaptureTimer('mode readiness status sync')
+      return
+    }
+    this.clearCaptureTimer()
+    drone.addLog('INFO', `[Camera capture] ${source} confirms ${desired} ready; sending pending ${action}`)
+    this.sendCapturePayload(action)
+  }
+
+  private static scheduleBusyRetry() {
+    const action = this.pendingCaptureAction
+    if (!action) return
+    const cam = useCameraStore()
+    const drone = useDroneStore()
+    this.clearCaptureTimer()
+    if (this.captureBackoffTimer) clearTimeout(this.captureBackoffTimer)
+    cam.captureFlowState = 'SYNCING'
+    cam.lastCaptureMessage = 'Camera busy; waiting before one controlled retry'
+    drone.addLog('WARN', `[Camera capture] device busy; backoff ${this.CAPTURE_BUSY_BACKOFF_MS} ms then resync status before one retry`)
+    this.captureBackoffTimer = setTimeout(() => {
+      this.captureBackoffTimer = null
+      if (!this.pendingCaptureAction) return
+      this.send(PacketBuilder.buildCameraGetStatus())
+      this.armCaptureTimer('device-busy status resync')
+    }, this.CAPTURE_BUSY_BACKOFF_MS)
+  }
+
+  private static looksLikeCompleteJson(text: string): boolean {
+    let depth = 0
+    let inString = false
+    let escaped = false
+    let seen = false
+    for (const ch of text) {
+      if (inString) {
+        if (escaped) escaped = false
+        else if (ch === '\\') escaped = true
+        else if (ch === '"') inString = false
+        continue
+      }
+      if (ch === '"') { inString = true; continue }
+      if (ch === '{' || ch === '[') { depth++; seen = true }
+      else if (ch === '}' || ch === ']') depth--
+      if (depth < 0) return true
+    }
+    return seen && depth === 0 && !inString
+  }
+
+  private static appendDownloadBytes(bytes: Uint8Array) {
+    if (bytes.length === 0) return
+    const dl = this.activeDownload
+    if (dl) {
+      this.downloadLastProgressAt = Date.now()
+      this.clearDownloadTimeout()
+    }
+    if (this.downloadFrameBuffer.length === 0) this.downloadFrameBuffer = bytes.slice()
+    else {
+      const merged = new Uint8Array(this.downloadFrameBuffer.length + bytes.length)
+      merged.set(this.downloadFrameBuffer, 0)
+      merged.set(bytes, this.downloadFrameBuffer.length)
+      this.downloadFrameBuffer = merged
+    }
+    this.drainDownloadFrames()
+    if (dl && this.activeDownload === dl && this.downloadFrameBuffer.length > 0) {
+      const remaining = dl.total - dl.received
+      if (remaining > 0n) this.armDownloadTimeout(dl.received, remaining > this.DOWNLOAD_CHUNK_SIZE ? this.DOWNLOAD_CHUNK_SIZE : remaining)
+    }
+  }
+
+  private static downloadFrameLength(buffer: Uint8Array): number | null {
+    if (buffer.length < 11) return null
+    const flag = buffer[0]
+    const base = flag === 2 ? 33 : 1
+    if (buffer.length < base + 10) return null
+    const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+    const payloadLen = view.getUint16(base + 8, true)
+    if (payloadLen <= 0) return -1
+    return base + 10 + payloadLen
+  }
+
+  private static drainDownloadFrames() {
+    const drone = useDroneStore()
+    while (this.downloadFrameBuffer.length > 0) {
+      const expected = this.downloadFrameLength(this.downloadFrameBuffer)
+      if (expected == null) return
+      if (expected < 0 || expected > 2_000_000) {
+        drone.addLog('WARN', `Camera download stream lost framing (${this.downloadFrameBuffer.length} buffered bytes); dropping one byte to resynchronize`)
+        this.downloadFrameBuffer = this.downloadFrameBuffer.subarray(1).slice()
+        continue
+      }
+      if (this.downloadFrameBuffer.length < expected) {
+        drone.addLog('INFO', `Camera download partial frame buffered: ${this.downloadFrameBuffer.length}/${expected}B`)
+        return
+      }
+      const frame = this.downloadFrameBuffer.slice(0, expected)
+      this.downloadFrameBuffer = this.downloadFrameBuffer.slice(expected)
+      this.handleCompleteDownloadFrame(frame)
+    }
+  }
+
   /**
    * Handle FE 0x05 camera responses whose inner message short is 0x0020.
    * Returns true when the packet belongs to this PotensicPro-compatible camera path.
@@ -628,8 +864,31 @@ export class CameraMediaService {
     const cam = useCameraStore()
     const drone = useDroneStore()
     const cmd = payload[6]
-    const status = payload[7]
-    const data = payload.subarray(8, Math.max(8, payload.length - 1))
+    const commandBody = payload.subarray(7, Math.max(7, payload.length - 1))
+
+    // 0x39 and 0x3A are asynchronous camera records, not ordinary cmd/status responses.
+    // They must be handled before interpreting payload[7] as a status byte.
+    if (cmd === 0x39) {
+      cam.lastResponse = `camera-log 0x39 data=${commandBody.length}B`
+      this.decodeCameraLog(commandBody)
+      return true
+    }
+    if (cmd === 0x3a) {
+      const modeByte = commandBody.length ? commandBody[0] : undefined
+      cam.lastResponse = `mode-notify 0x3A mode=${modeByte ?? 'unknown'}`
+      if (modeByte === 0) cam.captureMode = 'VIDEO'
+      else if (modeByte === 1) cam.captureMode = 'PHOTO'
+      drone.addLog('INFO', `[Camera capture] asynchronous mode-ready notification 0x3A: ${cam.captureMode}`)
+      if (this.pendingCaptureAction) this.confirmCaptureReady(modeByte, '0x3A notification')
+      return true
+    }
+
+    if (commandBody.length < 1) {
+      drone.addLog('WARN', `Camera response 0x${cmd.toString(16).padStart(2, '0')} has no status byte`)
+      return true
+    }
+    const status = commandBody[0]
+    const data = commandBody.subarray(1)
     cam.lastResponse = `cmd=0x${cmd.toString(16).padStart(2, '0')} status=${status} data=${data.length}B`
 
     if (status !== 0) {
@@ -657,11 +916,18 @@ export class CameraMediaService {
       if ([CAMERA_USB.TAKE_PHOTO, CAMERA_USB.RECORD, CAMERA_USB.MODE, 0x02].includes(cmd as any)) {
         this.clearCaptureTimer()
         const action = this.pendingCaptureAction
-        // PotensicPro exposes status 8 = current mode not allowed. For a capture command,
-        // do one controlled mode switch and retry instead of silently failing.
+        // Status 3 (device busy) is transient. Stop the ACK timer immediately, back off,
+        // re-read camera status, then perform at most one controlled retry.
+        if (status === 3 && action && (cmd === CAMERA_USB.TAKE_PHOTO || cmd === CAMERA_USB.RECORD) && !this.captureRetriedAfterModeError) {
+          this.captureRetriedAfterModeError = true
+          this.scheduleBusyRetry()
+          return true
+        }
+        // Status 8 means the current capture mode is not allowed. Switch to the required
+        // mode once, then wait for 0x3A or a confirming 0x02 status before retrying.
         if (status === 8 && action && (cmd === CAMERA_USB.TAKE_PHOTO || cmd === CAMERA_USB.RECORD) && !this.captureRetriedAfterModeError) {
           this.captureRetriedAfterModeError = true
-          drone.addLog('WARN', `[Camera capture] ${failure}; switching to required mode and retrying once`)
+          drone.addLog('WARN', `[Camera capture] ${failure}; switching to required mode before one retry`)
           this.switchModeForPendingAction()
           return true
         }
@@ -702,8 +968,8 @@ export class CameraMediaService {
           const recordTime = data.length >= 4 ? (data[2] | (data[3] << 8)) : null
           drone.addLog('INFO', `[Camera capture] status: mode=${cam.captureMode} recording=${cam.recording}${recordTime != null ? ` recordTime=${recordTime}s` : ''}`)
         }
-        if (this.pendingCaptureAction) this.continuePendingCaptureFromKnownMode()
-        else cam.captureFlowState = 'IDLE'
+        if (this.pendingCaptureAction && !this.captureCommandInFlight()) this.continuePendingCaptureFromKnownMode()
+        else if (!this.pendingCaptureAction) cam.captureFlowState = 'IDLE'
         break
       }
       case CAMERA_USB.MODE: {
@@ -712,8 +978,14 @@ export class CameraMediaService {
           cam.captureMode = data[0] === 0 ? 'VIDEO' : data[0] === 1 ? 'PHOTO' : 'UNKNOWN'
           drone.addLog('INFO', `[Camera capture] mode ACK: ${cam.captureMode}`)
         }
-        if (this.pendingCaptureAction && cam.captureMode === this.desiredMode(this.pendingCaptureAction)) {
-          this.sendCapturePayload(this.pendingCaptureAction)
+        if (this.pendingCaptureAction && this.captureCommandInFlight()) {
+          drone.addLog('INFO', '[Camera capture] late mode ACK received after capture command; no duplicate capture sent')
+        } else if (this.pendingCaptureAction && cam.captureMode === this.desiredMode(this.pendingCaptureAction)) {
+          cam.captureFlowState = 'SYNCING'
+          cam.lastCaptureMessage = `Mode ACK received; waiting for camera readiness`
+          drone.addLog('INFO', '[Camera capture] mode ACK accepted; waiting for 0x3A or confirming 0x02 status before capture')
+          this.send(PacketBuilder.buildCameraGetStatus())
+          this.armCaptureTimer('mode readiness confirmation')
         } else if (this.pendingCaptureAction) {
           cam.captureFlowState = 'ERROR'
           cam.lastCaptureMessage = `Camera mode ACK did not match requested mode`
@@ -882,7 +1154,7 @@ export class CameraMediaService {
         this.parseGalleryMetadata(data)
         break
       case CAMERA_USB.FILE_DOWNLOAD:
-        this.handleDownloadData(data)
+        this.appendDownloadBytes(data)
         break
       case CAMERA_USB.FILE_DELETE: {
         drone.addLog('INFO', 'Camera file delete acknowledged')
@@ -938,6 +1210,7 @@ export class CameraMediaService {
     this.metaTimer = null
     this.metaRetryCount = 0
     this.currentMetaBatch = null
+    this.metadataAccumulator = ''
     this.metaQueue = []
     for (let i = 0; i < fileNames.length; i += 25) this.metaQueue.push(fileNames.slice(i, i + 25))
     this.requestNextMetadataBatch()
@@ -963,12 +1236,14 @@ export class CameraMediaService {
       if (!this.currentMetaBatch) return
       if (this.metaRetryCount < this.META_MAX_RETRIES) {
         this.metaRetryCount++
+        this.metadataAccumulator = ''
         useDroneStore().addLog('WARN', `Camera metadata 0x20 timeout; retry ${this.metaRetryCount}/${this.META_MAX_RETRIES}`)
         this.send(PacketBuilder.buildCameraGetFileMetaList(this.currentMetaBatch))
         this.armMetadataTimeout()
         return
       }
       useDroneStore().addLog('WARN', 'Camera metadata 0x20 unavailable; keeping filename timestamps as fallback')
+      this.metadataAccumulator = ''
       this.currentMetaBatch = null
       this.requestNextMetadataBatch()
     }, this.META_TIMEOUT_MS)
@@ -977,7 +1252,24 @@ export class CameraMediaService {
   private static parseGalleryMetadata(data: Uint8Array) {
     if (this.metaTimer) clearTimeout(this.metaTimer)
     this.metaTimer = null
-    const text = new TextDecoder('ascii').decode(data).replace(/\0+$/g, '').trim()
+    const fragment = new TextDecoder('ascii').decode(data).replace(/\0+$/g, '')
+    this.metadataAccumulator += fragment
+
+    if (this.metadataAccumulator.length > this.MAX_METADATA_ACCUMULATOR) {
+      useDroneStore().addLog('WARN', `Camera metadata 0x20 accumulator exceeded ${this.MAX_METADATA_ACCUMULATOR} bytes; discarding response`)
+      this.metadataAccumulator = ''
+      this.currentMetaBatch = null
+      this.requestNextMetadataBatch()
+      return
+    }
+
+    const text = this.metadataAccumulator.trim()
+    if (!this.looksLikeCompleteJson(text)) {
+      useDroneStore().addLog('INFO', `Camera metadata 0x20 fragment buffered (${this.metadataAccumulator.length}B)`)
+      this.armMetadataTimeout()
+      return
+    }
+
     try {
       const parsed = JSON.parse(text)
       const raw = Array.isArray(parsed?.file_info) ? parsed.file_info : []
@@ -988,10 +1280,11 @@ export class CameraMediaService {
         return entry
       }).filter(Boolean)
       useCameraStore().applyGalleryMetadata(entries)
-      useDroneStore().addLog('INFO', `Camera metadata 0x20 parsed for ${entries.length} files`)
+      useDroneStore().addLog('INFO', `Camera metadata 0x20 parsed for ${entries.length} files from ${this.metadataAccumulator.length}B assembled response`)
     } catch (e: any) {
-      useDroneStore().addLog('WARN', `Camera metadata 0x20 parse failed: ${e?.message || e}; payload=${text.slice(0, 160)}`)
+      useDroneStore().addLog('WARN', `Camera metadata 0x20 complete response could not be parsed: ${e?.message || e}; payload=${text.slice(0, 160)}`)
     } finally {
+      this.metadataAccumulator = ''
       this.currentMetaBatch = null
       this.requestNextMetadataBatch()
     }
@@ -1018,7 +1311,7 @@ export class CameraMediaService {
     useDroneStore().addLog('INFO', `Camera gallery page parsed: photos=${this.photoNames.length}/${this.photoCount}, videos=${this.videoNames.length}/${this.videoCount}`)
   }
 
-  private static handleDownloadData(body: Uint8Array) {
+  private static handleCompleteDownloadFrame(body: Uint8Array) {
     const dl = this.activeDownload
     // PotensicPro DownloadData body after cmd/status:
     // flag (1B), [32B final-block digest area], offset (u64 LE), payloadLen (u16 LE), payload.
@@ -1049,7 +1342,8 @@ export class CameraMediaService {
       const duplicateEnd = offset + BigInt(payloadLen)
       if (duplicateEnd <= dl.received) {
         drone.addLog('WARN', `Ignoring duplicate camera download block at ${offset} (${payloadLen}B)`)
-        this.requestNextDownloadChunk()
+        const remaining = dl.total - dl.received
+        if (remaining > 0n) this.armDownloadTimeout(dl.received, remaining > this.DOWNLOAD_CHUNK_SIZE ? this.DOWNLOAD_CHUNK_SIZE : remaining)
         return
       }
     }
@@ -1062,12 +1356,22 @@ export class CameraMediaService {
     const chunk = body.slice(payloadStart, payloadStart + payloadLen)
     dl.chunks.push(chunk)
     dl.received += BigInt(chunk.length)
+    this.downloadLastProgressAt = Date.now()
     const pct = Number(dl.received) * 100 / Number(dl.total)
     cam.download.progress = Math.min(100, Math.round(pct * 10) / 10)
     drone.addLog('INFO', `Camera download block: ${chunk.length}B flag=${flag}${unitEnd ? ' unit-end' : ''}${fileEnd ? ' file-end' : ''}, ${cam.download.progress}%`)
 
-    if (fileEnd || dl.received >= dl.total) void this.finishDownload()
-    else this.requestNextDownloadChunk()
+    if (fileEnd || dl.received >= dl.total) {
+      void this.finishDownload()
+    } else if (unitEnd) {
+      // flag=1 ends the current requested unit. Only now request the next unit.
+      this.requestNextDownloadChunk()
+    } else {
+      // flag=0 is a continuing part of the current unit. Do not emit another 0x1B request.
+      const remaining = dl.total - dl.received
+      const watchdogLength = remaining > this.DOWNLOAD_CHUNK_SIZE ? this.DOWNLOAD_CHUNK_SIZE : remaining
+      this.armDownloadTimeout(dl.received, watchdogLength)
+    }
   }
 
 }

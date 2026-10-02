@@ -172,6 +172,7 @@ export const useDroneStore = defineStore('drone', () => {
   // Lists
   const packets = ref<ParsedPacket[]>([])
   const logs = ref<SystemLog[]>([])
+  const LOG_BUFFER_LIMIT = 1000
   const activeTab = ref<'cockpit' | 'mission' | 'map' | 'gallery' | 'usb' | 'debug'>('cockpit')
   const ignoreTelemetryAtIngestion = ref(false)
 
@@ -218,8 +219,8 @@ export const useDroneStore = defineStore('drone', () => {
       level,
       message
     })
-    if (logs.value.length > 500) {
-      logs.value.shift()
+    if (logs.value.length > LOG_BUFFER_LIMIT) {
+      logs.value.splice(0, logs.value.length - LOG_BUFFER_LIMIT)
     }
   }
 

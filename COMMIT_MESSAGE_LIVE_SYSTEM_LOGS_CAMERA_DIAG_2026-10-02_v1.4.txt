@@ -1,0 +1,28 @@
+BS_Fix live logs and camera media state handling
+Date: 2026-10-02
+
+Summary:
+- Added a 1000-line rolling Live System Log buffer, persistent log controls, line counter, and client-side Save Log export.
+- Treated camera command 0x39 as asynchronous CameraLogData and 0x3A as the mode-ready notification before generic status parsing.
+- Added capture readiness synchronization, controlled Device Busy retry, and camera-operation exclusivity.
+- Added fragmented 0x20 metadata accumulation and declared-length 0x1B download frame buffering with flag 0/1/2 unit handling.
+- Reset transient camera/media state on passthrough disconnect and re-synchronize camera status after reconnect.
+- Updated README, protocol documentation, and implementation documentation.
+
+Validation:
+- PASS: webui/node_modules/.bin/vue-tsc --noEmit
+- BLOCKED BY ENVIRONMENT: Vite production build (Linux Rollup optional binary is not present in the supplied node_modules).
+- BLOCKED BY ENVIRONMENT: Android Gradle compile (Gradle 8.11.1 download requires network access).
+- OPEN: real ATOM device acceptance tests K1-K8.
+
+Changed files:
+- webui/src/components/logs/LogConsole.vue
+- webui/src/stores/useDroneStore.ts
+- webui/src/services/CameraMediaService.ts
+- webui/src/services/UsbTransportService.ts
+- README.md
+- PROTOCOL.md
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Live-System-Logs-Kamera-Diagnose - v1.4.docx
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Live-System-Logs-Kamera-Diagnose - v1.4.pdf
+- PATCH_LIVE_SYSTEM_LOGS_CAMERA_DIAG_2026-10-02_v1.4.patch
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_LIVE_SYSTEM_LOGS_KAMERA_DIAG_v1.4.md

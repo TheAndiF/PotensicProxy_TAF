@@ -148,6 +148,7 @@ export class UsbTransportService {
       this.ws.onopen = () => {
         store.connection.wsConnected = true
         store.addLog('INFO', 'Browser passthrough channel ready (WebSocket OPEN)')
+        CameraMediaService.handleTransportReconnect()
 
         // Heartbeat is meaningful only after Android has an actual controller/drone transport.
         this.heartbeatTimer = setInterval(() => {
@@ -159,6 +160,8 @@ export class UsbTransportService {
 
       this.ws.onclose = () => {
         store.connection.wsConnected = false
+        this.demuxer.reset()
+        CameraMediaService.handleTransportDisconnect()
         if (this.heartbeatTimer) {
           clearInterval(this.heartbeatTimer)
           this.heartbeatTimer = null

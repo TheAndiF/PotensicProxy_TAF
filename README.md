@@ -187,6 +187,12 @@ Relevant project documents include:
 ### Virtual joystick and ATOM gimbal
 The cockpit virtual joysticks are connected to PotensicPro's confirmed `Send4AxisData` flight function (`0x0001`). Throttle, yaw, pitch and roll are transmitted at the original app cadence of 80 ms while a virtual stick is actively held, with a neutral frame on release. The ATOM gimbal deliberately does not use the generic `Send4AxisData` gimbal byte because PotensicPro disables that app-side slider for ATOM-series aircraft. The camera control instead uses the confirmed ATOM pitch presets from `SendGimbalSettingData` (`0x001A`) and displays the received gimbal-state feedback as the actual angle.
 
-### Camera capture reliability (v1.3)
+### Camera capture and media reliability (v1.4)
 
-The cockpit Photo and Video buttons now use the PotensicPro capture-mode workflow rather than sending capture commands blindly. Before a photo or record-start command, TAF synchronizes or switches the camera to the required mode and waits for the camera response. Recording state is updated only after the camera confirms start/stop. A mode rejection (`status 8`) causes one controlled mode correction and retry. This change is limited to the normal camera capture path; gallery/download behavior is otherwise unchanged in this revision.
+The cockpit Photo and Video buttons use the PotensicPro capture-mode workflow and now wait for actual camera readiness after a mode change. A successful mode ACK (`0x03`) is followed by the asynchronous mode notification (`0x3A`) and/or a confirming camera-status query (`0x02`) before the photo/record command is sent. `Device busy` (`status 3`) ends the current ACK wait immediately, performs a short backoff and status re-sync, and permits at most one controlled retry. Camera-log records (`0x39`) are handled as asynchronous log data rather than command failures.
+
+Camera metadata (`0x20`) is assembled across fragments before JSON parsing. Download data (`0x1B`) is buffered to complete declared frames; `flag=0` continues the current unit, `flag=1` advances to the next unit, and `flag=2` finalizes the file. Valid transfer progress refreshes the inactivity watchdog. Passthrough disconnects clear transient camera state and require a fresh `0x02` status synchronization after reconnect.
+
+### Live system log
+
+The live system log keeps a deterministic rolling buffer of at most 1000 lines. Its header remains visible while the log body scrolls, shows the current line count, and provides **Save Log** plus **Clear** controls. **Save Log** exports exactly the currently retained snapshot as UTF-8 text without clearing or pausing live logging.

@@ -804,13 +804,22 @@ Response handling on the same camera function:
 - Command `01`: successful photo acknowledgement.
 - Command `00`: data byte 0 = `01` recording started, `00` recording stopped.
 
-TAF v1.3 capture flow:
+TAF v1.4 capture flow:
 
-1. If gallery/playback is active, send `0x22` first and leave the gallery state.
+1. Before capture, gallery/list/metadata activity is ended so capture owns the camera command state exclusively; an active file download is not interrupted and blocks a new capture.
 2. If the local capture mode is unknown, send `02` and wait for the response.
 3. If the desired mode differs, send `03 <mode>` and wait for the `03` acknowledgement.
-4. Only after the mode is confirmed, send photo/start/stop.
-5. UI state changes only after the camera acknowledgement.
-6. Each stage has a 2.5 s timeout. Status `8` (current mode not allowed) triggers one controlled mode switch + retry.
+4. A successful `03` ACK alone is not treated as capture-ready. TAF waits for asynchronous mode notification `0x3A` and/or requests `02` again and requires the target mode to be confirmed.
+5. Only after this readiness confirmation is photo/start/stop sent. A late `03`/`02` response cannot trigger a duplicate capture while the capture command is already pending.
+6. Status `3` (`Device busy`) immediately cancels the pending ACK timer, applies a short backoff, re-synchronizes with `02`, and permits at most one controlled retry. Status `8` likewise permits one controlled mode correction/retry.
+7. UI state changes only after the camera acknowledgement. Each capture stage remains bounded by a timeout.
 
-Potensic camera status codes used by TAF now follow the PotensicPro mapping for the relevant range: 1 command not supported, 2 argument invalid, 3 device busy, 4 unknown error, 5 no SD card, 6 SD full, 7 option invalid, 8 current mode not allowed, 9 recording already started, 10 SD needs format, 11 not enough memory, 12 file system error, 23 file offset error, 24 file MD5 error, 37 need sync state error.
+Asynchronous camera records on function `0x0020` are distinguished from ordinary command responses. `0x39` is CameraLogData and is decoded/logged without treating its first data byte as a command status. `0x3A` is the camera mode-switch notification and participates in the readiness state machine.
+
+Gallery metadata command `0x20` may arrive as fragmented JSON. TAF accumulates fragments and calls `JSON.parse()` only after a complete JSON object/array is assembled; the accumulator is discarded on completion, timeout, gallery close, or passthrough disconnect.
+
+Download command `0x1B` is parsed as a stream of declared camera download frames. Partial frames are buffered until the header-declared payload is complete. `flag=0` appends data and resets the inactivity watchdog without sending another request; `flag=1` ends the current unit and permits the next request; `flag=2` finalizes the file. Duplicate blocks do not trigger an extra request. Offset mismatches resynchronize from the locally confirmed offset. The former fixed overall timeout is replaced by progress/inactivity tracking.
+
+On WebSocket/passthrough disconnect, pending capture, gallery metadata, delete and download state is terminated deterministically. The FE stream demuxer is reset. After reconnect, stale state is not resumed automatically; camera status `0x02` is requested before subsequent camera actions.
+
+Potensic camera status codes used by TAF follow the PotensicPro mapping for the relevant range: 1 command not supported, 2 argument invalid, 3 device busy, 4 unknown error, 5 no SD card, 6 SD full, 7 option invalid, 8 current mode not allowed, 9 recording already started, 10 SD needs format, 11 not enough memory, 12 file system error, 23 file offset error, 24 file MD5 error, 37 need sync state error.
