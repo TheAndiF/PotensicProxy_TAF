@@ -1,0 +1,380 @@
+--- a/README.md
++++ b/README.md
+@@ -70,7 +70,7 @@
+ 
+ The project now has two deliberately separate Android image libraries:
+ 
+-- **Normal Camera:** photo capture now uses the PotensicPro-compatible APP_TO_CAMERA path FE `0x15` / inner `FF FD` / function `0x0020` / command `0x01`; recording uses the same path with command `0x00`. Camera responses are accepted on FE `0x05` with inner RX header `FF FE`. Downloaded JPG/JPEG/PNG/DNG files are published through Android `MediaStore` under `Pictures/PotensicProxy/Camera`; MP4 files are published under `Movies/PotensicProxy/Camera`. Normal camera downloads are not automatically deleted from the aircraft.
++- **Normal Camera:** capture actions use the already captured ATOM camera-control path FE `0x15` / inner `FF FD` / function `0x1200`: photo `0x51`, video start/stop `0x50`. The `0x0020` USB-camera path remains responsible for settings and gallery/media commands (`0x18`-`0x22`). Camera gallery responses are accepted on FE `0x05` with inner RX header `FF FE`. Downloaded JPG/JPEG/PNG/DNG files are published through Android `MediaStore` under `Pictures/PotensicProxy/Camera`; MP4 files are published under `Movies/PotensicProxy/Camera`. Normal camera downloads are not automatically deleted from the aircraft.
+ - **Recognition:** all images intended for later image recognition are published under `Pictures/PotensicProxy/Recognition` and shown in the separate **Recognition** tab of the Gallery page.
+ 
+ Recognition has two capture sources that feed the same metadata/index pipeline:
+--- a/PROTOCOL.md
++++ b/PROTOCOL.md
+@@ -283,7 +283,7 @@
+ 
+ ## Camera Commands (TX)
+ 
+-TAF uses two confirmed camera paths. LiveView/engineering commands use **short 0x1200**, while normal camera capture/settings/gallery use the PotensicPro USB camera function **0x0020**. Both send with FE type `0x15`.
++TAF uses two camera paths. LiveView/engineering **and capture actions** use **short 0x1200**; on the tested ATOM path photo is command `0x51` and video start/stop is `0x50`. The PotensicPro USB camera function **0x0020** remains in use for settings and gallery/media transfer. Both send with FE type `0x15`. This split was restored after device feedback showed that `0x0020/0x01` did not create a photo although gallery RX worked.
+ 
+ ### Command format
+ 
+@@ -300,14 +300,12 @@
+ | 0xD9 | Request IDR frame |
+ | 0xD2 | WifiDirectSwitch (data: 0x01=enter + 16 bytes phoneId) |
+ 
+-### PotensicPro-compatible USB camera control path (short `0x0020`)
++### PotensicPro-compatible USB camera settings/gallery path (short `0x0020`)
+ 
+-The normal capture/settings/gallery/zoom path sends FE `0x15` APP_TO_CAMERA with inner header `FF FD` and receives FE `0x05` CAMERA_TO_APP with inner header `FF FE`. The inner message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
++The settings/gallery/zoom path sends FE `0x15` APP_TO_CAMERA with inner header `FF FD` and receives FE `0x05` CAMERA_TO_APP with inner header `FF FE`. The inner message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
+ 
+ | Cmd | Direction | Description |
+ |-----|-----------|-------------|
+-| `0x00` | TX/RX | Record command on the normal camera path. |
+-| `0x01` | TX/RX | Take photo on the normal camera path. |
+ | `0x18` | TX/RX | File count; photo/video counts are uint16 little-endian. |
+ | `0x19` | TX/RX | Paged filename list; photo/video pagination is separate and page size is at most 50. |
+ | `0x1A` | TX/RX | File details. |
+--- a/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
++++ b/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+@@ -163,11 +163,11 @@
+         return wrapFE(buildInnerCommandWithShort(0x0020, data), 0x15)
+     }
+ 
+-    /** Take photo — PotensicPro USB camera command 0x01 on function 0x0020. */
+-    fun buildTakePhoto(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x01))
++    /** Take photo on the captured ATOM camera-control path (0x1200 / 0x51). */
++    fun buildTakePhoto(): ByteArray = buildCameraCommand(0x51.toByte())
+ 
+-    /** Record command — PotensicPro USB camera command 0x00 on function 0x0020. */
+-    fun buildToggleRecord(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x00))
++    /** Toggle video recording on the captured ATOM camera-control path (0x1200 / 0x50). */
++    fun buildToggleRecord(): ByteArray = buildCameraCommand(0x50.toByte())
+ 
+     private fun hexPkt(hex: String): ByteArray {
+         val clean = hex.replace(" ", "")
+--- a/webui/src/components/gallery/GalleryView.vue
++++ b/webui/src/components/gallery/GalleryView.vue
+@@ -49,6 +49,7 @@
+             <div class="media-meta">
+               <div class="media-name" :title="file.name">{{ file.name }}</div>
+               <div class="media-type">{{ file.type === 'photo' ? 'Photo' : 'Video' }}</div>
++              <div class="media-time">🕒 {{ formatRemoteTimestamp(file) }}</div>
+             </div>
+             <div class="media-actions">
+               <button class="taf-btn taf-btn--compact" :disabled="camera.download.active" @click="download(file.name)">{{ file.type === 'photo' ? '↓ Save on Android' : '↓ Download' }}</button>
+@@ -246,6 +247,9 @@
+   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+ }
+ function formatDate(value: number) { return value ? new Date(value).toLocaleString() : '—' }
++function formatRemoteTimestamp(file: CameraMediaFile) {
++  return file.timestamp ? new Date(file.timestamp).toLocaleString() : 'Kein Zeitstempel im Dateinamen'
++}
+ function onAndroidMediaSaved(event: Event) {
+   const saved = (event as CustomEvent<AndroidStoredImage>).detail
+   if (saved?.library === 'recognition') void loadRecognitionImages()
+@@ -263,7 +267,7 @@
+ .gallery-page{height:100%;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px;background:var(--ui-bg-stage)}
+ .gallery-header{display:flex;align-items:center;justify-content:space-between;gap:16px}.gallery-header h2{margin:0;color:var(--cyan)}.gallery-header p{margin:4px 0 0;color:var(--ui-text-muted);font-size:12px}.gallery-actions,.gallery-tabs,.reco-actions{display:flex;gap:7px;flex-wrap:wrap}
+ .gallery-toolbar{padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:12px}.filter-group{display:flex;gap:6px;flex-wrap:wrap}.filter-btn{height:30px;border:1px solid var(--ui-border-control);border-radius:5px;background:var(--ui-bg-control);color:var(--ui-text);padding:0 10px;cursor:pointer}.filter-btn.active{border-color:var(--cyan);color:var(--cyan)}.filter-btn span{opacity:.7;margin-left:4px}.gallery-status{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}.path-note{color:var(--ui-text-muted)}
+-.gallery-content{padding:12px;min-height:260px}.gallery-empty{min-height:180px;display:grid;place-items:center;color:var(--ui-text-muted);font-size:13px}.media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}.media-card{border:1px solid var(--ui-border-control);border-radius:8px;background:var(--ui-bg-control-strong);overflow:hidden}.media-preview{height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;background:var(--ui-bg-stage);font-size:36px}.media-preview small{font-size:10px;letter-spacing:1px;color:var(--ui-text-muted)}.media-meta{padding:10px}.media-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px var(--ui-font-mono);color:var(--ui-text)}.media-type{margin-top:4px;font-size:10px;color:var(--ui-text-muted)}.media-actions{display:flex;gap:6px;padding:0 10px 10px}.media-actions .taf-btn{flex:1}.download-error{padding:10px;color:var(--ui-danger)}.protocol-note{font-size:10px;color:var(--ui-text-muted);opacity:.85}
++.gallery-content{padding:12px;min-height:260px}.gallery-empty{min-height:180px;display:grid;place-items:center;color:var(--ui-text-muted);font-size:13px}.media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}.media-card{border:1px solid var(--ui-border-control);border-radius:8px;background:var(--ui-bg-control-strong);overflow:hidden}.media-preview{height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;background:var(--ui-bg-stage);font-size:36px}.media-preview small{font-size:10px;letter-spacing:1px;color:var(--ui-text-muted)}.media-meta{padding:10px}.media-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px var(--ui-font-mono);color:var(--ui-text)}.media-type{margin-top:4px;font-size:10px;color:var(--ui-text-muted)}.media-time{margin-top:4px;font-size:10px;color:var(--ui-text-muted)}.media-actions{display:flex;gap:6px;padding:0 10px 10px}.media-actions .taf-btn{flex:1}.download-error{padding:10px;color:var(--ui-danger)}.protocol-note{font-size:10px;color:var(--ui-text-muted);opacity:.85}
+ .recognition-controls{padding:12px;display:flex;align-items:center;justify-content:space-between;gap:14px}.recognition-controls small{color:var(--ui-text-muted)}.mode-explainer{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.mode-card{padding:12px;display:flex;flex-direction:column;gap:5px}.mode-card strong{color:var(--cyan)}.mode-card span{font-size:12px}.mode-card small{color:var(--ui-text-muted);font-size:10px}
+ .android-media{padding:12px}.android-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}.android-card{border:1px solid var(--ui-border-control);border-radius:8px;overflow:hidden;background:var(--ui-bg-control-strong)}.reco-preview-wrap{position:relative}.android-card img{display:block;width:100%;height:150px;object-fit:cover;background:var(--ui-bg-stage)}.android-raw-preview{height:150px;display:grid;place-items:center;background:var(--ui-bg-stage);color:var(--ui-text-muted);font:12px var(--ui-font-mono)}.source-badge,.verified-badge{position:absolute;top:7px;padding:3px 6px;border-radius:4px;background:var(--ui-bg-control-strong);border:1px solid var(--ui-border-control);font:9px var(--ui-font-mono)}.source-badge{left:7px;color:var(--cyan)}.verified-badge{right:7px;color:var(--ui-success,#53d18d)}.android-card-meta{padding:9px;display:flex;flex-direction:column;gap:4px}.android-card-meta strong{font:11px var(--ui-font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.android-card-meta small{font-size:10px;color:var(--ui-text-muted)}.metadata-details{margin-top:5px;font-size:10px}.metadata-details summary{cursor:pointer;color:var(--cyan)}.metadata-details pre{max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--ui-bg-stage);padding:8px;border-radius:5px;font:9px var(--ui-font-mono)}
+ @media (max-width:760px){.gallery-header,.gallery-toolbar,.recognition-controls{align-items:flex-start;flex-direction:column}.gallery-status{justify-content:flex-start}.mode-explainer{grid-template-columns:1fr}}
+--- a/webui/src/i18n/index.ts
++++ b/webui/src/i18n/index.ts
+@@ -34,7 +34,7 @@
+     'telemetry.phoneBattery': 'Phone', 'telemetry.controllerBattery': 'Controller', 'telemetry.droneBattery': 'Drone',
+     'actions.flight': 'Flight Actions', 'actions.takeoff': 'Takeoff', 'actions.takeoffConfirm': 'Confirm takeoff?', 'actions.land': 'Land', 'actions.landConfirm': 'Confirm landing?', 'actions.cancelLand': 'Cancel landing', 'actions.rth': 'RTH', 'actions.rthConfirm': 'Confirm return-to-home?', 'actions.cancelRth': 'Cancel RTH',
+     'actions.emergency': 'Emergency Stop', 'actions.emergencyConfirmTitle': 'Confirm emergency stop', 'actions.emergencyConfirmText': 'Emergency stop can stop the motors immediately. Really execute this action?', 'actions.emergencyExecute': 'Execute emergency stop', 'actions.cancel': 'Cancel', 'actions.camera': 'Camera & Video Control', 'actions.photo': 'Photo', 'actions.snapshotAndroid': 'Live Reco capture',
+-    'actions.record': 'Record Toggle', 'actions.keyframe': 'Request Keyframe (IDR)', 'actions.liveview': 'Initialize LiveView Parameters',
++    'actions.record': 'Video Start/Stop', 'actions.keyframe': 'Request Keyframe (IDR)', 'actions.liveview': 'Initialize LiveView Parameters',
+     'video.waitingTitle': 'Waiting for drone video stream',
+     'video.waitingDesc': 'Currently using direct frontend USB passthrough mode. If the aircraft is powered on and paired, activate the stream to send the initialization sequence.',
+     'video.usbPassthrough': 'USB Passthrough Channel (WebSocket):', 'video.androidUsb': 'Android USB accessory:',
+@@ -66,7 +66,7 @@
+     'telemetry.phoneBattery': 'Handy', 'telemetry.controllerBattery': 'FB', 'telemetry.droneBattery': 'Drohne',
+     'actions.flight': 'Flugaktionen', 'actions.takeoff': 'Start', 'actions.takeoffConfirm': 'Start wirklich ausloesen?', 'actions.land': 'Landung', 'actions.landConfirm': 'Landung wirklich ausloesen?', 'actions.cancelLand': 'Landung abbrechen', 'actions.rth': 'RTH', 'actions.rthConfirm': 'Rueckkehr wirklich ausloesen?', 'actions.cancelRth': 'RTH abbrechen',
+     'actions.emergency': 'Not-Aus', 'actions.emergencyConfirmTitle': 'Not-Aus bestaetigen', 'actions.emergencyConfirmText': 'Not-Aus kann die Motoren sofort stoppen. Aktion wirklich ausfuehren?', 'actions.emergencyExecute': 'Not-Aus ausfuehren', 'actions.cancel': 'Abbrechen', 'actions.camera': 'Kamera & Video', 'actions.photo': 'Foto', 'actions.snapshotAndroid': 'Live Reco aufnehmen',
+-    'actions.record': 'Aufnahme umschalten', 'actions.keyframe': 'Schlüsselbild anfordern (IDR)', 'actions.liveview': 'LiveView-Parameter initialisieren',
++    'actions.record': 'Video Start/Stopp', 'actions.keyframe': 'Schlüsselbild anfordern (IDR)', 'actions.liveview': 'LiveView-Parameter initialisieren',
+     'video.waitingTitle': 'Warte auf Drohnen-Videostream',
+     'video.waitingDesc': 'Direkter USB-Passthrough-Modus ist aktiv. Wenn die Drohne eingeschaltet und gekoppelt ist, den Stream aktivieren, um die Initialisierungssequenz zu senden.',
+     'video.usbPassthrough': 'USB-Passthrough-Kanal (WebSocket):', 'video.androidUsb': 'Android-USB-Zubehör:',
+@@ -94,7 +94,7 @@
+     'telemetry.horizontalDistance': '水平距离', 'telemetry.satellites': '卫星', 'telemetry.heading': '航向', 'telemetry.pitch': '俯仰',
+     'telemetry.roll': '横滚', 'telemetry.controllerVoltage': '遥控器电压', 'telemetry.phoneBattery': '手机', 'telemetry.controllerBattery': '遥控器', 'telemetry.droneBattery': '无人机',
+     'actions.flight': '飞行动作', 'actions.takeoff': '起飞', 'actions.takeoffConfirm': '确认起飞？', 'actions.land': '降落', 'actions.landConfirm': '确认降落？', 'actions.cancelLand': '取消降落', 'actions.rth': '返航', 'actions.rthConfirm': '确认返航？', 'actions.cancelRth': '取消返航', 'actions.emergency': '紧急停止', 'actions.emergencyConfirmTitle': '确认紧急停止', 'actions.emergencyConfirmText': '紧急停止可能立即停止电机。确定执行吗？', 'actions.emergencyExecute': '执行紧急停止', 'actions.cancel': '取消',
+-    'actions.camera': '相机与视频控制', 'actions.photo': '拍照', 'actions.snapshotAndroid': '保存 Live Reco 图像', 'actions.record': '录像切换', 'actions.keyframe': '请求关键帧 (IDR)',
++    'actions.camera': '相机与视频控制', 'actions.photo': '拍照', 'actions.snapshotAndroid': '保存 Live Reco 图像', 'actions.record': '视频开始/停止', 'actions.keyframe': '请求关键帧 (IDR)',
+     'actions.liveview': '初始化 LiveView 参数',
+     'video.waitingTitle': '等待无人机视频流', 'video.waitingDesc': '当前使用前端 USB 直通模式。如果飞行器已开机并完成配对，请激活视频流以发送初始化序列。',
+     'video.usbPassthrough': 'USB 直通通道 (WebSocket)：', 'video.androidUsb': 'Android USB 附件：', 'video.rxLink': '遥控器 / 飞行器 RX 链路：',
+--- a/webui/src/services/CameraMediaService.ts
++++ b/webui/src/services/CameraMediaService.ts
+@@ -33,6 +33,11 @@
+     resolve: (value: AndroidStoredImage | undefined) => void
+     reject: (error: Error) => void
+   } = null
++  private static downloadTimer: ReturnType<typeof setTimeout> | null = null
++  private static downloadRetryCount = 0
++  private static readonly DOWNLOAD_TIMEOUT_MS = 3000
++  private static readonly DOWNLOAD_MAX_RETRIES = 3
++  private static readonly DOWNLOAD_CHUNK_SIZE = 32768n
+   private static pendingDelete: null | {
+     fileName: string
+     resolve: () => void
+@@ -311,6 +316,39 @@
+     })
+   }
+ 
++  private static clearDownloadTimeout() {
++    if (this.downloadTimer) clearTimeout(this.downloadTimer)
++    this.downloadTimer = null
++  }
++
++  private static armDownloadTimeout(offset: bigint, length: bigint) {
++    this.clearDownloadTimeout()
++    this.downloadTimer = setTimeout(() => {
++      const dl = this.activeDownload
++      if (!dl) return
++      if (dl.received !== offset) return
++      if (this.downloadRetryCount < this.DOWNLOAD_MAX_RETRIES) {
++        this.downloadRetryCount++
++        useDroneStore().addLog('WARN', `Camera download timeout at ${offset}; retry ${this.downloadRetryCount}/${this.DOWNLOAD_MAX_RETRIES}`)
++        this.send(PacketBuilder.buildCameraDownloadChunk(dl.fileName, offset, length))
++        this.armDownloadTimeout(offset, length)
++        return
++      }
++      this.failDownload(`Timeout waiting for camera file data at offset ${offset}`)
++    }, this.DOWNLOAD_TIMEOUT_MS)
++  }
++
++  private static failDownload(message: string) {
++    const dl = this.activeDownload
++    if (!dl) return
++    this.clearDownloadTimeout()
++    const cam = useCameraStore()
++    cam.download.active = false
++    cam.download.error = message
++    this.activeDownload = null
++    dl.reject(new Error(message))
++  }
++
+   private static requestNextDownloadChunk() {
+     const dl = this.activeDownload
+     if (!dl) return
+@@ -319,13 +357,16 @@
+       this.finishDownload()
+       return
+     }
+-    const length = remaining > 102400n ? 102400n : remaining
++    const length = remaining > this.DOWNLOAD_CHUNK_SIZE ? this.DOWNLOAD_CHUNK_SIZE : remaining
++    this.downloadRetryCount = 0
+     this.send(PacketBuilder.buildCameraDownloadChunk(dl.fileName, dl.received, length))
++    this.armDownloadTimeout(dl.received, length)
+   }
+ 
+   private static async finishDownload() {
+     const dl = this.activeDownload
+     if (!dl) return
++    this.clearDownloadTimeout()
+     const cam = useCameraStore()
+     const drone = useDroneStore()
+     const blobParts = dl.chunks.map(chunk => chunk.slice().buffer as ArrayBuffer)
+@@ -450,6 +491,7 @@
+       }
+       if (this.activeDownload && cmd === CAMERA_USB.FILE_DOWNLOAD) {
+         const dl = this.activeDownload
++        this.clearDownloadTimeout()
+         cam.download.active = false
+         cam.download.error = `Camera download failed with status ${status}`
+         this.activeDownload = null
+@@ -597,7 +639,7 @@
+         break
+       }
+       case CAMERA_USB.FILE_DOWNLOAD:
+-        this.handleDownloadData(payload)
++        this.handleDownloadData(data)
+         break
+       case CAMERA_USB.FILE_DELETE: {
+         drone.addLog('INFO', 'Camera file delete acknowledged')
+@@ -668,33 +710,72 @@
+     useDroneStore().addLog('INFO', `Camera gallery page parsed: photos=${this.photoNames.length}/${this.photoCount}, videos=${this.videoNames.length}/${this.videoCount}`)
+   }
+ 
+-  private static handleDownloadData(inner: Uint8Array) {
++  private static handleDownloadData(body: Uint8Array) {
+     const dl = this.activeDownload
+-    if (!dl || inner.length < 22) return
++    if (!dl || body.length < 11) return
+     const cam = useCameraStore()
+-    const flag = inner[8]
++    const drone = useDroneStore()
++    const flag = body[0]
+     const fileEnd = flag === 2
+-    const base = fileEnd ? 41 : 9 // cmd/status/flag + optional 32-byte trailer before offset
+-    if (inner.length < base + 10) return
+-    const view = new DataView(inner.buffer, inner.byteOffset, inner.byteLength)
+-    const offset = view.getBigUint64(base, true)
+-    const payloadLen = view.getUint16(base + 8, true)
+-    const start = base + 10
+-    if (start + payloadLen > inner.length) return
+-    const chunk = inner.slice(start, start + payloadLen)
++    const view = new DataView(body.buffer, body.byteOffset, body.byteLength)
+ 
+-    if (offset !== dl.received) {
+-      cam.download.active = false
+-      cam.download.error = `Unexpected camera file offset ${offset}; expected ${dl.received}`
+-      this.activeDownload = null
+-      dl.reject(new Error(cam.download.error))
++    type Candidate = { offset: bigint; start: number; length: number; layout: string }
++    const candidates: Candidate[] = []
++    const addCandidates = (base: number, tag: string) => {
++      // Prefer the 64-bit length layout used by the request builder. If a firmware
++      // variant returns the older 16-bit length field, the second candidate covers it.
++      if (base + 16 <= body.length) {
++        const offset = view.getBigUint64(base, true)
++        const len64 = view.getBigUint64(base + 8, true)
++        if (len64 > 0n && len64 <= BigInt(Number.MAX_SAFE_INTEGER)) {
++          const n = Number(len64)
++          const start64 = base + 16
++          if (start64 + n <= body.length) candidates.push({ offset, start: start64, length: n, layout: `${tag}/u64` })
++        }
++      }
++      if (base + 10 <= body.length) {
++        const offset = view.getBigUint64(base, true)
++        const len16 = view.getUint16(base + 8, true)
++        const start16 = base + 10
++        if (len16 > 0 && start16 + len16 <= body.length) candidates.push({ offset, start: start16, length: len16, layout: `${tag}/u16` })
++      }
++    }
++
++    // Normal block: flag + offset + length + payload. Some end blocks add a 32-byte
++    // integrity trailer before offset, matching the Potensic gallery downloader family.
++    addCandidates(1, 'direct')
++    if (fileEnd) addCandidates(33, 'end+32')
++
++    const candidate = candidates.find(c => c.offset === dl.received) || candidates[0]
++    if (!candidate) {
++      drone.addLog('WARN', `Camera download frame not decoded: flag=${flag} body=${body.length}B`)
++      return
++    }
++
++    this.clearDownloadTimeout()
++    this.downloadRetryCount = 0
++
++    if (candidate.offset < dl.received) {
++      const duplicateEnd = candidate.offset + BigInt(candidate.length)
++      if (duplicateEnd <= dl.received) {
++        drone.addLog('WARN', `Ignoring duplicate camera download block at ${candidate.offset} (${candidate.length}B)`)
++        this.requestNextDownloadChunk()
++        return
++      }
++    }
++    if (candidate.offset !== dl.received) {
++      this.failDownload(`Unexpected camera file offset ${candidate.offset}; expected ${dl.received}`)
+       return
+     }
++
++    const chunk = body.slice(candidate.start, candidate.start + candidate.length)
+     dl.chunks.push(chunk)
+     dl.received += BigInt(chunk.length)
+-    cam.download.progress = Number((dl.received * 100n) / dl.total)
++    const pct = Number(dl.received) * 100 / Number(dl.total)
++    cam.download.progress = Math.min(100, Math.round(pct * 10) / 10)
++    drone.addLog('INFO', `Camera download block: ${candidate.layout}, ${chunk.length}B, ${cam.download.progress}%`)
+ 
+-    if (fileEnd || dl.received >= dl.total) this.finishDownload()
+-    else if (flag === 1) this.requestNextDownloadChunk()
++    if (fileEnd || dl.received >= dl.total) void this.finishDownload()
++    else this.requestNextDownloadChunk()
+   }
+ }
+--- a/webui/src/services/DroneControlService.ts
++++ b/webui/src/services/DroneControlService.ts
+@@ -6,6 +6,7 @@
+ import { PacketBuilder } from '../protocol/PacketBuilder'
+ import { ByteUtils } from '../utils/ByteUtils'
+ import { useDroneStore } from '../stores/useDroneStore'
++import { useCameraStore } from '../stores/useCameraStore'
+ import { AndroidMediaService } from './AndroidMediaService'
+ import { RecognitionMetadataService } from './RecognitionMetadataService'
+ 
+@@ -280,16 +281,34 @@
+ 
+   // === Camera Actions ===
+ 
+-  static takePhoto() {
++  private static sendCaptureCommand(packet: Uint8Array, label: string) {
+     const store = useDroneStore()
+-    store.addLog('INFO', 'Send photo command via APP_TO_CAMERA / function 0x0020 / cmd 0x01')
+-    this.transport.send(PacketBuilder.buildCameraTakePhoto())
++    const camera = useCameraStore()
++    const send = () => {
++      store.addLog('INFO', `${label}: FE 0x15 / camera function 0x1200`)
++      this.transport.send(packet)
++    }
++
++    // The camera does not reliably accept capture commands while it is in gallery/playback mode.
++    // Leave gallery first and give the camera a short settling interval before capture.
++    if (camera.galleryEntered) {
++      store.addLog('INFO', `${label}: leave camera gallery before capture`)
++      this.transport.send(PacketBuilder.buildCameraQuitGallery())
++      camera.galleryEntered = false
++      camera.galleryLoading = false
++      camera.galleryState = 'CLOSED'
++      window.setTimeout(send, 250)
++      return
++    }
++    send()
++  }
++
++  static takePhoto() {
++    this.sendCaptureCommand(PacketBuilder.buildTakePhoto(), 'Take photo (cmd 0x51)')
+   }
+ 
+   static toggleRecord() {
+-    const store = useDroneStore()
+-    store.addLog('INFO', 'Send record command via APP_TO_CAMERA / function 0x0020 / cmd 0x00')
+-    this.transport.send(PacketBuilder.buildCameraRecord())
++    this.sendCaptureCommand(PacketBuilder.buildToggleRecord(), 'Video start/stop (cmd 0x50)')
+   }
+ 
+   static async saveLiveSnapshotToAndroid() {
+--- a/webui/src/stores/useCameraStore.ts
++++ b/webui/src/stores/useCameraStore.ts
+@@ -4,6 +4,8 @@
+ export type CameraMediaFile = {
+   name: string
+   type: 'photo' | 'video'
++  timestamp?: number
++  timestampSource?: 'filename'
+ }
+ 
+ export type GalleryState = 'CLOSED' | 'OPENING' | 'OPEN' | 'LOADING_COUNT' | 'LOADING_LIST' | 'READY' | 'ERROR'
+@@ -54,9 +56,19 @@
+ 
+   const media = computed(() => [...videos.value, ...photos.value])
+ 
++  function timestampFromCameraName(name: string): number | undefined {
++    // Common camera filename forms: ...YYYYMMDD_HHMMSS..., ...YYYY-MM-DD_HH-MM-SS...
++    // and compact ...YYYYMMDDHHMMSS.... Keep this filename-derived only; do not invent a time.
++    const separated = name.match(/(20\d{2})[-_]?(\d{2})[-_]?(\d{2})[T_ -]?(\d{2})[-_:]?(\d{2})[-_:]?(\d{2})/)
++    if (!separated) return undefined
++    const [, y, mo, d, h, mi, sec] = separated
++    const ts = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec)).getTime()
++    return Number.isFinite(ts) ? ts : undefined
++  }
++
+   function setGalleryFiles(photoNames: string[], videoNames: string[]) {
+-    photos.value = photoNames.map(name => ({ name, type: 'photo' as const }))
+-    videos.value = videoNames.map(name => ({ name, type: 'video' as const }))
++    photos.value = photoNames.map(name => ({ name, type: 'photo' as const, timestamp: timestampFromCameraName(name), timestampSource: 'filename' as const }))
++    videos.value = videoNames.map(name => ({ name, type: 'video' as const, timestamp: timestampFromCameraName(name), timestampSource: 'filename' as const }))
+     galleryLoading.value = false
+     galleryState.value = 'READY'
+     galleryError.value = ''

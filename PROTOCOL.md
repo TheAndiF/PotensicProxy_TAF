@@ -283,7 +283,7 @@ The older TAF `buildFlightCommand(group, subcmd)` / short `0x0301` path remains 
 
 ## Camera Commands (TX)
 
-TAF uses two confirmed camera paths. LiveView/engineering commands use **short 0x1200**, while normal camera capture/settings/gallery use the PotensicPro USB camera function **0x0020**. Both send with FE type `0x15`.
+TAF uses two camera paths. LiveView/engineering **and capture actions** use **short 0x1200**; on the tested ATOM path photo is command `0x51` and video start/stop is `0x50`. The PotensicPro USB camera function **0x0020** remains in use for settings and gallery/media transfer. Both send with FE type `0x15`. This split was restored after device feedback showed that `0x0020/0x01` did not create a photo although gallery RX worked.
 
 ### Command format
 
@@ -300,14 +300,12 @@ FF FD [len_LE] [00 12] [cmd_byte] [data...] [xor]
 | 0xD9 | Request IDR frame |
 | 0xD2 | WifiDirectSwitch (data: 0x01=enter + 16 bytes phoneId) |
 
-### PotensicPro-compatible USB camera control path (short `0x0020`)
+### PotensicPro-compatible USB camera settings/gallery path (short `0x0020`)
 
-The normal capture/settings/gallery/zoom path sends FE `0x15` APP_TO_CAMERA with inner header `FF FD` and receives FE `0x05` CAMERA_TO_APP with inner header `FF FE`. The inner message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
+The settings/gallery/zoom path sends FE `0x15` APP_TO_CAMERA with inner header `FF FD` and receives FE `0x05` CAMERA_TO_APP with inner header `FF FE`. The inner message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
 
 | Cmd | Direction | Description |
 |-----|-----------|-------------|
-| `0x00` | TX/RX | Record command on the normal camera path. |
-| `0x01` | TX/RX | Take photo on the normal camera path. |
 | `0x18` | TX/RX | File count; photo/video counts are uint16 little-endian. |
 | `0x19` | TX/RX | Paged filename list; photo/video pagination is separate and page size is at most 50. |
 | `0x1A` | TX/RX | File details. |

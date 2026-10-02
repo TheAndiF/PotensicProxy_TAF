@@ -1,0 +1,23 @@
+BL_Fix camera capture and media download flow
+Date: 2026-10-02
+Summary:
+- Restored ATOM photo and video capture actions to camera function 0x1200 using commands 0x51 and 0x50 after device feedback showed that 0x0020/0x01 did not create a photo.
+- Leave camera gallery/playback mode before sending a capture action.
+- Renamed the cockpit record action to a direct Video Start/Stop button.
+- Added filename-derived timestamps to drone-gallery entries without inventing unknown metadata fields.
+- Made 0x1B downloads robust against 64-bit and 16-bit block-length layouts, added 32 KiB chunks, progress with decimals, retries/timeouts, duplicate-block handling and unconditional next-block requests until completion.
+- Kept camera settings, gallery and media-transfer commands on function 0x0020 and documented the split from capture commands.
+- TypeScript/Vue type check passes. Full Vite bundle remains environment-blocked because the supplied node_modules only contains Windows Rollup native packages.
+Changed files:
+- README.md
+- PROTOCOL.md
+- app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+- webui/src/components/gallery/GalleryView.vue
+- webui/src/i18n/index.ts
+- webui/src/services/CameraMediaService.ts
+- webui/src/services/DroneControlService.ts
+- webui/src/stores/useCameraStore.ts
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Kamera-Aufnahme-Download-Zeitstempel - v1.1.docx
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Kamera-Aufnahme-Download-Zeitstempel - v1.1.pdf
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_KAMERA_CAPTURE_DOWNLOAD_v1.1.md
+- PATCH_CAMERA_CAPTURE_DOWNLOAD_2026-10-02_v1.1.patch

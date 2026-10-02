@@ -70,7 +70,7 @@ The WebUI supports direct WebCodecs rendering plus snapshot/MJPEG fallback paths
 
 The project now has two deliberately separate Android image libraries:
 
-- **Normal Camera:** photo capture now uses the PotensicPro-compatible APP_TO_CAMERA path FE `0x15` / inner `FF FD` / function `0x0020` / command `0x01`; recording uses the same path with command `0x00`. Camera responses are accepted on FE `0x05` with inner RX header `FF FE`. Downloaded JPG/JPEG/PNG/DNG files are published through Android `MediaStore` under `Pictures/PotensicProxy/Camera`; MP4 files are published under `Movies/PotensicProxy/Camera`. Normal camera downloads are not automatically deleted from the aircraft.
+- **Normal Camera:** capture actions use the already captured ATOM camera-control path FE `0x15` / inner `FF FD` / function `0x1200`: photo `0x51`, video start/stop `0x50`. The `0x0020` USB-camera path remains responsible for settings and gallery/media commands (`0x18`-`0x22`). Camera gallery responses are accepted on FE `0x05` with inner RX header `FF FE`. Downloaded JPG/JPEG/PNG/DNG files are published through Android `MediaStore` under `Pictures/PotensicProxy/Camera`; MP4 files are published under `Movies/PotensicProxy/Camera`. Normal camera downloads are not automatically deleted from the aircraft.
 - **Recognition:** all images intended for later image recognition are published under `Pictures/PotensicProxy/Recognition` and shown in the separate **Recognition** tab of the Gallery page.
 
 Recognition has two capture sources that feed the same metadata/index pipeline:

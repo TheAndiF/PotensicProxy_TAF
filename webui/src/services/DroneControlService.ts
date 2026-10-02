@@ -6,6 +6,7 @@ import { UsbTransportService } from './UsbTransportService'
 import { PacketBuilder } from '../protocol/PacketBuilder'
 import { ByteUtils } from '../utils/ByteUtils'
 import { useDroneStore } from '../stores/useDroneStore'
+import { useCameraStore } from '../stores/useCameraStore'
 import { AndroidMediaService } from './AndroidMediaService'
 import { RecognitionMetadataService } from './RecognitionMetadataService'
 
@@ -280,16 +281,34 @@ export class DroneControlService {
 
   // === Camera Actions ===
 
-  static takePhoto() {
+  private static sendCaptureCommand(packet: Uint8Array, label: string) {
     const store = useDroneStore()
-    store.addLog('INFO', 'Send photo command via APP_TO_CAMERA / function 0x0020 / cmd 0x01')
-    this.transport.send(PacketBuilder.buildCameraTakePhoto())
+    const camera = useCameraStore()
+    const send = () => {
+      store.addLog('INFO', `${label}: FE 0x15 / camera function 0x1200`)
+      this.transport.send(packet)
+    }
+
+    // The camera does not reliably accept capture commands while it is in gallery/playback mode.
+    // Leave gallery first and give the camera a short settling interval before capture.
+    if (camera.galleryEntered) {
+      store.addLog('INFO', `${label}: leave camera gallery before capture`)
+      this.transport.send(PacketBuilder.buildCameraQuitGallery())
+      camera.galleryEntered = false
+      camera.galleryLoading = false
+      camera.galleryState = 'CLOSED'
+      window.setTimeout(send, 250)
+      return
+    }
+    send()
+  }
+
+  static takePhoto() {
+    this.sendCaptureCommand(PacketBuilder.buildTakePhoto(), 'Take photo (cmd 0x51)')
   }
 
   static toggleRecord() {
-    const store = useDroneStore()
-    store.addLog('INFO', 'Send record command via APP_TO_CAMERA / function 0x0020 / cmd 0x00')
-    this.transport.send(PacketBuilder.buildCameraRecord())
+    this.sendCaptureCommand(PacketBuilder.buildToggleRecord(), 'Video start/stop (cmd 0x50)')
   }
 
   static async saveLiveSnapshotToAndroid() {

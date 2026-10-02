@@ -33,6 +33,11 @@ export class CameraMediaService {
     resolve: (value: AndroidStoredImage | undefined) => void
     reject: (error: Error) => void
   } = null
+  private static downloadTimer: ReturnType<typeof setTimeout> | null = null
+  private static downloadRetryCount = 0
+  private static readonly DOWNLOAD_TIMEOUT_MS = 3000
+  private static readonly DOWNLOAD_MAX_RETRIES = 3
+  private static readonly DOWNLOAD_CHUNK_SIZE = 32768n
   private static pendingDelete: null | {
     fileName: string
     resolve: () => void
@@ -311,6 +316,39 @@ export class CameraMediaService {
     })
   }
 
+  private static clearDownloadTimeout() {
+    if (this.downloadTimer) clearTimeout(this.downloadTimer)
+    this.downloadTimer = null
+  }
+
+  private static armDownloadTimeout(offset: bigint, length: bigint) {
+    this.clearDownloadTimeout()
+    this.downloadTimer = setTimeout(() => {
+      const dl = this.activeDownload
+      if (!dl) return
+      if (dl.received !== offset) return
+      if (this.downloadRetryCount < this.DOWNLOAD_MAX_RETRIES) {
+        this.downloadRetryCount++
+        useDroneStore().addLog('WARN', `Camera download timeout at ${offset}; retry ${this.downloadRetryCount}/${this.DOWNLOAD_MAX_RETRIES}`)
+        this.send(PacketBuilder.buildCameraDownloadChunk(dl.fileName, offset, length))
+        this.armDownloadTimeout(offset, length)
+        return
+      }
+      this.failDownload(`Timeout waiting for camera file data at offset ${offset}`)
+    }, this.DOWNLOAD_TIMEOUT_MS)
+  }
+
+  private static failDownload(message: string) {
+    const dl = this.activeDownload
+    if (!dl) return
+    this.clearDownloadTimeout()
+    const cam = useCameraStore()
+    cam.download.active = false
+    cam.download.error = message
+    this.activeDownload = null
+    dl.reject(new Error(message))
+  }
+
   private static requestNextDownloadChunk() {
     const dl = this.activeDownload
     if (!dl) return
@@ -319,13 +357,16 @@ export class CameraMediaService {
       this.finishDownload()
       return
     }
-    const length = remaining > 102400n ? 102400n : remaining
+    const length = remaining > this.DOWNLOAD_CHUNK_SIZE ? this.DOWNLOAD_CHUNK_SIZE : remaining
+    this.downloadRetryCount = 0
     this.send(PacketBuilder.buildCameraDownloadChunk(dl.fileName, dl.received, length))
+    this.armDownloadTimeout(dl.received, length)
   }
 
   private static async finishDownload() {
     const dl = this.activeDownload
     if (!dl) return
+    this.clearDownloadTimeout()
     const cam = useCameraStore()
     const drone = useDroneStore()
     const blobParts = dl.chunks.map(chunk => chunk.slice().buffer as ArrayBuffer)
@@ -450,6 +491,7 @@ export class CameraMediaService {
       }
       if (this.activeDownload && cmd === CAMERA_USB.FILE_DOWNLOAD) {
         const dl = this.activeDownload
+        this.clearDownloadTimeout()
         cam.download.active = false
         cam.download.error = `Camera download failed with status ${status}`
         this.activeDownload = null
@@ -597,7 +639,7 @@ export class CameraMediaService {
         break
       }
       case CAMERA_USB.FILE_DOWNLOAD:
-        this.handleDownloadData(payload)
+        this.handleDownloadData(data)
         break
       case CAMERA_USB.FILE_DELETE: {
         drone.addLog('INFO', 'Camera file delete acknowledged')
@@ -668,33 +710,72 @@ export class CameraMediaService {
     useDroneStore().addLog('INFO', `Camera gallery page parsed: photos=${this.photoNames.length}/${this.photoCount}, videos=${this.videoNames.length}/${this.videoCount}`)
   }
 
-  private static handleDownloadData(inner: Uint8Array) {
+  private static handleDownloadData(body: Uint8Array) {
     const dl = this.activeDownload
-    if (!dl || inner.length < 22) return
+    if (!dl || body.length < 11) return
     const cam = useCameraStore()
-    const flag = inner[8]
+    const drone = useDroneStore()
+    const flag = body[0]
     const fileEnd = flag === 2
-    const base = fileEnd ? 41 : 9 // cmd/status/flag + optional 32-byte trailer before offset
-    if (inner.length < base + 10) return
-    const view = new DataView(inner.buffer, inner.byteOffset, inner.byteLength)
-    const offset = view.getBigUint64(base, true)
-    const payloadLen = view.getUint16(base + 8, true)
-    const start = base + 10
-    if (start + payloadLen > inner.length) return
-    const chunk = inner.slice(start, start + payloadLen)
+    const view = new DataView(body.buffer, body.byteOffset, body.byteLength)
 
-    if (offset !== dl.received) {
-      cam.download.active = false
-      cam.download.error = `Unexpected camera file offset ${offset}; expected ${dl.received}`
-      this.activeDownload = null
-      dl.reject(new Error(cam.download.error))
+    type Candidate = { offset: bigint; start: number; length: number; layout: string }
+    const candidates: Candidate[] = []
+    const addCandidates = (base: number, tag: string) => {
+      // Prefer the 64-bit length layout used by the request builder. If a firmware
+      // variant returns the older 16-bit length field, the second candidate covers it.
+      if (base + 16 <= body.length) {
+        const offset = view.getBigUint64(base, true)
+        const len64 = view.getBigUint64(base + 8, true)
+        if (len64 > 0n && len64 <= BigInt(Number.MAX_SAFE_INTEGER)) {
+          const n = Number(len64)
+          const start64 = base + 16
+          if (start64 + n <= body.length) candidates.push({ offset, start: start64, length: n, layout: `${tag}/u64` })
+        }
+      }
+      if (base + 10 <= body.length) {
+        const offset = view.getBigUint64(base, true)
+        const len16 = view.getUint16(base + 8, true)
+        const start16 = base + 10
+        if (len16 > 0 && start16 + len16 <= body.length) candidates.push({ offset, start: start16, length: len16, layout: `${tag}/u16` })
+      }
+    }
+
+    // Normal block: flag + offset + length + payload. Some end blocks add a 32-byte
+    // integrity trailer before offset, matching the Potensic gallery downloader family.
+    addCandidates(1, 'direct')
+    if (fileEnd) addCandidates(33, 'end+32')
+
+    const candidate = candidates.find(c => c.offset === dl.received) || candidates[0]
+    if (!candidate) {
+      drone.addLog('WARN', `Camera download frame not decoded: flag=${flag} body=${body.length}B`)
       return
     }
+
+    this.clearDownloadTimeout()
+    this.downloadRetryCount = 0
+
+    if (candidate.offset < dl.received) {
+      const duplicateEnd = candidate.offset + BigInt(candidate.length)
+      if (duplicateEnd <= dl.received) {
+        drone.addLog('WARN', `Ignoring duplicate camera download block at ${candidate.offset} (${candidate.length}B)`)
+        this.requestNextDownloadChunk()
+        return
+      }
+    }
+    if (candidate.offset !== dl.received) {
+      this.failDownload(`Unexpected camera file offset ${candidate.offset}; expected ${dl.received}`)
+      return
+    }
+
+    const chunk = body.slice(candidate.start, candidate.start + candidate.length)
     dl.chunks.push(chunk)
     dl.received += BigInt(chunk.length)
-    cam.download.progress = Number((dl.received * 100n) / dl.total)
+    const pct = Number(dl.received) * 100 / Number(dl.total)
+    cam.download.progress = Math.min(100, Math.round(pct * 10) / 10)
+    drone.addLog('INFO', `Camera download block: ${candidate.layout}, ${chunk.length}B, ${cam.download.progress}%`)
 
-    if (fileEnd || dl.received >= dl.total) this.finishDownload()
-    else if (flag === 1) this.requestNextDownloadChunk()
+    if (fileEnd || dl.received >= dl.total) void this.finishDownload()
+    else this.requestNextDownloadChunk()
   }
 }
