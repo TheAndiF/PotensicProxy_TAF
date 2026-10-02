@@ -134,6 +134,16 @@ export const useDroneStore = defineStore('drone', () => {
     rcRoll: 0
   })
 
+  // Continuous gimbal target control. The actual pitch remains telemetry-owned;
+  // this state only contains the requested target and the Send4Axis actuator value.
+  const gimbalControl = reactive({
+    targetAngle: 0,
+    active: false,
+    command: 0,
+    mode: 'preset' as 'preset' | 'continuous',
+    telemetryUpdatedAt: 0
+  })
+
   // User Virtual Joysticks
   const userJoysticks = reactive<JoystickState>({
     throttle: 0,
@@ -226,6 +236,11 @@ export const useDroneStore = defineStore('drone', () => {
 
     if (packet.telemetry) {
       Object.assign(telemetry, packet.telemetry)
+      if (packet.telemetry.gimbalStateValid !== undefined ||
+          packet.telemetry.gimbalPitch !== undefined ||
+          packet.telemetry.gimbalControlPitch !== undefined) {
+        gimbalControl.telemetryUpdatedAt = Date.now()
+      }
       if (packet.telemetry.rcThrottle !== undefined) {
         rcHardwareJoysticks.throttle = packet.telemetry.rcThrottle
         rcHardwareJoysticks.yaw = packet.telemetry.rcYaw || 0
@@ -265,6 +280,11 @@ export const useDroneStore = defineStore('drone', () => {
     if (!state || typeof state !== 'object') return
     if (state.telemetry && typeof state.telemetry === 'object') {
       Object.assign(telemetry, state.telemetry)
+      if (state.telemetry.gimbalStateValid !== undefined ||
+          state.telemetry.gimbalPitch !== undefined ||
+          state.telemetry.gimbalControlPitch !== undefined) {
+        gimbalControl.telemetryUpdatedAt = Date.now()
+      }
     }
     const measured = state.control?.measured
     if (measured && typeof measured === 'object') {
@@ -295,6 +315,7 @@ export const useDroneStore = defineStore('drone', () => {
     connection,
     normalizedHost,
     telemetry,
+    gimbalControl,
     userJoysticks,
     rcHardwareJoysticks,
     streamStats,

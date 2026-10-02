@@ -23,9 +23,9 @@
           </div>
           <div class="presets">
             <span class="preset-label">Preset</span>
-            <button class="taf-btn taf-btn--compact" type="button" @click="setAngle(0)">0°</button>
-            <button class="taf-btn taf-btn--compact" type="button" @click="setAngle(-45)">-45°</button>
-            <button class="taf-btn taf-btn--compact" type="button" @click="setAngle(-90)">-90°</button>
+            <button class="taf-btn taf-btn--compact" type="button" @click="setPresetAngle(0)">0°</button>
+            <button class="taf-btn taf-btn--compact" type="button" @click="setPresetAngle(-45)">-45°</button>
+            <button class="taf-btn taf-btn--compact" type="button" @click="setPresetAngle(-90)">-90°</button>
           </div>
         </div>
         <div class="value-grid">
@@ -81,11 +81,11 @@ const MIN_ZOOM = 1
 const camera = useCameraStore()
 const store = useDroneStore()
 const MAX_ZOOM = computed(() => Math.max(MIN_ZOOM, camera.zoomMax || 4))
-const targetAngle = ref<0 | -45 | -90>(0)
+const targetAngle = computed(() => store.gimbalControl.targetAngle)
 const pendingGimbalAngle = ref<0 | -45 | -90 | null>(null)
 const targetZoom = computed(() => camera.zoomTarget)
 
-const actualGimbal = computed<number | null>(() => store.telemetry.gimbalStateValid ? (store.telemetry.gimbalControlPitch ?? store.telemetry.gimbalPitch ?? 0) : null)
+const actualGimbal = computed<number | null>(() => store.telemetry.gimbalStateValid ? (store.telemetry.gimbalPitch ?? null) : null)
 const actualZoom = computed(() => camera.zoomActual)
 
 const dialRef = ref<HTMLElement | null>(null)
@@ -109,18 +109,21 @@ const zoomKnobStyle = computed(() => {
 
 const actualGimbalText = computed(() => actualGimbal.value == null ? '--' : `${actualGimbal.value.toFixed(0)}°`)
 const actualZoomText = computed(() => actualZoom.value == null ? '--' : `${actualZoom.value.toFixed(2)}x`)
-const gimbalStatus = computed(() => pendingGimbalAngle.value != null ? 'Warte auf Gimbal-Einstellungen …' : actualGimbal.value == null ? 'Keine Rückmeldung' : Math.abs(actualGimbal.value - targetAngle.value) <= 1 ? 'Erreicht' : 'Fährt')
+const gimbalStatus = computed(() => pendingGimbalAngle.value != null ? 'Warte auf Gimbal-Einstellungen …' : actualGimbal.value == null ? 'Keine Rückmeldung' : store.gimbalControl.active ? 'Fährt stufenlos' : Math.abs(actualGimbal.value - targetAngle.value) <= 1 ? 'Erreicht' : 'Bereit')
 const zoomStatus = computed(() => camera.zoomPending ? 'Warte auf Kamera …' : actualZoom.value == null ? 'Keine Rückmeldung' : Math.abs(actualZoom.value - targetZoom.value) <= 0.02 ? 'Erreicht' : 'Abweichung')
 
-function setAngle(value: number) {
-  // The original ATOM app exposes three confirmed absolute pitch presets via
-  // gimbal settings function 0x1A: 0°, -45° and -90°. Arbitrary absolute
-  // target angles are deliberately not invented here.
-  const presets: Array<0 | -45 | -90> = [0, -45, -90]
-  const snapped = presets.reduce((best, p) => Math.abs(p - value) < Math.abs(best - value) ? p : best, presets[0])
-  targetAngle.value = snapped
-  const sent = DroneControlService.setGimbalPitchPreset(snapped)
-  pendingGimbalAngle.value = sent ? null : snapped
+function setPresetAngle(value: 0 | -45 | -90) {
+  store.gimbalControl.targetAngle = value
+  const sent = DroneControlService.setGimbalPitchPreset(value)
+  pendingGimbalAngle.value = sent ? null : value
+}
+
+function setContinuousAngle(value: number) {
+  if (!Number.isFinite(value)) return
+  const clamped = Math.max(MIN_ANGLE, Math.min(MAX_ANGLE, Math.round(value * 10) / 10))
+  store.gimbalControl.targetAngle = clamped
+  pendingGimbalAngle.value = null
+  DroneControlService.setContinuousGimbalTarget(clamped)
 }
 
 let lastZoomSend = 0
@@ -162,7 +165,7 @@ function updateFromPointer(e: PointerEvent) {
   const usable = Math.max(1, rect.height - 30)
   const y = Math.max(15, Math.min(rect.height - 15, e.clientY - rect.top))
   const ratio = (y - 15) / usable
-  setAngle(MAX_ANGLE - ratio * (MAX_ANGLE - MIN_ANGLE))
+  setContinuousAngle(MAX_ANGLE - ratio * (MAX_ANGLE - MIN_ANGLE))
 }
 function onZoomPointerDown(e: PointerEvent) {
   zoomDragging = true
@@ -191,10 +194,11 @@ watch(() => store.telemetry.gimbalSettingsValid, valid => {
     if (DroneControlService.setGimbalPitchPreset(angle)) pendingGimbalAngle.value = null
     return
   }
+  if (store.gimbalControl.mode === 'continuous') return
   const ctrl = store.telemetry.gimbalPitchControl
-  if (ctrl === 1) targetAngle.value = 0
-  else if (ctrl === 3) targetAngle.value = -45
-  else if (ctrl === 2) targetAngle.value = -90
+  if (ctrl === 1) store.gimbalControl.targetAngle = 0
+  else if (ctrl === 3) store.gimbalControl.targetAngle = -45
+  else if (ctrl === 2) store.gimbalControl.targetAngle = -90
 })
 
 onMounted(() => {

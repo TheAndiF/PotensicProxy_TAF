@@ -132,7 +132,7 @@ function ensureAxisLoop() {
   axisTimer = setInterval(sendAxesNow, 80)
 }
 function maybeStopAxisLoop() {
-  if (leftControlActive || rightControlActive) return
+  if (leftControlActive || rightControlActive || store.gimbalControl.active) return
   if (axisTimer) { clearInterval(axisTimer); axisTimer = null }
   // Send a neutral frame immediately after both sticks have been released.
   sendAxesNow()
@@ -147,7 +147,18 @@ function onRightStickChange(v: { x: number; y: number }) {
   store.userJoysticks.pitch = v.y
   if (Date.now() - lastSend >= 80) sendAxesNow()
 }
-onBeforeUnmount(() => { if (axisTimer) clearInterval(axisTimer) })
+watch(() => store.gimbalControl.active, active => {
+  if (active) ensureAxisLoop()
+  else maybeStopAxisLoop()
+})
+onBeforeUnmount(() => {
+  DroneControlService.stopContinuousGimbal('cockpit left')
+  if (axisTimer) {
+    sendAxesNow()
+    clearInterval(axisTimer)
+    axisTimer = null
+  }
+})
 </script>
 
 <style scoped>
