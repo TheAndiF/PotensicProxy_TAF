@@ -6,6 +6,8 @@ export type CameraMediaFile = {
   type: 'photo' | 'video'
 }
 
+export type GalleryState = 'CLOSED' | 'OPENING' | 'OPEN' | 'LOADING_COUNT' | 'LOADING_LIST' | 'READY' | 'ERROR'
+
 export const useCameraStore = defineStore('camera', () => {
   const videoResolutionIndex = ref<number | null>(null)
   const photoResolutionIndex = ref<number | null>(null)
@@ -37,6 +39,8 @@ export const useCameraStore = defineStore('camera', () => {
   })
 
   const galleryEntered = ref(false)
+  const galleryState = ref<GalleryState>('CLOSED')
+  const galleryError = ref('')
   const photos = ref<CameraMediaFile[]>([])
   const videos = ref<CameraMediaFile[]>([])
   const galleryLoading = ref(false)
@@ -54,6 +58,8 @@ export const useCameraStore = defineStore('camera', () => {
     photos.value = photoNames.map(name => ({ name, type: 'photo' as const }))
     videos.value = videoNames.map(name => ({ name, type: 'video' as const }))
     galleryLoading.value = false
+    galleryState.value = 'READY'
+    galleryError.value = ''
   }
 
   return {
@@ -70,6 +76,8 @@ export const useCameraStore = defineStore('camera', () => {
     manualMode,
     sd,
     galleryEntered,
+    galleryState,
+    galleryError,
     photos,
     videos,
     media,

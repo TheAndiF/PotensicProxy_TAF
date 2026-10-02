@@ -1,0 +1,784 @@
+diff --git a/PROTOCOL.md b/PROTOCOL.md
+index bc89bb9..9b1997c 100644
+--- a/PROTOCOL.md
++++ b/PROTOCOL.md
+@@ -283,7 +283,7 @@ The older TAF `buildFlightCommand(group, subcmd)` / short `0x0301` path remains
+ 
+ ## Camera Commands (TX)
+ 
+-Camera commands use **short 0x1200**, **FE type 0x15**.
++TAF uses two confirmed camera paths. LiveView/engineering commands use **short 0x1200**, while normal camera capture/settings/gallery use the PotensicPro USB camera function **0x0020**. Both send with FE type `0x15`.
+ 
+ ### Command format
+ 
+@@ -302,7 +302,23 @@ FF FD [len_LE] [00 12] [cmd_byte] [data...] [xor]
+ 
+ ### PotensicPro-compatible USB camera control path (short `0x0020`)
+ 
+-The camera settings/gallery/zoom path uses FE `0x15` for APP_TO_CAMERA and FE `0x05` for CAMERA_TO_APP. The inner FF/FD message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
++The normal capture/settings/gallery/zoom path sends FE `0x15` APP_TO_CAMERA with inner header `FF FD` and receives FE `0x05` CAMERA_TO_APP with inner header `FF FE`. The inner message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
++
++| Cmd | Direction | Description |
++|-----|-----------|-------------|
++| `0x00` | TX/RX | Record command on the normal camera path. |
++| `0x01` | TX/RX | Take photo on the normal camera path. |
++| `0x18` | TX/RX | File count; photo/video counts are uint16 little-endian. |
++| `0x19` | TX/RX | Paged filename list; photo/video pagination is separate and page size is at most 50. |
++| `0x1A` | TX/RX | File details. |
++| `0x1B` | TX/RX | Full file download. |
++| `0x1C` | TX/RX | Thumbnail download. |
++| `0x1D` | TX/RX | Delete file. |
++| `0x1E` | TX/RX | Cancel file download. |
++| `0x1F` | TX/RX | Cancel thumbnail download. |
++| `0x20` | TX/RX | File length/metadata list. |
++| `0x21` | TX/RX | Enter gallery. |
++| `0x22` | TX/RX | Quit gallery. |
+ 
+ | Cmd | Direction | Description |
+ |-----|-----------|-------------|
+diff --git a/README.md b/README.md
+index c1f399b..74c6fb4 100644
+--- a/README.md
++++ b/README.md
+@@ -44,6 +44,13 @@ The cockpit **Height / Höhe** value follows the original Potensic app and uses
+ 
+ For the long ATOM Flight Info layout, the parser applies the same +2-byte post-horizontal-distance index shift used by PotensicPro. This places `verticalDistance`, speed fields and the aircraft `remainedBattery` byte at their correct long-layout offsets.
+ 
++
++## Camera gallery status
++
++The drone-SD gallery now follows an explicit state machine (`CLOSED`, `OPENING`, `OPEN`, `LOADING_COUNT`, `LOADING_LIST`, `READY`, `ERROR`). Enter (`0x21`), file count (`0x18`) and paged file list (`0x19`) requests use bounded timeout/retry handling, so the UI no longer remains indefinitely at “Reading media list…”. File counts are decoded little-endian and the primary `0x19` filename parser starts at the PotensicPro-confirmed response offset; the previous tolerant filename scan remains only as a fallback for firmware variants.
++
++The supplied change order also calls for `0x20` metadata and `0x1C` thumbnail block assembly/MD5 validation. The exact block response layout needed to implement those parsers is not present in the supplied TAF package or change-order wire description, so no guessed thumbnail frame parser was added. This remains device/original-app-source dependent.
++
+ ## Camera zoom status
+ 
+ Camera zoom is wired through the PotensicPro-compatible USB camera path (FE TX `0x15` / RX `0x05`, inner message short `0x0020`). The WebUI sends **SET ZOOM `0x3E`** with `zoom x 100` as a little-endian 32-bit integer and reads **GET ZOOM `0x3F`** using the same response path. Successful `0x3E` and `0x3F` responses provide the camera-reported zoom value, which is shown separately from the requested setpoint.
+@@ -63,7 +70,7 @@ The WebUI supports direct WebCodecs rendering plus snapshot/MJPEG fallback paths
+ 
+ The project now has two deliberately separate Android image libraries:
+ 
+-- **Normal Camera:** the existing mapped camera command `0x51` and the normal aircraft SD-card gallery remain unchanged. Downloaded JPG/JPEG/PNG/DNG files are published through Android `MediaStore` under `Pictures/PotensicProxy/Camera`. Normal camera downloads are not automatically deleted from the aircraft.
++- **Normal Camera:** photo capture now uses the PotensicPro-compatible APP_TO_CAMERA path FE `0x15` / inner `FF FD` / function `0x0020` / command `0x01`; recording uses the same path with command `0x00`. Camera responses are accepted on FE `0x05` with inner RX header `FF FE`. Downloaded JPG/JPEG/PNG/DNG files are published through Android `MediaStore` under `Pictures/PotensicProxy/Camera`; MP4 files are published under `Movies/PotensicProxy/Camera`. Normal camera downloads are not automatically deleted from the aircraft.
+ - **Recognition:** all images intended for later image recognition are published under `Pictures/PotensicProxy/Recognition` and shown in the separate **Recognition** tab of the Gallery page.
+ 
+ Recognition has two capture sources that feed the same metadata/index pipeline:
+@@ -115,7 +122,7 @@ The current backend includes, among others:
+ | `GET /api/video/stats` | video parser/extractor diagnostics |
+ | `GET /api/video/snapshot` | current decoded JPEG frame |
+ | `POST /api/media/snapshot` | save a Live Reco frame to Android `Pictures/PotensicProxy/Recognition` with optional metadata |
+-| `POST /api/media/import?name=...&library=...` | publish camera/Recognition JPG/JPEG/PNG/DNG to the selected Android MediaStore library |
++| `POST /api/media/import?name=...&library=...` | publish camera/Recognition JPG/JPEG/PNG/DNG or camera MP4 to Android MediaStore |
+ | `GET /api/media/local?library=camera|recognition` | list app-created images, optionally filtered by library |
+ | `GET /api/media/local/{id}` | read an app-created image by local media index id |
+ | `GET /api/video/mjpeg` | MJPEG stream |
+diff --git a/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt b/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
+index e8de397..6efa59a 100644
+--- a/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
++++ b/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
+@@ -37,6 +37,7 @@ class AndroidMediaRepository(
+     companion object {
+         private const val CAMERA_DIR = "Pictures/PotensicProxy/Camera"
+         private const val RECOGNITION_DIR = "Pictures/PotensicProxy/Recognition"
++        private const val CAMERA_VIDEO_DIR = "Movies/PotensicProxy/Camera"
+         private const val MAX_INDEX_ITEMS = 1000
+     }
+ 
+@@ -139,6 +140,79 @@ class AndroidMediaRepository(
+         return item
+     }
+ 
++    @Synchronized
++    fun saveVideo(
++        bytes: ByteArray,
++        requestedName: String?,
++        source: String = "camera-download",
++    ): JSONObject {
++        require(bytes.isNotEmpty()) { "Video payload is empty" }
++        ensureLegacyWritePermission()
++
++        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
++        val raw = requestedName
++            ?.substringAfterLast('/')
++            ?.substringAfterLast('\\')
++            ?.trim()
++            ?.takeIf { it.isNotBlank() }
++            ?: "Camera_$timestamp.mp4"
++        val safeBase = raw.replace(Regex("[^A-Za-z0-9._-]"), "_")
++        val displayName = if (safeBase.endsWith(".mp4", ignoreCase = true)) safeBase else "$safeBase.mp4"
++        val mimeType = "video/mp4"
++        val values = ContentValues().apply {
++            put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
++            put(MediaStore.Video.Media.MIME_TYPE, mimeType)
++            put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000L)
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++                put(MediaStore.Video.Media.RELATIVE_PATH, CAMERA_VIDEO_DIR)
++                put(MediaStore.Video.Media.IS_PENDING, 1)
++            } else {
++                @Suppress("DEPRECATION")
++                val publicDir = File(
++                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
++                    CAMERA_VIDEO_DIR.removePrefix("Movies/"),
++                ).apply { mkdirs() }
++                @Suppress("DEPRECATION")
++                put(MediaStore.Video.Media.DATA, File(publicDir, displayName).absolutePath)
++            }
++        }
++
++        val resolver = context.contentResolver
++        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
++            ?: throw IllegalStateException("Android MediaStore rejected video insert")
++        try {
++            resolver.openOutputStream(uri, "w")?.use { it.write(bytes) }
++                ?: throw IllegalStateException("Could not open Android MediaStore video output stream")
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++                val ready = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
++                resolver.update(uri, ready, null, null)
++            }
++        } catch (e: Exception) {
++            try { resolver.delete(uri, null, null) } catch (_: Exception) {}
++            throw e
++        }
++
++        val sourceHash = sha256(bytes)
++        val storedBytes = try { resolver.openInputStream(uri)?.use { it.readBytes() } } catch (_: Exception) { null }
++        val verified = storedBytes != null && storedBytes.size == bytes.size && sha256(storedBytes) == sourceHash
++        val item = JSONObject().apply {
++            put("id", UUID.randomUUID().toString())
++            put("name", displayName)
++            put("mimeType", mimeType)
++            put("size", bytes.size)
++            put("source", source)
++            put("library", "camera")
++            put("createdAt", System.currentTimeMillis())
++            put("uri", uri.toString())
++            put("relativePath", CAMERA_VIDEO_DIR)
++            put("sha256", sourceHash)
++            put("verified", verified)
++        }
++        appendToIndex(item)
++        Log.i("[MediaStore] Saved video ${bytes.size} bytes as $displayName verified=$verified -> $uri")
++        return item
++    }
++
+     @Synchronized
+     fun listImages(library: String? = null): JSONArray {
+         val normalized = library?.takeIf { it.isNotBlank() }?.let(::normalizeLibrary)
+diff --git a/app/src/main/java/com/potensic/proxy/DroneProtocol.kt b/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+index cd2d517..7989c3a 100644
+--- a/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
++++ b/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+@@ -158,15 +158,16 @@ object DroneProtocol {
+         return wrapFE(inner, 0x14)
+     }
+ 
+-    /** Take photo — camera cmd, short 0x1200 */
+-    fun buildTakePhoto(): ByteArray {
+-        return wrapFE(buildInnerCommand(0x51.toByte()), 0x15)
++    /** PotensicPro APP_TO_CAMERA path: FE 0x15 + FF FD + function 0x0020. */
++    fun buildLegacyCameraUsb(data: ByteArray): ByteArray {
++        return wrapFE(buildInnerCommandWithShort(0x0020, data), 0x15)
+     }
+ 
+-    /** Start/stop video recording — camera cmd, short 0x1200 */
+-    fun buildToggleRecord(): ByteArray {
+-        return wrapFE(buildInnerCommand(0x50.toByte()), 0x15)
+-    }
++    /** Take photo — PotensicPro USB camera command 0x01 on function 0x0020. */
++    fun buildTakePhoto(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x01))
++
++    /** Record command — PotensicPro USB camera command 0x00 on function 0x0020. */
++    fun buildToggleRecord(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x00))
+ 
+     private fun hexPkt(hex: String): ByteArray {
+         val clean = hex.replace(" ", "")
+diff --git a/app/src/main/java/com/potensic/proxy/WebServer.kt b/app/src/main/java/com/potensic/proxy/WebServer.kt
+index 25b161b..2be2f7d 100644
+--- a/app/src/main/java/com/potensic/proxy/WebServer.kt
++++ b/app/src/main/java/com/potensic/proxy/WebServer.kt
+@@ -284,8 +284,8 @@ class WebServer(
+                     call.response.header("Access-Control-Allow-Origin", "*")
+                     try {
+                         val declaredLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+-                        if (declaredLength != null && declaredLength > 64L * 1024L * 1024L) {
+-                            call.respondText(JSONObject().put("error", "Image is larger than 64 MiB").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
++                        if (declaredLength != null && declaredLength > 512L * 1024L * 1024L) {
++                            call.respondText(JSONObject().put("error", "Media file is larger than 512 MiB").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                             return@post
+                         }
+                         val name = call.request.queryParameters["name"]
+@@ -295,29 +295,37 @@ class WebServer(
+                             ?.takeIf { it.isNotBlank() }
+                             ?.let { JSONObject(it) }
+                         val ext = name?.substringAfterLast('.', "")?.lowercase()
+-                        if (ext !in setOf("jpg", "jpeg", "png", "dng")) {
+-                            call.respondText(JSONObject().put("error", "Only JPG, JPEG, PNG and DNG images can be imported").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
++                        if (ext !in setOf("jpg", "jpeg", "png", "dng", "mp4")) {
++                            call.respondText(JSONObject().put("error", "Only JPG, JPEG, PNG, DNG and MP4 media can be imported").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                             return@post
+                         }
+                         val bytes = call.receive<ByteArray>()
+-                        if (bytes.size > 64 * 1024 * 1024) {
+-                            call.respondText(JSONObject().put("error", "Image is larger than 64 MiB").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
++                        if (bytes.size > 512 * 1024 * 1024) {
++                            call.respondText(JSONObject().put("error", "Media file is larger than 512 MiB").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                             return@post
+                         }
+                         val saved = withContext(Dispatchers.IO) {
+-                            androidMedia.saveImage(
+-                                bytes = bytes,
+-                                requestedName = name,
+-                                source = source,
+-                                library = library,
+-                                metadata = metadata,
+-                            )
++                            if (ext == "mp4") {
++                                androidMedia.saveVideo(
++                                    bytes = bytes,
++                                    requestedName = name,
++                                    source = source,
++                                )
++                            } else {
++                                androidMedia.saveImage(
++                                    bytes = bytes,
++                                    requestedName = name,
++                                    source = source,
++                                    library = library,
++                                    metadata = metadata,
++                                )
++                            }
+                         }
+                         call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
+                     } catch (e: SecurityException) {
+                         call.respondText(JSONObject().put("error", e.message ?: "storage permission denied").toString(), ContentType.Application.Json, HttpStatusCode.Forbidden)
+                     } catch (e: Exception) {
+-                        call.respondText(JSONObject().put("error", e.message ?: "image import failed").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
++                        call.respondText(JSONObject().put("error", e.message ?: "media import failed").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
+                     }
+                 }
+ 
+diff --git a/webui/src/components/gallery/GalleryView.vue b/webui/src/components/gallery/GalleryView.vue
+index 5960342..c020f07 100644
+--- a/webui/src/components/gallery/GalleryView.vue
++++ b/webui/src/components/gallery/GalleryView.vue
+@@ -27,14 +27,16 @@
+ 
+       <div class="gallery-toolbar ui-card">
+         <div class="gallery-status">
+-          <span class="taf-status-field">{{ camera.galleryEntered ? 'Camera gallery open' : 'Camera gallery closed' }}</span>
++          <span class="taf-status-field">Gallery: {{ camera.galleryState }}</span>
+           <span v-if="camera.download.active" class="taf-status-field">Downloading {{ camera.download.fileName }} · {{ camera.download.progress }}%</span>
+         </div>
+-        <small class="path-note">Downloaded photos → Pictures/PotensicProxy/Camera/</small>
++        <small class="path-note">Photos → Pictures/PotensicProxy/Camera/ · Videos → Movies/PotensicProxy/Camera/</small>
+       </div>
+ 
++      <div v-if="camera.galleryError" class="download-error ui-card"><strong>Gallery error:</strong> {{ camera.galleryError }}</div>
++
+       <div class="gallery-content ui-card">
+-        <div v-if="camera.galleryLoading" class="gallery-empty">Reading media list…</div>
++        <div v-if="camera.galleryLoading && ['OPENING','LOADING_COUNT','LOADING_LIST'].includes(camera.galleryState)" class="gallery-empty">Reading media list… <small>{{ camera.galleryState }}</small></div>
+         <div v-else-if="filteredMedia.length === 0" class="gallery-empty">
+           {{ camera.galleryEntered ? 'No camera media loaded.' : 'Open the camera gallery to load photos and videos.' }}
+         </div>
+diff --git a/webui/src/protocol/DroneProtocol.ts b/webui/src/protocol/DroneProtocol.ts
+index 186f2e3..52c5be9 100644
+--- a/webui/src/protocol/DroneProtocol.ts
++++ b/webui/src/protocol/DroneProtocol.ts
+@@ -63,6 +63,29 @@ export const CMD_SHORTS = {
+   FLIGHT_FAULT: 0x0206          // 518 flight-controller faults and alert codes
+ }
+ 
++
++export const CAMERA_USB = {
++  INNER_FUNCTION: 0x0020,
++  TX_HEADER_0: 0xff,
++  TX_HEADER_1: 0xfd,
++  RX_HEADER_0: 0xff,
++  RX_HEADER_1: 0xfe,
++  TAKE_PHOTO: 0x01,
++  RECORD: 0x00,
++  MODE: 0x03,
++  FILE_COUNT: 0x18,
++  FILE_LIST: 0x19,
++  FILE_INFO: 0x1a,
++  FILE_DOWNLOAD: 0x1b,
++  THUMBNAIL_DOWNLOAD: 0x1c,
++  FILE_DELETE: 0x1d,
++  FILE_DOWNLOAD_CANCEL: 0x1e,
++  THUMBNAIL_CANCEL: 0x1f,
++  FILE_META_LIST: 0x20,
++  ENTER_GALLERY: 0x21,
++  QUIT_GALLERY: 0x22
++} as const
++
+ export const CAMERA_CMDS = {
+   GET_ALL_PARAMS: 0x01,       // 1 (0x01): get all parameters
+   CAMERA_FUNCTION: 0x16,      // 22 (0x16): set camera feature flags (Preview / H265 / Watermark)
+diff --git a/webui/src/protocol/PacketBuilder.ts b/webui/src/protocol/PacketBuilder.ts
+index 9411930..c102bea 100644
+--- a/webui/src/protocol/PacketBuilder.ts
++++ b/webui/src/protocol/PacketBuilder.ts
+@@ -4,7 +4,7 @@
+  */
+ import { FeTransport } from './FeTransport'
+ import { FfFdCommand } from './FfFdCommand'
+-import { PROTOCOL_HEX, CAMERA_CMDS, CMD_SHORTS } from './DroneProtocol'
++import { PROTOCOL_HEX, CAMERA_CMDS, CAMERA_USB, CMD_SHORTS } from './DroneProtocol'
+ import { ByteUtils } from '../utils/ByteUtils'
+ 
+ export class PacketBuilder {
+@@ -148,7 +148,7 @@ export class PacketBuilder {
+    * followed by UsbDataWrapper.wrap(..., USB_TYPE_APP_TO_CAMERA).
+    */
+   static buildLegacyCameraUsb(payload: Uint8Array): Uint8Array {
+-    const inner = FfFdCommand.buildWithShort(0x0020, payload)
++    const inner = FfFdCommand.buildWithShort(CAMERA_USB.INNER_FUNCTION, payload)
+     return FeTransport.wrap(inner, 0x15)
+   }
+ 
+@@ -194,13 +194,15 @@ export class PacketBuilder {
+     const encoded = Math.max(0, Math.min(255, Math.round(ev * 2 + 4)))
+     return this.buildLegacyCameraUsb(new Uint8Array([15, mode, encoded]))
+   }
+-  static buildCameraEnterGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([33])) }
+-  static buildCameraQuitGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([34])) }
+-  static buildCameraGetFileCount(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([24])) }
++  static buildCameraTakePhoto(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.TAKE_PHOTO])) }
++  static buildCameraRecord(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.RECORD])) }
++  static buildCameraEnterGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.ENTER_GALLERY])) }
++  static buildCameraQuitGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.QUIT_GALLERY])) }
++  static buildCameraGetFileCount(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.FILE_COUNT])) }
+   static buildCameraGetFileList(type: 0 | 1 | 2, offset = 0, count = 50): Uint8Array {
+     const data = new Uint8Array(6)
+     const view = new DataView(data.buffer)
+-    data[0] = 25
++    data[0] = CAMERA_USB.FILE_LIST
+     data[1] = type
+     view.setUint16(2, offset & 0xffff, true)
+     view.setUint16(4, count & 0xffff, true)
+@@ -209,14 +211,14 @@ export class PacketBuilder {
+   static buildCameraGetFileInfo(fileName: string): Uint8Array {
+     const name = new TextEncoder().encode(fileName)
+     const data = new Uint8Array(1 + name.length)
+-    data[0] = 26
++    data[0] = CAMERA_USB.FILE_INFO
+     data.set(name, 1)
+     return this.buildLegacyCameraUsb(data)
+   }
+   static buildCameraDeleteFile(fileName: string): Uint8Array {
+     const name = new TextEncoder().encode(fileName)
+     const data = new Uint8Array(2 + name.length)
+-    data[0] = 29
++    data[0] = CAMERA_USB.FILE_DELETE
+     data[1] = 0
+     data.set(name, 2)
+     return this.buildLegacyCameraUsb(data)
+@@ -225,7 +227,7 @@ export class PacketBuilder {
+     const name = new TextEncoder().encode(fileName)
+     const data = new Uint8Array(17 + name.length)
+     const view = new DataView(data.buffer)
+-    data[0] = 27
++    data[0] = CAMERA_USB.FILE_DOWNLOAD
+     view.setBigUint64(1, offset, true)
+     view.setBigUint64(9, length, true)
+     data.set(name, 17)
+diff --git a/webui/src/services/CameraMediaService.ts b/webui/src/services/CameraMediaService.ts
+index 56d91fa..9afebd1 100644
+--- a/webui/src/services/CameraMediaService.ts
++++ b/webui/src/services/CameraMediaService.ts
+@@ -1,4 +1,5 @@
+ import { PacketBuilder } from '../protocol/PacketBuilder'
++import { CAMERA_USB } from '../protocol/DroneProtocol'
+ import { useCameraStore } from '../stores/useCameraStore'
+ import { useDroneStore } from '../stores/useDroneStore'
+ import { AndroidMediaService, type AndroidMediaLibrary, type AndroidStoredImage, type RecognitionMetadata } from './AndroidMediaService'
+@@ -10,6 +11,13 @@ export class CameraMediaService {
+   private static photoNames: string[] = []
+   private static videoNames: string[] = []
+   private static listQueue: Array<{ type: 1 | 2; offset: number; count: number }> = []
++  private static currentListPage: { type: 1 | 2; offset: number; count: number } | null = null
++  private static galleryTimer: ReturnType<typeof setTimeout> | null = null
++  private static galleryRetryCount = 0
++  private static readonly GALLERY_TIMEOUT_MS = 1800
++  private static readonly GALLERY_MAX_RETRIES = 3
++  private static lastGalleryPacket: Uint8Array | null = null
++  private static lastGalleryStage = ''
+   private static pendingInfo = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; timer: any }>()
+   private static activeDownload: null | {
+     fileName: string
+@@ -133,21 +141,94 @@ export class CameraMediaService {
+ 
+   static enterGallery() {
+     const cam = useCameraStore()
++    this.resetGalleryRequestState()
++    cam.galleryEntered = false
+     cam.galleryLoading = true
++    cam.galleryState = 'OPENING'
++    cam.galleryError = ''
+     useDroneStore().addLog('INFO', 'Enter camera gallery (cmd 0x21)')
+-    this.send(PacketBuilder.buildCameraEnterGallery())
++    this.sendGalleryWithRetry(PacketBuilder.buildCameraEnterGallery(), 'enter gallery (0x21)')
+   }
+ 
+   static quitGallery() {
++    const cam = useCameraStore()
++    this.resetGalleryRequestState()
+     this.send(PacketBuilder.buildCameraQuitGallery())
++    cam.galleryEntered = false
++    cam.galleryLoading = false
++    cam.galleryState = 'CLOSED'
++    cam.galleryError = ''
++    this.photoNames = []
++    this.videoNames = []
++    this.listQueue = []
++    this.currentListPage = null
+   }
+ 
+   static refreshGallery() {
+     const cam = useCameraStore()
++    if (!cam.galleryEntered) {
++      this.enterGallery()
++      return
++    }
++    this.resetGalleryRequestState()
+     cam.galleryLoading = true
++    cam.galleryState = 'LOADING_COUNT'
++    cam.galleryError = ''
+     this.photoNames = []
+     this.videoNames = []
+-    this.send(PacketBuilder.buildCameraGetFileCount())
++    this.listQueue = []
++    this.currentListPage = null
++    this.sendGalleryWithRetry(PacketBuilder.buildCameraGetFileCount(), 'file count (0x18)')
++  }
++
++  private static resetGalleryRequestState() {
++    if (this.galleryTimer) clearTimeout(this.galleryTimer)
++    this.galleryTimer = null
++    this.galleryRetryCount = 0
++    this.lastGalleryPacket = null
++    this.lastGalleryStage = ''
++  }
++
++  private static sendGalleryWithRetry(packet: Uint8Array, stage: string) {
++    this.resetGalleryRequestState()
++    this.lastGalleryPacket = packet
++    this.lastGalleryStage = stage
++    this.send(packet)
++    this.armGalleryTimeout()
++  }
++
++  private static armGalleryTimeout() {
++    if (this.galleryTimer) clearTimeout(this.galleryTimer)
++    this.galleryTimer = setTimeout(() => {
++      const cam = useCameraStore()
++      if (!this.lastGalleryPacket) return
++      if (this.galleryRetryCount < this.GALLERY_MAX_RETRIES) {
++        this.galleryRetryCount++
++        useDroneStore().addLog('WARN', `Camera gallery timeout during ${this.lastGalleryStage}; retry ${this.galleryRetryCount}/${this.GALLERY_MAX_RETRIES}`)
++        this.send(this.lastGalleryPacket)
++        this.armGalleryTimeout()
++        return
++      }
++      this.failGallery(`Timeout while waiting for ${this.lastGalleryStage}`)
++      cam.galleryLoading = false
++    }, this.GALLERY_TIMEOUT_MS)
++  }
++
++  private static acknowledgeGalleryResponse() {
++    if (this.galleryTimer) clearTimeout(this.galleryTimer)
++    this.galleryTimer = null
++    this.galleryRetryCount = 0
++    this.lastGalleryPacket = null
++    this.lastGalleryStage = ''
++  }
++
++  private static failGallery(message: string) {
++    const cam = useCameraStore()
++    this.resetGalleryRequestState()
++    cam.galleryLoading = false
++    cam.galleryState = 'ERROR'
++    cam.galleryError = message
++    useDroneStore().addLog('ERROR', `Camera gallery: ${message}`)
+   }
+ 
+   static deleteFile(fileName: string) {
+@@ -186,10 +267,10 @@ export class CameraMediaService {
+     try {
+       const info = await this.getFileInfo(fileName)
+       const isVideo = /\.(mp4|mov)$/i.test(fileName)
+-      // PotensicPro's USB gallery downloads the low-resolution LRV proxy for videos.
+-      // Photos are transferred using their original filename.
+-      const remoteName = isVideo ? fileName.replace(/[^.]{3}$/i, 'LRV') : fileName
+-      const totalNum = Number(isVideo ? (info.lrv_filesize ?? info.lrv_len ?? 0) : (info.filesize ?? info.len ?? 0))
++      // The normal Camera Gallery downloads the selected original file. Thumbnail/LRV
++      // transport is a separate path and must not be treated as a full-file download.
++      const remoteName = fileName
++      const totalNum = Number(info.filesize ?? info.len ?? 0)
+       if (!Number.isFinite(totalNum) || totalNum <= 0) throw new Error('Camera returned no usable file size')
+       const total = BigInt(Math.trunc(totalNum))
+       const outputName = fileName.split('/').pop() || (isVideo ? 'camera-video.mp4' : 'camera-photo.jpg')
+@@ -252,33 +333,21 @@ export class CameraMediaService {
+     const mime = /\.png$/i.test(dl.outputName) ? 'image/png'
+       : /\.dng$/i.test(dl.outputName) ? 'image/x-adobe-dng'
+       : isPhoto ? 'image/jpeg'
++      : /\.mp4$/i.test(dl.outputName) ? 'video/mp4'
+       : 'application/octet-stream'
+     const blob = new Blob(blobParts, { type: mime })
+ 
+     try {
+       let saved: AndroidStoredImage | undefined
+-      if (isPhoto) {
+-        saved = await AndroidMediaService.saveImageBytes(blob, dl.outputName, dl.source, dl.library, dl.metadata)
+-        if (!saved.verified || saved.size !== blob.size) {
+-          throw new Error('Android MediaStore verification failed; drone source will not be deleted')
+-        }
+-        drone.addLog('INFO', `Camera photo verified on Android: ${saved.relativePath}/${saved.name} (${blob.size} bytes)`)
++      saved = await AndroidMediaService.saveImageBytes(blob, dl.outputName, dl.source, dl.library, dl.metadata)
++      if (!saved.verified || saved.size !== blob.size) {
++        throw new Error('Android MediaStore verification failed; drone source will not be deleted')
++      }
++      drone.addLog('INFO', `Camera media verified on Android: ${saved.relativePath}/${saved.name} (${blob.size} bytes)`)
+ 
+-        if (dl.deleteAfterVerified) {
+-          await this.deleteFileConfirmed(dl.originalFileName)
+-          drone.addLog('INFO', `Drone Reco source deleted after verified Android transfer: ${dl.originalFileName}`)
+-        }
+-      } else {
+-        // Preserve the previous browser download behavior for video/LRV files.
+-        const url = URL.createObjectURL(blob)
+-        const a = document.createElement('a')
+-        a.href = url
+-        a.download = dl.outputName
+-        document.body.appendChild(a)
+-        a.click()
+-        a.remove()
+-        setTimeout(() => URL.revokeObjectURL(url), 1000)
+-        drone.addLog('INFO', `Camera video download completed in browser: ${dl.fileName} (${blob.size} bytes)`)
++      if (isPhoto && dl.deleteAfterVerified) {
++        await this.deleteFileConfirmed(dl.originalFileName)
++        drone.addLog('INFO', `Drone Reco source deleted after verified Android transfer: ${dl.originalFileName}`)
+       }
+       cam.download.progress = 100
+       cam.download.error = ''
+@@ -354,10 +423,10 @@ export class CameraMediaService {
+    * Returns true when the packet belongs to this PotensicPro-compatible camera path.
+    */
+   static handleIncoming(feType: number, payload: Uint8Array): boolean {
+-    if (feType !== 0x05 || payload.length < 8 || payload[0] !== 0xff || payload[1] !== 0xfd) return false
++    if (feType !== 0x05 || payload.length < 8 || payload[0] !== CAMERA_USB.RX_HEADER_0 || payload[1] !== CAMERA_USB.RX_HEADER_1) return false
+     const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
+     const msgShort = view.getUint16(4, true)
+-    if (msgShort !== 0x0020) return false
++    if (msgShort !== CAMERA_USB.INNER_FUNCTION) return false
+ 
+     const cam = useCameraStore()
+     const drone = useDroneStore()
+@@ -367,15 +436,26 @@ export class CameraMediaService {
+     cam.lastResponse = `cmd=0x${cmd.toString(16).padStart(2, '0')} status=${status} data=${data.length}B`
+ 
+     if (status !== 0) {
+-      drone.addLog('WARN', `Camera command 0x${cmd.toString(16).padStart(2, '0')} failed with status ${status}`)
+-      if (this.activeDownload && cmd === 27) {
++      const statusText: Record<number, string> = {
++        1: 'Device busy',
++        2: 'No SD card',
++        3: 'SD card full',
++        4: 'Command not supported',
++        5: 'Argument invalid'
++      }
++      const failure = statusText[status] || `status ${status}`
++      drone.addLog('WARN', `Camera command 0x${cmd.toString(16).padStart(2, '0')} failed: ${failure}`)
++      if ([CAMERA_USB.ENTER_GALLERY, CAMERA_USB.FILE_COUNT, CAMERA_USB.FILE_LIST].includes(cmd as any)) {
++        this.failGallery(`Command 0x${cmd.toString(16).padStart(2, '0')} failed: ${failure}`)
++      }
++      if (this.activeDownload && cmd === CAMERA_USB.FILE_DOWNLOAD) {
+         const dl = this.activeDownload
+         cam.download.active = false
+         cam.download.error = `Camera download failed with status ${status}`
+         this.activeDownload = null
+         dl.reject(new Error(cam.download.error))
+       }
+-      if (this.pendingDelete && cmd === 29) {
++      if (this.pendingDelete && cmd === CAMERA_USB.FILE_DELETE) {
+         const pending = this.pendingDelete
+         clearTimeout(pending.timer)
+         this.pendingDelete = null
+@@ -462,26 +542,42 @@ export class CameraMediaService {
+           cam.sd.lastStatus = 'SD status received'
+         }
+         break
+-      case 33:
++      case CAMERA_USB.ENTER_GALLERY:
++        this.acknowledgeGalleryResponse()
+         cam.galleryEntered = true
++        cam.galleryState = 'OPEN'
+         this.refreshGallery()
+         break
+-      case 34:
++      case CAMERA_USB.QUIT_GALLERY:
++        this.acknowledgeGalleryResponse()
+         cam.galleryEntered = false
+         cam.galleryLoading = false
++        cam.galleryState = 'CLOSED'
++        cam.galleryError = ''
+         break
+-      case 24:
++      case CAMERA_USB.FILE_COUNT:
++        this.acknowledgeGalleryResponse()
+         if (data.length >= 4) {
+           this.photoCount = data[0] | (data[1] << 8)
+           this.videoCount = data[2] | (data[3] << 8)
+           this.photoNames = []
+           this.videoNames = []
++          drone.addLog('INFO', `Camera gallery count: photos=${this.photoCount}, videos=${this.videoCount}`)
++          if (this.photoCount === 0 && this.videoCount === 0) {
++            cam.setGalleryFiles([], [])
++            break
++          }
+           this.buildGalleryQueue()
++          cam.galleryState = 'LOADING_LIST'
+           this.requestNextGalleryPage()
++        } else {
++          this.failGallery(`File count response too short (${data.length} B)`)
+         }
+         break
+-      case 25:
++      case CAMERA_USB.FILE_LIST:
++        this.acknowledgeGalleryResponse()
+         this.parseGalleryNames(data)
++        this.currentListPage = null
+         this.requestNextGalleryPage()
+         break
+       case 26: {
+@@ -500,10 +596,10 @@ export class CameraMediaService {
+         }
+         break
+       }
+-      case 27:
++      case CAMERA_USB.FILE_DOWNLOAD:
+         this.handleDownloadData(payload)
+         break
+-      case 29: {
++      case CAMERA_USB.FILE_DELETE: {
+         drone.addLog('INFO', 'Camera file delete acknowledged')
+         const pending = this.pendingDelete
+         if (pending) {
+@@ -531,24 +627,45 @@ export class CameraMediaService {
+   }
+ 
+   private static requestNextGalleryPage() {
++    const cam = useCameraStore()
+     if (!this.listQueue.length) {
+-      useCameraStore().setGalleryFiles(this.photoNames, this.videoNames)
++      const photosComplete = this.photoNames.length >= this.photoCount
++      const videosComplete = this.videoNames.length >= this.videoCount
++      if (!photosComplete || !videosComplete) {
++        this.failGallery(`Media list incomplete: ${this.photoNames.length}/${this.photoCount} photos, ${this.videoNames.length}/${this.videoCount} videos`)
++        return
++      }
++      cam.setGalleryFiles(this.photoNames.slice(0, this.photoCount), this.videoNames.slice(0, this.videoCount))
+       return
+     }
+     const page = this.listQueue.shift()!
+-    this.send(PacketBuilder.buildCameraGetFileList(page.type, page.offset, page.count))
++    this.currentListPage = page
++    cam.galleryState = 'LOADING_LIST'
++    this.sendGalleryWithRetry(
++      PacketBuilder.buildCameraGetFileList(page.type, page.offset, page.count),
++      `file list type=${page.type} offset=${page.offset} count=${page.count} (0x19)`
++    )
+   }
+ 
+   private static parseGalleryNames(data: Uint8Array) {
+-    // PotensicPro responses carry page bookkeeping before the NUL-separated ASCII names.
+-    // Search the response body for printable filenames instead of relying on one firmware offset.
+-    const text = new TextDecoder('ascii').decode(data).replace(/[\x00-\x1f]+/g, '\0')
+-    const names = text.split('\0').map(s => s.trim()).filter(Boolean)
++    // PotensicPro starts the NUL-separated ASCII filename data two bytes into the
++    // command-specific response body (payloadIndex + 4 including cmd/status).
++    const decodeNames = (bytes: Uint8Array) => {
++      const text = new TextDecoder('ascii').decode(bytes).replace(/[\x00-\x1f]+/g, '\0')
++      return text.split('\0').map(v => v.trim()).filter(Boolean)
++    }
++    let names = data.length >= 2 ? decodeNames(data.subarray(2)) : []
++    // Preserve the previous tolerant scan only as a fallback for firmware variants.
++    if (!names.some(name => /\.(jpg|jpeg|dng|mp4|mov|lrv)$/i.test(name))) names = decodeNames(data)
++
+     for (const name of names) {
+       const lower = name.toLowerCase()
+-      if (/\.(jpg|jpeg|dng)$/.test(lower) && !this.photoNames.includes(name)) this.photoNames.push(name)
+-      if (/\.(mp4|mov|lrv)$/.test(lower) && !this.videoNames.includes(name)) this.videoNames.push(name)
++      if (/\.jpg$/.test(lower) && !this.photoNames.includes(name)) this.photoNames.push(name)
++      else if (/\.mp4$/.test(lower) && !this.videoNames.includes(name)) this.videoNames.push(name)
++      else if (/\.(jpeg|dng)$/.test(lower) && !this.photoNames.includes(name)) this.photoNames.push(name)
++      else if (/\.(mov|lrv)$/.test(lower) && !this.videoNames.includes(name)) this.videoNames.push(name)
+     }
++    useDroneStore().addLog('INFO', `Camera gallery page parsed: photos=${this.photoNames.length}/${this.photoCount}, videos=${this.videoNames.length}/${this.videoCount}`)
+   }
+ 
+   private static handleDownloadData(inner: Uint8Array) {
+diff --git a/webui/src/services/DroneControlService.ts b/webui/src/services/DroneControlService.ts
+index 8f733b7..6d811a2 100644
+--- a/webui/src/services/DroneControlService.ts
++++ b/webui/src/services/DroneControlService.ts
+@@ -282,14 +282,14 @@ export class DroneControlService {
+ 
+   static takePhoto() {
+     const store = useDroneStore()
+-    store.addLog('INFO', 'Send photo command')
+-    this.transport.send(PacketBuilder.buildTakePhoto())
++    store.addLog('INFO', 'Send photo command via APP_TO_CAMERA / function 0x0020 / cmd 0x01')
++    this.transport.send(PacketBuilder.buildCameraTakePhoto())
+   }
+ 
+   static toggleRecord() {
+     const store = useDroneStore()
+-    store.addLog('INFO', 'Toggle recording')
+-    this.transport.send(PacketBuilder.buildToggleRecord())
++    store.addLog('INFO', 'Send record command via APP_TO_CAMERA / function 0x0020 / cmd 0x00')
++    this.transport.send(PacketBuilder.buildCameraRecord())
+   }
+ 
+   static async saveLiveSnapshotToAndroid() {
+diff --git a/webui/src/stores/useCameraStore.ts b/webui/src/stores/useCameraStore.ts
+index 7c9961f..bfcb4b0 100644
+--- a/webui/src/stores/useCameraStore.ts
++++ b/webui/src/stores/useCameraStore.ts
+@@ -6,6 +6,8 @@ export type CameraMediaFile = {
+   type: 'photo' | 'video'
+ }
+ 
++export type GalleryState = 'CLOSED' | 'OPENING' | 'OPEN' | 'LOADING_COUNT' | 'LOADING_LIST' | 'READY' | 'ERROR'
++
+ export const useCameraStore = defineStore('camera', () => {
+   const videoResolutionIndex = ref<number | null>(null)
+   const photoResolutionIndex = ref<number | null>(null)
+@@ -37,6 +39,8 @@ export const useCameraStore = defineStore('camera', () => {
+   })
+ 
+   const galleryEntered = ref(false)
++  const galleryState = ref<GalleryState>('CLOSED')
++  const galleryError = ref('')
+   const photos = ref<CameraMediaFile[]>([])
+   const videos = ref<CameraMediaFile[]>([])
+   const galleryLoading = ref(false)
+@@ -54,6 +58,8 @@ export const useCameraStore = defineStore('camera', () => {
+     photos.value = photoNames.map(name => ({ name, type: 'photo' as const }))
+     videos.value = videoNames.map(name => ({ name, type: 'video' as const }))
+     galleryLoading.value = false
++    galleryState.value = 'READY'
++    galleryError.value = ''
+   }
+ 
+   return {
+@@ -70,6 +76,8 @@ export const useCameraStore = defineStore('camera', () => {
+     manualMode,
+     sd,
+     galleryEntered,
++    galleryState,
++    galleryError,
+     photos,
+     videos,
+     media,

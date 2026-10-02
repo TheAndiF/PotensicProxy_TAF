@@ -37,6 +37,7 @@ class AndroidMediaRepository(
     companion object {
         private const val CAMERA_DIR = "Pictures/PotensicProxy/Camera"
         private const val RECOGNITION_DIR = "Pictures/PotensicProxy/Recognition"
+        private const val CAMERA_VIDEO_DIR = "Movies/PotensicProxy/Camera"
         private const val MAX_INDEX_ITEMS = 1000
     }
 
@@ -136,6 +137,79 @@ class AndroidMediaRepository(
         }
         appendToIndex(item)
         Log.i("[MediaStore] Saved ${bytes.size} bytes as $displayName [$normalizedLibrary/$source] verified=$verified -> $uri")
+        return item
+    }
+
+    @Synchronized
+    fun saveVideo(
+        bytes: ByteArray,
+        requestedName: String?,
+        source: String = "camera-download",
+    ): JSONObject {
+        require(bytes.isNotEmpty()) { "Video payload is empty" }
+        ensureLegacyWritePermission()
+
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+        val raw = requestedName
+            ?.substringAfterLast('/')
+            ?.substringAfterLast('\\')
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: "Camera_$timestamp.mp4"
+        val safeBase = raw.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val displayName = if (safeBase.endsWith(".mp4", ignoreCase = true)) safeBase else "$safeBase.mp4"
+        val mimeType = "video/mp4"
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
+            put(MediaStore.Video.Media.MIME_TYPE, mimeType)
+            put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000L)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Video.Media.RELATIVE_PATH, CAMERA_VIDEO_DIR)
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            } else {
+                @Suppress("DEPRECATION")
+                val publicDir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                    CAMERA_VIDEO_DIR.removePrefix("Movies/"),
+                ).apply { mkdirs() }
+                @Suppress("DEPRECATION")
+                put(MediaStore.Video.Media.DATA, File(publicDir, displayName).absolutePath)
+            }
+        }
+
+        val resolver = context.contentResolver
+        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+            ?: throw IllegalStateException("Android MediaStore rejected video insert")
+        try {
+            resolver.openOutputStream(uri, "w")?.use { it.write(bytes) }
+                ?: throw IllegalStateException("Could not open Android MediaStore video output stream")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val ready = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+                resolver.update(uri, ready, null, null)
+            }
+        } catch (e: Exception) {
+            try { resolver.delete(uri, null, null) } catch (_: Exception) {}
+            throw e
+        }
+
+        val sourceHash = sha256(bytes)
+        val storedBytes = try { resolver.openInputStream(uri)?.use { it.readBytes() } } catch (_: Exception) { null }
+        val verified = storedBytes != null && storedBytes.size == bytes.size && sha256(storedBytes) == sourceHash
+        val item = JSONObject().apply {
+            put("id", UUID.randomUUID().toString())
+            put("name", displayName)
+            put("mimeType", mimeType)
+            put("size", bytes.size)
+            put("source", source)
+            put("library", "camera")
+            put("createdAt", System.currentTimeMillis())
+            put("uri", uri.toString())
+            put("relativePath", CAMERA_VIDEO_DIR)
+            put("sha256", sourceHash)
+            put("verified", verified)
+        }
+        appendToIndex(item)
+        Log.i("[MediaStore] Saved video ${bytes.size} bytes as $displayName verified=$verified -> $uri")
         return item
     }
 

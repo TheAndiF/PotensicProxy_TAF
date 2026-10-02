@@ -1,0 +1,36 @@
+BL_Fix camera gallery and Android media transfer
+Date: 2026-10-02
+
+Summary:
+- Corrected PotensicPro-compatible camera RX framing to FE 0x05 / FF FE / function 0x0020 while keeping FF FD for TX.
+- Routed normal photo and record actions through function 0x0020 commands 0x01 and 0x00.
+- Added explicit gallery states plus bounded retry/timeout handling for enter, count and paged file-list requests.
+- Corrected primary 0x19 filename offset handling and enforced photo/video list completeness across 50-item pages.
+- Changed normal video download to transfer the selected original MP4 instead of treating the LRV proxy as the full file.
+- Added verified Android MediaStore MP4 storage under Movies/PotensicProxy/Camera while keeping camera photos under Pictures/PotensicProxy/Camera.
+- Kept Recognition storage and verified Drone Reco deletion separate from the normal camera gallery.
+- Updated README, protocol reference, implementation documentation, patch and changed-files manifest.
+- Left 0x20/0x1C thumbnail block parsing and a separate confirmed record-state response as documented open items because their byte layouts are not present in the supplied implementation basis and were not guessed.
+
+Validation:
+- PASS: webui TypeScript/Vue type check (vue-tsc --noEmit).
+- BLOCKED: Vite bundle because the supplied node_modules lacks @rollup/rollup-linux-x64-gnu.
+- BLOCKED: Android Gradle compile because Gradle 8.11.1 is not cached and the execution environment has no network access.
+- PENDING: physical ATOM device acceptance tests G1-G12.
+
+Changed files:
+- README.md
+- PROTOCOL.md
+- app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
+- app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- webui/src/components/gallery/GalleryView.vue
+- webui/src/protocol/DroneProtocol.ts
+- webui/src/protocol/PacketBuilder.ts
+- webui/src/services/CameraMediaService.ts
+- webui/src/services/DroneControlService.ts
+- webui/src/stores/useCameraStore.ts
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Kamera-Galerie-Medientransfer - v1.0.docx
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Kamera-Galerie-Medientransfer - v1.0.pdf
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_KAMERA_GALERIE_MEDIENTRANSFER_v1.0.md
+- PATCH_CAMERA_GALLERY_MEDIA_2026-10-02.patch

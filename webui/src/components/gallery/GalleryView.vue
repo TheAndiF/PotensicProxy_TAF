@@ -27,14 +27,16 @@
 
       <div class="gallery-toolbar ui-card">
         <div class="gallery-status">
-          <span class="taf-status-field">{{ camera.galleryEntered ? 'Camera gallery open' : 'Camera gallery closed' }}</span>
+          <span class="taf-status-field">Gallery: {{ camera.galleryState }}</span>
           <span v-if="camera.download.active" class="taf-status-field">Downloading {{ camera.download.fileName }} · {{ camera.download.progress }}%</span>
         </div>
-        <small class="path-note">Downloaded photos → Pictures/PotensicProxy/Camera/</small>
+        <small class="path-note">Photos → Pictures/PotensicProxy/Camera/ · Videos → Movies/PotensicProxy/Camera/</small>
       </div>
 
+      <div v-if="camera.galleryError" class="download-error ui-card"><strong>Gallery error:</strong> {{ camera.galleryError }}</div>
+
       <div class="gallery-content ui-card">
-        <div v-if="camera.galleryLoading" class="gallery-empty">Reading media list…</div>
+        <div v-if="camera.galleryLoading && ['OPENING','LOADING_COUNT','LOADING_LIST'].includes(camera.galleryState)" class="gallery-empty">Reading media list… <small>{{ camera.galleryState }}</small></div>
         <div v-else-if="filteredMedia.length === 0" class="gallery-empty">
           {{ camera.galleryEntered ? 'No camera media loaded.' : 'Open the camera gallery to load photos and videos.' }}
         </div>

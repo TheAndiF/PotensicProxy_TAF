@@ -44,6 +44,13 @@ The cockpit **Height / Höhe** value follows the original Potensic app and uses 
 
 For the long ATOM Flight Info layout, the parser applies the same +2-byte post-horizontal-distance index shift used by PotensicPro. This places `verticalDistance`, speed fields and the aircraft `remainedBattery` byte at their correct long-layout offsets.
 
+
+## Camera gallery status
+
+The drone-SD gallery now follows an explicit state machine (`CLOSED`, `OPENING`, `OPEN`, `LOADING_COUNT`, `LOADING_LIST`, `READY`, `ERROR`). Enter (`0x21`), file count (`0x18`) and paged file list (`0x19`) requests use bounded timeout/retry handling, so the UI no longer remains indefinitely at “Reading media list…”. File counts are decoded little-endian and the primary `0x19` filename parser starts at the PotensicPro-confirmed response offset; the previous tolerant filename scan remains only as a fallback for firmware variants.
+
+The supplied change order also calls for `0x20` metadata and `0x1C` thumbnail block assembly/MD5 validation. The exact block response layout needed to implement those parsers is not present in the supplied TAF package or change-order wire description, so no guessed thumbnail frame parser was added. This remains device/original-app-source dependent.
+
 ## Camera zoom status
 
 Camera zoom is wired through the PotensicPro-compatible USB camera path (FE TX `0x15` / RX `0x05`, inner message short `0x0020`). The WebUI sends **SET ZOOM `0x3E`** with `zoom x 100` as a little-endian 32-bit integer and reads **GET ZOOM `0x3F`** using the same response path. Successful `0x3E` and `0x3F` responses provide the camera-reported zoom value, which is shown separately from the requested setpoint.
@@ -63,7 +70,7 @@ The WebUI supports direct WebCodecs rendering plus snapshot/MJPEG fallback paths
 
 The project now has two deliberately separate Android image libraries:
 
-- **Normal Camera:** the existing mapped camera command `0x51` and the normal aircraft SD-card gallery remain unchanged. Downloaded JPG/JPEG/PNG/DNG files are published through Android `MediaStore` under `Pictures/PotensicProxy/Camera`. Normal camera downloads are not automatically deleted from the aircraft.
+- **Normal Camera:** photo capture now uses the PotensicPro-compatible APP_TO_CAMERA path FE `0x15` / inner `FF FD` / function `0x0020` / command `0x01`; recording uses the same path with command `0x00`. Camera responses are accepted on FE `0x05` with inner RX header `FF FE`. Downloaded JPG/JPEG/PNG/DNG files are published through Android `MediaStore` under `Pictures/PotensicProxy/Camera`; MP4 files are published under `Movies/PotensicProxy/Camera`. Normal camera downloads are not automatically deleted from the aircraft.
 - **Recognition:** all images intended for later image recognition are published under `Pictures/PotensicProxy/Recognition` and shown in the separate **Recognition** tab of the Gallery page.
 
 Recognition has two capture sources that feed the same metadata/index pipeline:
@@ -115,7 +122,7 @@ The current backend includes, among others:
 | `GET /api/video/stats` | video parser/extractor diagnostics |
 | `GET /api/video/snapshot` | current decoded JPEG frame |
 | `POST /api/media/snapshot` | save a Live Reco frame to Android `Pictures/PotensicProxy/Recognition` with optional metadata |
-| `POST /api/media/import?name=...&library=...` | publish camera/Recognition JPG/JPEG/PNG/DNG to the selected Android MediaStore library |
+| `POST /api/media/import?name=...&library=...` | publish camera/Recognition JPG/JPEG/PNG/DNG or camera MP4 to Android MediaStore |
 | `GET /api/media/local?library=camera|recognition` | list app-created images, optionally filtered by library |
 | `GET /api/media/local/{id}` | read an app-created image by local media index id |
 | `GET /api/video/mjpeg` | MJPEG stream |

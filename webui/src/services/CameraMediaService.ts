@@ -1,4 +1,5 @@
 import { PacketBuilder } from '../protocol/PacketBuilder'
+import { CAMERA_USB } from '../protocol/DroneProtocol'
 import { useCameraStore } from '../stores/useCameraStore'
 import { useDroneStore } from '../stores/useDroneStore'
 import { AndroidMediaService, type AndroidMediaLibrary, type AndroidStoredImage, type RecognitionMetadata } from './AndroidMediaService'
@@ -10,6 +11,13 @@ export class CameraMediaService {
   private static photoNames: string[] = []
   private static videoNames: string[] = []
   private static listQueue: Array<{ type: 1 | 2; offset: number; count: number }> = []
+  private static currentListPage: { type: 1 | 2; offset: number; count: number } | null = null
+  private static galleryTimer: ReturnType<typeof setTimeout> | null = null
+  private static galleryRetryCount = 0
+  private static readonly GALLERY_TIMEOUT_MS = 1800
+  private static readonly GALLERY_MAX_RETRIES = 3
+  private static lastGalleryPacket: Uint8Array | null = null
+  private static lastGalleryStage = ''
   private static pendingInfo = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; timer: any }>()
   private static activeDownload: null | {
     fileName: string
@@ -133,21 +141,94 @@ export class CameraMediaService {
 
   static enterGallery() {
     const cam = useCameraStore()
+    this.resetGalleryRequestState()
+    cam.galleryEntered = false
     cam.galleryLoading = true
+    cam.galleryState = 'OPENING'
+    cam.galleryError = ''
     useDroneStore().addLog('INFO', 'Enter camera gallery (cmd 0x21)')
-    this.send(PacketBuilder.buildCameraEnterGallery())
+    this.sendGalleryWithRetry(PacketBuilder.buildCameraEnterGallery(), 'enter gallery (0x21)')
   }
 
   static quitGallery() {
+    const cam = useCameraStore()
+    this.resetGalleryRequestState()
     this.send(PacketBuilder.buildCameraQuitGallery())
+    cam.galleryEntered = false
+    cam.galleryLoading = false
+    cam.galleryState = 'CLOSED'
+    cam.galleryError = ''
+    this.photoNames = []
+    this.videoNames = []
+    this.listQueue = []
+    this.currentListPage = null
   }
 
   static refreshGallery() {
     const cam = useCameraStore()
+    if (!cam.galleryEntered) {
+      this.enterGallery()
+      return
+    }
+    this.resetGalleryRequestState()
     cam.galleryLoading = true
+    cam.galleryState = 'LOADING_COUNT'
+    cam.galleryError = ''
     this.photoNames = []
     this.videoNames = []
-    this.send(PacketBuilder.buildCameraGetFileCount())
+    this.listQueue = []
+    this.currentListPage = null
+    this.sendGalleryWithRetry(PacketBuilder.buildCameraGetFileCount(), 'file count (0x18)')
+  }
+
+  private static resetGalleryRequestState() {
+    if (this.galleryTimer) clearTimeout(this.galleryTimer)
+    this.galleryTimer = null
+    this.galleryRetryCount = 0
+    this.lastGalleryPacket = null
+    this.lastGalleryStage = ''
+  }
+
+  private static sendGalleryWithRetry(packet: Uint8Array, stage: string) {
+    this.resetGalleryRequestState()
+    this.lastGalleryPacket = packet
+    this.lastGalleryStage = stage
+    this.send(packet)
+    this.armGalleryTimeout()
+  }
+
+  private static armGalleryTimeout() {
+    if (this.galleryTimer) clearTimeout(this.galleryTimer)
+    this.galleryTimer = setTimeout(() => {
+      const cam = useCameraStore()
+      if (!this.lastGalleryPacket) return
+      if (this.galleryRetryCount < this.GALLERY_MAX_RETRIES) {
+        this.galleryRetryCount++
+        useDroneStore().addLog('WARN', `Camera gallery timeout during ${this.lastGalleryStage}; retry ${this.galleryRetryCount}/${this.GALLERY_MAX_RETRIES}`)
+        this.send(this.lastGalleryPacket)
+        this.armGalleryTimeout()
+        return
+      }
+      this.failGallery(`Timeout while waiting for ${this.lastGalleryStage}`)
+      cam.galleryLoading = false
+    }, this.GALLERY_TIMEOUT_MS)
+  }
+
+  private static acknowledgeGalleryResponse() {
+    if (this.galleryTimer) clearTimeout(this.galleryTimer)
+    this.galleryTimer = null
+    this.galleryRetryCount = 0
+    this.lastGalleryPacket = null
+    this.lastGalleryStage = ''
+  }
+
+  private static failGallery(message: string) {
+    const cam = useCameraStore()
+    this.resetGalleryRequestState()
+    cam.galleryLoading = false
+    cam.galleryState = 'ERROR'
+    cam.galleryError = message
+    useDroneStore().addLog('ERROR', `Camera gallery: ${message}`)
   }
 
   static deleteFile(fileName: string) {
@@ -186,10 +267,10 @@ export class CameraMediaService {
     try {
       const info = await this.getFileInfo(fileName)
       const isVideo = /\.(mp4|mov)$/i.test(fileName)
-      // PotensicPro's USB gallery downloads the low-resolution LRV proxy for videos.
-      // Photos are transferred using their original filename.
-      const remoteName = isVideo ? fileName.replace(/[^.]{3}$/i, 'LRV') : fileName
-      const totalNum = Number(isVideo ? (info.lrv_filesize ?? info.lrv_len ?? 0) : (info.filesize ?? info.len ?? 0))
+      // The normal Camera Gallery downloads the selected original file. Thumbnail/LRV
+      // transport is a separate path and must not be treated as a full-file download.
+      const remoteName = fileName
+      const totalNum = Number(info.filesize ?? info.len ?? 0)
       if (!Number.isFinite(totalNum) || totalNum <= 0) throw new Error('Camera returned no usable file size')
       const total = BigInt(Math.trunc(totalNum))
       const outputName = fileName.split('/').pop() || (isVideo ? 'camera-video.mp4' : 'camera-photo.jpg')
@@ -252,33 +333,21 @@ export class CameraMediaService {
     const mime = /\.png$/i.test(dl.outputName) ? 'image/png'
       : /\.dng$/i.test(dl.outputName) ? 'image/x-adobe-dng'
       : isPhoto ? 'image/jpeg'
+      : /\.mp4$/i.test(dl.outputName) ? 'video/mp4'
       : 'application/octet-stream'
     const blob = new Blob(blobParts, { type: mime })
 
     try {
       let saved: AndroidStoredImage | undefined
-      if (isPhoto) {
-        saved = await AndroidMediaService.saveImageBytes(blob, dl.outputName, dl.source, dl.library, dl.metadata)
-        if (!saved.verified || saved.size !== blob.size) {
-          throw new Error('Android MediaStore verification failed; drone source will not be deleted')
-        }
-        drone.addLog('INFO', `Camera photo verified on Android: ${saved.relativePath}/${saved.name} (${blob.size} bytes)`)
+      saved = await AndroidMediaService.saveImageBytes(blob, dl.outputName, dl.source, dl.library, dl.metadata)
+      if (!saved.verified || saved.size !== blob.size) {
+        throw new Error('Android MediaStore verification failed; drone source will not be deleted')
+      }
+      drone.addLog('INFO', `Camera media verified on Android: ${saved.relativePath}/${saved.name} (${blob.size} bytes)`)
 
-        if (dl.deleteAfterVerified) {
-          await this.deleteFileConfirmed(dl.originalFileName)
-          drone.addLog('INFO', `Drone Reco source deleted after verified Android transfer: ${dl.originalFileName}`)
-        }
-      } else {
-        // Preserve the previous browser download behavior for video/LRV files.
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = dl.outputName
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        setTimeout(() => URL.revokeObjectURL(url), 1000)
-        drone.addLog('INFO', `Camera video download completed in browser: ${dl.fileName} (${blob.size} bytes)`)
+      if (isPhoto && dl.deleteAfterVerified) {
+        await this.deleteFileConfirmed(dl.originalFileName)
+        drone.addLog('INFO', `Drone Reco source deleted after verified Android transfer: ${dl.originalFileName}`)
       }
       cam.download.progress = 100
       cam.download.error = ''
@@ -354,10 +423,10 @@ export class CameraMediaService {
    * Returns true when the packet belongs to this PotensicPro-compatible camera path.
    */
   static handleIncoming(feType: number, payload: Uint8Array): boolean {
-    if (feType !== 0x05 || payload.length < 8 || payload[0] !== 0xff || payload[1] !== 0xfd) return false
+    if (feType !== 0x05 || payload.length < 8 || payload[0] !== CAMERA_USB.RX_HEADER_0 || payload[1] !== CAMERA_USB.RX_HEADER_1) return false
     const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
     const msgShort = view.getUint16(4, true)
-    if (msgShort !== 0x0020) return false
+    if (msgShort !== CAMERA_USB.INNER_FUNCTION) return false
 
     const cam = useCameraStore()
     const drone = useDroneStore()
@@ -367,15 +436,26 @@ export class CameraMediaService {
     cam.lastResponse = `cmd=0x${cmd.toString(16).padStart(2, '0')} status=${status} data=${data.length}B`
 
     if (status !== 0) {
-      drone.addLog('WARN', `Camera command 0x${cmd.toString(16).padStart(2, '0')} failed with status ${status}`)
-      if (this.activeDownload && cmd === 27) {
+      const statusText: Record<number, string> = {
+        1: 'Device busy',
+        2: 'No SD card',
+        3: 'SD card full',
+        4: 'Command not supported',
+        5: 'Argument invalid'
+      }
+      const failure = statusText[status] || `status ${status}`
+      drone.addLog('WARN', `Camera command 0x${cmd.toString(16).padStart(2, '0')} failed: ${failure}`)
+      if ([CAMERA_USB.ENTER_GALLERY, CAMERA_USB.FILE_COUNT, CAMERA_USB.FILE_LIST].includes(cmd as any)) {
+        this.failGallery(`Command 0x${cmd.toString(16).padStart(2, '0')} failed: ${failure}`)
+      }
+      if (this.activeDownload && cmd === CAMERA_USB.FILE_DOWNLOAD) {
         const dl = this.activeDownload
         cam.download.active = false
         cam.download.error = `Camera download failed with status ${status}`
         this.activeDownload = null
         dl.reject(new Error(cam.download.error))
       }
-      if (this.pendingDelete && cmd === 29) {
+      if (this.pendingDelete && cmd === CAMERA_USB.FILE_DELETE) {
         const pending = this.pendingDelete
         clearTimeout(pending.timer)
         this.pendingDelete = null
@@ -462,26 +542,42 @@ export class CameraMediaService {
           cam.sd.lastStatus = 'SD status received'
         }
         break
-      case 33:
+      case CAMERA_USB.ENTER_GALLERY:
+        this.acknowledgeGalleryResponse()
         cam.galleryEntered = true
+        cam.galleryState = 'OPEN'
         this.refreshGallery()
         break
-      case 34:
+      case CAMERA_USB.QUIT_GALLERY:
+        this.acknowledgeGalleryResponse()
         cam.galleryEntered = false
         cam.galleryLoading = false
+        cam.galleryState = 'CLOSED'
+        cam.galleryError = ''
         break
-      case 24:
+      case CAMERA_USB.FILE_COUNT:
+        this.acknowledgeGalleryResponse()
         if (data.length >= 4) {
           this.photoCount = data[0] | (data[1] << 8)
           this.videoCount = data[2] | (data[3] << 8)
           this.photoNames = []
           this.videoNames = []
+          drone.addLog('INFO', `Camera gallery count: photos=${this.photoCount}, videos=${this.videoCount}`)
+          if (this.photoCount === 0 && this.videoCount === 0) {
+            cam.setGalleryFiles([], [])
+            break
+          }
           this.buildGalleryQueue()
+          cam.galleryState = 'LOADING_LIST'
           this.requestNextGalleryPage()
+        } else {
+          this.failGallery(`File count response too short (${data.length} B)`)
         }
         break
-      case 25:
+      case CAMERA_USB.FILE_LIST:
+        this.acknowledgeGalleryResponse()
         this.parseGalleryNames(data)
+        this.currentListPage = null
         this.requestNextGalleryPage()
         break
       case 26: {
@@ -500,10 +596,10 @@ export class CameraMediaService {
         }
         break
       }
-      case 27:
+      case CAMERA_USB.FILE_DOWNLOAD:
         this.handleDownloadData(payload)
         break
-      case 29: {
+      case CAMERA_USB.FILE_DELETE: {
         drone.addLog('INFO', 'Camera file delete acknowledged')
         const pending = this.pendingDelete
         if (pending) {
@@ -531,24 +627,45 @@ export class CameraMediaService {
   }
 
   private static requestNextGalleryPage() {
+    const cam = useCameraStore()
     if (!this.listQueue.length) {
-      useCameraStore().setGalleryFiles(this.photoNames, this.videoNames)
+      const photosComplete = this.photoNames.length >= this.photoCount
+      const videosComplete = this.videoNames.length >= this.videoCount
+      if (!photosComplete || !videosComplete) {
+        this.failGallery(`Media list incomplete: ${this.photoNames.length}/${this.photoCount} photos, ${this.videoNames.length}/${this.videoCount} videos`)
+        return
+      }
+      cam.setGalleryFiles(this.photoNames.slice(0, this.photoCount), this.videoNames.slice(0, this.videoCount))
       return
     }
     const page = this.listQueue.shift()!
-    this.send(PacketBuilder.buildCameraGetFileList(page.type, page.offset, page.count))
+    this.currentListPage = page
+    cam.galleryState = 'LOADING_LIST'
+    this.sendGalleryWithRetry(
+      PacketBuilder.buildCameraGetFileList(page.type, page.offset, page.count),
+      `file list type=${page.type} offset=${page.offset} count=${page.count} (0x19)`
+    )
   }
 
   private static parseGalleryNames(data: Uint8Array) {
-    // PotensicPro responses carry page bookkeeping before the NUL-separated ASCII names.
-    // Search the response body for printable filenames instead of relying on one firmware offset.
-    const text = new TextDecoder('ascii').decode(data).replace(/[\x00-\x1f]+/g, '\0')
-    const names = text.split('\0').map(s => s.trim()).filter(Boolean)
+    // PotensicPro starts the NUL-separated ASCII filename data two bytes into the
+    // command-specific response body (payloadIndex + 4 including cmd/status).
+    const decodeNames = (bytes: Uint8Array) => {
+      const text = new TextDecoder('ascii').decode(bytes).replace(/[\x00-\x1f]+/g, '\0')
+      return text.split('\0').map(v => v.trim()).filter(Boolean)
+    }
+    let names = data.length >= 2 ? decodeNames(data.subarray(2)) : []
+    // Preserve the previous tolerant scan only as a fallback for firmware variants.
+    if (!names.some(name => /\.(jpg|jpeg|dng|mp4|mov|lrv)$/i.test(name))) names = decodeNames(data)
+
     for (const name of names) {
       const lower = name.toLowerCase()
-      if (/\.(jpg|jpeg|dng)$/.test(lower) && !this.photoNames.includes(name)) this.photoNames.push(name)
-      if (/\.(mp4|mov|lrv)$/.test(lower) && !this.videoNames.includes(name)) this.videoNames.push(name)
+      if (/\.jpg$/.test(lower) && !this.photoNames.includes(name)) this.photoNames.push(name)
+      else if (/\.mp4$/.test(lower) && !this.videoNames.includes(name)) this.videoNames.push(name)
+      else if (/\.(jpeg|dng)$/.test(lower) && !this.photoNames.includes(name)) this.photoNames.push(name)
+      else if (/\.(mov|lrv)$/.test(lower) && !this.videoNames.includes(name)) this.videoNames.push(name)
     }
+    useDroneStore().addLog('INFO', `Camera gallery page parsed: photos=${this.photoNames.length}/${this.photoCount}, videos=${this.videoNames.length}/${this.videoCount}`)
   }
 
   private static handleDownloadData(inner: Uint8Array) {

@@ -282,14 +282,14 @@ export class DroneControlService {
 
   static takePhoto() {
     const store = useDroneStore()
-    store.addLog('INFO', 'Send photo command')
-    this.transport.send(PacketBuilder.buildTakePhoto())
+    store.addLog('INFO', 'Send photo command via APP_TO_CAMERA / function 0x0020 / cmd 0x01')
+    this.transport.send(PacketBuilder.buildCameraTakePhoto())
   }
 
   static toggleRecord() {
     const store = useDroneStore()
-    store.addLog('INFO', 'Toggle recording')
-    this.transport.send(PacketBuilder.buildToggleRecord())
+    store.addLog('INFO', 'Send record command via APP_TO_CAMERA / function 0x0020 / cmd 0x00')
+    this.transport.send(PacketBuilder.buildCameraRecord())
   }
 
   static async saveLiveSnapshotToAndroid() {

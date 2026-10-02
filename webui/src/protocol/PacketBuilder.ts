@@ -4,7 +4,7 @@
  */
 import { FeTransport } from './FeTransport'
 import { FfFdCommand } from './FfFdCommand'
-import { PROTOCOL_HEX, CAMERA_CMDS, CMD_SHORTS } from './DroneProtocol'
+import { PROTOCOL_HEX, CAMERA_CMDS, CAMERA_USB, CMD_SHORTS } from './DroneProtocol'
 import { ByteUtils } from '../utils/ByteUtils'
 
 export class PacketBuilder {
@@ -148,7 +148,7 @@ export class PacketBuilder {
    * followed by UsbDataWrapper.wrap(..., USB_TYPE_APP_TO_CAMERA).
    */
   static buildLegacyCameraUsb(payload: Uint8Array): Uint8Array {
-    const inner = FfFdCommand.buildWithShort(0x0020, payload)
+    const inner = FfFdCommand.buildWithShort(CAMERA_USB.INNER_FUNCTION, payload)
     return FeTransport.wrap(inner, 0x15)
   }
 
@@ -194,13 +194,15 @@ export class PacketBuilder {
     const encoded = Math.max(0, Math.min(255, Math.round(ev * 2 + 4)))
     return this.buildLegacyCameraUsb(new Uint8Array([15, mode, encoded]))
   }
-  static buildCameraEnterGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([33])) }
-  static buildCameraQuitGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([34])) }
-  static buildCameraGetFileCount(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([24])) }
+  static buildCameraTakePhoto(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.TAKE_PHOTO])) }
+  static buildCameraRecord(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.RECORD])) }
+  static buildCameraEnterGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.ENTER_GALLERY])) }
+  static buildCameraQuitGallery(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.QUIT_GALLERY])) }
+  static buildCameraGetFileCount(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.FILE_COUNT])) }
   static buildCameraGetFileList(type: 0 | 1 | 2, offset = 0, count = 50): Uint8Array {
     const data = new Uint8Array(6)
     const view = new DataView(data.buffer)
-    data[0] = 25
+    data[0] = CAMERA_USB.FILE_LIST
     data[1] = type
     view.setUint16(2, offset & 0xffff, true)
     view.setUint16(4, count & 0xffff, true)
@@ -209,14 +211,14 @@ export class PacketBuilder {
   static buildCameraGetFileInfo(fileName: string): Uint8Array {
     const name = new TextEncoder().encode(fileName)
     const data = new Uint8Array(1 + name.length)
-    data[0] = 26
+    data[0] = CAMERA_USB.FILE_INFO
     data.set(name, 1)
     return this.buildLegacyCameraUsb(data)
   }
   static buildCameraDeleteFile(fileName: string): Uint8Array {
     const name = new TextEncoder().encode(fileName)
     const data = new Uint8Array(2 + name.length)
-    data[0] = 29
+    data[0] = CAMERA_USB.FILE_DELETE
     data[1] = 0
     data.set(name, 2)
     return this.buildLegacyCameraUsb(data)
@@ -225,7 +227,7 @@ export class PacketBuilder {
     const name = new TextEncoder().encode(fileName)
     const data = new Uint8Array(17 + name.length)
     const view = new DataView(data.buffer)
-    data[0] = 27
+    data[0] = CAMERA_USB.FILE_DOWNLOAD
     view.setBigUint64(1, offset, true)
     view.setBigUint64(9, length, true)
     data.set(name, 17)

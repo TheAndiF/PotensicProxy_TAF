@@ -284,8 +284,8 @@ class WebServer(
                     call.response.header("Access-Control-Allow-Origin", "*")
                     try {
                         val declaredLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-                        if (declaredLength != null && declaredLength > 64L * 1024L * 1024L) {
-                            call.respondText(JSONObject().put("error", "Image is larger than 64 MiB").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                        if (declaredLength != null && declaredLength > 512L * 1024L * 1024L) {
+                            call.respondText(JSONObject().put("error", "Media file is larger than 512 MiB").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
                             return@post
                         }
                         val name = call.request.queryParameters["name"]
@@ -295,29 +295,37 @@ class WebServer(
                             ?.takeIf { it.isNotBlank() }
                             ?.let { JSONObject(it) }
                         val ext = name?.substringAfterLast('.', "")?.lowercase()
-                        if (ext !in setOf("jpg", "jpeg", "png", "dng")) {
-                            call.respondText(JSONObject().put("error", "Only JPG, JPEG, PNG and DNG images can be imported").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                        if (ext !in setOf("jpg", "jpeg", "png", "dng", "mp4")) {
+                            call.respondText(JSONObject().put("error", "Only JPG, JPEG, PNG, DNG and MP4 media can be imported").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
                             return@post
                         }
                         val bytes = call.receive<ByteArray>()
-                        if (bytes.size > 64 * 1024 * 1024) {
-                            call.respondText(JSONObject().put("error", "Image is larger than 64 MiB").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                        if (bytes.size > 512 * 1024 * 1024) {
+                            call.respondText(JSONObject().put("error", "Media file is larger than 512 MiB").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
                             return@post
                         }
                         val saved = withContext(Dispatchers.IO) {
-                            androidMedia.saveImage(
-                                bytes = bytes,
-                                requestedName = name,
-                                source = source,
-                                library = library,
-                                metadata = metadata,
-                            )
+                            if (ext == "mp4") {
+                                androidMedia.saveVideo(
+                                    bytes = bytes,
+                                    requestedName = name,
+                                    source = source,
+                                )
+                            } else {
+                                androidMedia.saveImage(
+                                    bytes = bytes,
+                                    requestedName = name,
+                                    source = source,
+                                    library = library,
+                                    metadata = metadata,
+                                )
+                            }
                         }
                         call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
                     } catch (e: SecurityException) {
                         call.respondText(JSONObject().put("error", e.message ?: "storage permission denied").toString(), ContentType.Application.Json, HttpStatusCode.Forbidden)
                     } catch (e: Exception) {
-                        call.respondText(JSONObject().put("error", e.message ?: "image import failed").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
+                        call.respondText(JSONObject().put("error", e.message ?: "media import failed").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
                     }
                 }
 

@@ -283,7 +283,7 @@ The older TAF `buildFlightCommand(group, subcmd)` / short `0x0301` path remains 
 
 ## Camera Commands (TX)
 
-Camera commands use **short 0x1200**, **FE type 0x15**.
+TAF uses two confirmed camera paths. LiveView/engineering commands use **short 0x1200**, while normal camera capture/settings/gallery use the PotensicPro USB camera function **0x0020**. Both send with FE type `0x15`.
 
 ### Command format
 
@@ -302,7 +302,23 @@ FF FD [len_LE] [00 12] [cmd_byte] [data...] [xor]
 
 ### PotensicPro-compatible USB camera control path (short `0x0020`)
 
-The camera settings/gallery/zoom path uses FE `0x15` for APP_TO_CAMERA and FE `0x05` for CAMERA_TO_APP. The inner FF/FD message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
+The normal capture/settings/gallery/zoom path sends FE `0x15` APP_TO_CAMERA with inner header `FF FD` and receives FE `0x05` CAMERA_TO_APP with inner header `FF FE`. The inner message short is `0x0020`. The response layout is `cmd`, `status`, then command-specific data. Status `0` indicates success.
+
+| Cmd | Direction | Description |
+|-----|-----------|-------------|
+| `0x00` | TX/RX | Record command on the normal camera path. |
+| `0x01` | TX/RX | Take photo on the normal camera path. |
+| `0x18` | TX/RX | File count; photo/video counts are uint16 little-endian. |
+| `0x19` | TX/RX | Paged filename list; photo/video pagination is separate and page size is at most 50. |
+| `0x1A` | TX/RX | File details. |
+| `0x1B` | TX/RX | Full file download. |
+| `0x1C` | TX/RX | Thumbnail download. |
+| `0x1D` | TX/RX | Delete file. |
+| `0x1E` | TX/RX | Cancel file download. |
+| `0x1F` | TX/RX | Cancel thumbnail download. |
+| `0x20` | TX/RX | File length/metadata list. |
+| `0x21` | TX/RX | Enter gallery. |
+| `0x22` | TX/RX | Quit gallery. |
 
 | Cmd | Direction | Description |
 |-----|-----------|-------------|

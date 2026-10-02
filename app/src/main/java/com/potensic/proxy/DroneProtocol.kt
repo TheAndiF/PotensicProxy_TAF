@@ -158,15 +158,16 @@ object DroneProtocol {
         return wrapFE(inner, 0x14)
     }
 
-    /** Take photo — camera cmd, short 0x1200 */
-    fun buildTakePhoto(): ByteArray {
-        return wrapFE(buildInnerCommand(0x51.toByte()), 0x15)
+    /** PotensicPro APP_TO_CAMERA path: FE 0x15 + FF FD + function 0x0020. */
+    fun buildLegacyCameraUsb(data: ByteArray): ByteArray {
+        return wrapFE(buildInnerCommandWithShort(0x0020, data), 0x15)
     }
 
-    /** Start/stop video recording — camera cmd, short 0x1200 */
-    fun buildToggleRecord(): ByteArray {
-        return wrapFE(buildInnerCommand(0x50.toByte()), 0x15)
-    }
+    /** Take photo — PotensicPro USB camera command 0x01 on function 0x0020. */
+    fun buildTakePhoto(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x01))
+
+    /** Record command — PotensicPro USB camera command 0x00 on function 0x0020. */
+    fun buildToggleRecord(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x00))
 
     private fun hexPkt(hex: String): ByteArray {
         val clean = hex.replace(" ", "")

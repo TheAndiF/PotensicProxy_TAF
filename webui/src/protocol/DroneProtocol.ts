@@ -63,6 +63,29 @@ export const CMD_SHORTS = {
   FLIGHT_FAULT: 0x0206          // 518 flight-controller faults and alert codes
 }
 
+
+export const CAMERA_USB = {
+  INNER_FUNCTION: 0x0020,
+  TX_HEADER_0: 0xff,
+  TX_HEADER_1: 0xfd,
+  RX_HEADER_0: 0xff,
+  RX_HEADER_1: 0xfe,
+  TAKE_PHOTO: 0x01,
+  RECORD: 0x00,
+  MODE: 0x03,
+  FILE_COUNT: 0x18,
+  FILE_LIST: 0x19,
+  FILE_INFO: 0x1a,
+  FILE_DOWNLOAD: 0x1b,
+  THUMBNAIL_DOWNLOAD: 0x1c,
+  FILE_DELETE: 0x1d,
+  FILE_DOWNLOAD_CANCEL: 0x1e,
+  THUMBNAIL_CANCEL: 0x1f,
+  FILE_META_LIST: 0x20,
+  ENTER_GALLERY: 0x21,
+  QUIT_GALLERY: 0x22
+} as const
+
 export const CAMERA_CMDS = {
   GET_ALL_PARAMS: 0x01,       // 1 (0x01): get all parameters
   CAMERA_FUNCTION: 0x16,      // 22 (0x16): set camera feature flags (Preview / H265 / Watermark)
