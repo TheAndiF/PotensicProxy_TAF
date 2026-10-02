@@ -10,8 +10,8 @@
 
     <div class="panel-title" style="margin-top: 10px;">📷 {{ t('actions.camera') }}</div>
     <div class="btn-grid">
-      <button class="taf-btn" @click="DroneControlService.takePhoto()">📸 {{ t('actions.photo') }}</button>
-      <button class="taf-btn" :class="{ 'taf-btn--danger': camera.recording }" :disabled="camera.recordingPending" @click="DroneControlService.toggleRecord()">🎥 {{ camera.recording ? t('actions.recordStop') : t('actions.recordStart') }}</button>
+      <button class="taf-btn" :disabled="camera.capturePending" @click="DroneControlService.takePhoto()">📸 {{ t('actions.photo') }}</button>
+      <button class="taf-btn" :class="{ 'taf-btn--danger': camera.recording }" :disabled="camera.recordingPending || camera.capturePending" @click="DroneControlService.toggleRecord()">🎥 {{ camera.recording ? t('actions.recordStop') : t('actions.recordStart') }}</button>
       <button class="taf-btn taf-btn--primary" @click="DroneControlService.requestIdr()">🔄 {{ t('actions.keyframe') }}</button>
       <button class="taf-btn" @click="DroneControlService.initLiveView()">📡 {{ t('actions.liveview') }}</button>
     </div>

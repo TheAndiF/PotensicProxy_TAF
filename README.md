@@ -186,3 +186,7 @@ Relevant project documents include:
 
 ### Virtual joystick and ATOM gimbal
 The cockpit virtual joysticks are connected to PotensicPro's confirmed `Send4AxisData` flight function (`0x0001`). Throttle, yaw, pitch and roll are transmitted at the original app cadence of 80 ms while a virtual stick is actively held, with a neutral frame on release. The ATOM gimbal deliberately does not use the generic `Send4AxisData` gimbal byte because PotensicPro disables that app-side slider for ATOM-series aircraft. The camera control instead uses the confirmed ATOM pitch presets from `SendGimbalSettingData` (`0x001A`) and displays the received gimbal-state feedback as the actual angle.
+
+### Camera capture reliability (v1.3)
+
+The cockpit Photo and Video buttons now use the PotensicPro capture-mode workflow rather than sending capture commands blindly. Before a photo or record-start command, TAF synchronizes or switches the camera to the required mode and waits for the camera response. Recording state is updated only after the camera confirms start/stop. A mode rejection (`status 8`) causes one controlled mode correction and retry. This change is limited to the normal camera capture path; gallery/download behavior is otherwise unchanged in this revision.

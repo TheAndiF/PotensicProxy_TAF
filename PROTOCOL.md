@@ -782,3 +782,35 @@ PotensicPro's `DataManager.startSend4Axis()` transmits the current frame every 8
 The original app's generic `SlideController` writes the `Send4AxisData.gimbal` byte, but explicitly hides that app-side slider for the ATOM series. TAF therefore does not invent continuous ATOM gimbal motion through that byte and keeps it neutral.
 
 For ATOM, the app-confirmed absolute pitch controls are sent with flight function `0x001A` (`SendGimbalSettingData`): `pitchControl=1` for 0 degrees, `3` for -45 degrees and `2` for -90 degrees. TAF requests the synchronized gimbal settings first, preserves the remaining settings fields and then applies these confirmed presets. Gimbal state feedback is taken from the confirmed gimbal-state receive path and shown separately as the actual value.
+
+## Camera capture mode state machine (PotensicPro-aligned, 2026-10-02 v1.3)
+
+Normal photo/video capture uses the New-FC camera transport `FE 0x15` with inner `FF FD`, function `0x0020`.
+TAF must not treat photo or video as a stateless single command. PotensicPro keeps an explicit capture mode and exposes a status query.
+
+Confirmed payloads:
+
+- Get camera status: `02`
+- Switch to video/record mode: `03 00`
+- Switch to photo mode: `03 01`
+- Take photo: `01`
+- Start recording: `00 01`
+- Stop recording: `00 00`
+
+Response handling on the same camera function:
+
+- Command `02`: data byte 0 = mode (`00` video, `01` photo); when mode is video, data byte 1 indicates recording state and bytes 2..3 contain record time (uint16 LE) when present.
+- Command `03`: data byte 0 confirms mode (`00` video, `01` photo).
+- Command `01`: successful photo acknowledgement.
+- Command `00`: data byte 0 = `01` recording started, `00` recording stopped.
+
+TAF v1.3 capture flow:
+
+1. If gallery/playback is active, send `0x22` first and leave the gallery state.
+2. If the local capture mode is unknown, send `02` and wait for the response.
+3. If the desired mode differs, send `03 <mode>` and wait for the `03` acknowledgement.
+4. Only after the mode is confirmed, send photo/start/stop.
+5. UI state changes only after the camera acknowledgement.
+6. Each stage has a 2.5 s timeout. Status `8` (current mode not allowed) triggers one controlled mode switch + retry.
+
+Potensic camera status codes used by TAF now follow the PotensicPro mapping for the relevant range: 1 command not supported, 2 argument invalid, 3 device busy, 4 unknown error, 5 no SD card, 6 SD full, 7 option invalid, 8 current mode not allowed, 9 recording already started, 10 SD needs format, 11 not enough memory, 12 file system error, 23 file offset error, 24 file MD5 error, 37 need sync state error.

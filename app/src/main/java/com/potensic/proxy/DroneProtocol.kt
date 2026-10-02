@@ -163,6 +163,12 @@ object DroneProtocol {
         return wrapFE(buildInnerCommandWithShort(0x0020, data), 0x15)
     }
 
+    /** PotensicPro UsbCameraHandler.getCameraStatus(): 0x0020 payload [0x02]. */
+    fun buildCameraGetStatus(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x02))
+
+    /** PotensicPro UsbCameraHandler.setCameraMode(): mode 1=photo, 0=record. */
+    fun buildCameraSetMode(photo: Boolean): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x03, if (photo) 0x01 else 0x00))
+
     /** PotensicPro UsbCameraHandler.takePhoto(): 0x0020 payload [0x01]. */
     fun buildTakePhoto(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x01))
 

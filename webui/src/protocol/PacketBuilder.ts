@@ -190,6 +190,10 @@ export class PacketBuilder {
     const encoded = Math.max(0, Math.min(255, Math.round(ev * 2 + 4)))
     return this.buildLegacyCameraUsb(new Uint8Array([15, mode, encoded]))
   }
+  static buildCameraGetStatus(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([0x02])) }
+  static buildCameraSetMode(mode: 'PHOTO' | 'VIDEO'): Uint8Array {
+    return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.MODE, mode === 'PHOTO' ? 0x01 : 0x00]))
+  }
   static buildCameraTakePhoto(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.TAKE_PHOTO])) }
   static buildCameraStartRecord(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.RECORD, 0x01])) }
   static buildCameraStopRecord(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.RECORD, 0x00])) }

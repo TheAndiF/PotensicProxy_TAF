@@ -46,6 +46,12 @@ export class CameraMediaService {
   private static currentMetaBatch: string[] | null = null
   private static readonly META_TIMEOUT_MS = 2000
   private static readonly META_MAX_RETRIES = 2
+
+  private static pendingCaptureAction: 'photo' | 'record-start' | 'record-stop' | null = null
+  private static captureTimer: ReturnType<typeof setTimeout> | null = null
+  private static captureRetriedAfterModeError = false
+  private static readonly CAPTURE_STAGE_TIMEOUT_MS = 2500
+
   private static pendingDelete: null | {
     fileName: string
     resolve: () => void
@@ -70,6 +76,7 @@ export class CameraMediaService {
     const store = useDroneStore()
     store.addLog('INFO', 'Read camera configuration, resolutions, EV and SD-card state')
     ;[
+      PacketBuilder.buildCameraGetStatus(),
       PacketBuilder.buildCameraGetConfigMenu(),
       PacketBuilder.buildCameraGetVideoSizes(),
       PacketBuilder.buildCameraGetPhotoSizes(),
@@ -81,6 +88,137 @@ export class CameraMediaService {
       PacketBuilder.buildCameraGetSdStatus(),
       PacketBuilder.buildCameraGetZoom()
     ].forEach((p, i) => setTimeout(() => this.send(p), i * 70))
+  }
+
+  private static clearCaptureTimer() {
+    if (this.captureTimer) clearTimeout(this.captureTimer)
+    this.captureTimer = null
+  }
+
+  private static armCaptureTimer(stage: string) {
+    this.clearCaptureTimer()
+    this.captureTimer = setTimeout(() => {
+      const cam = useCameraStore()
+      const drone = useDroneStore()
+      const action = this.pendingCaptureAction
+      cam.captureFlowState = 'ERROR'
+      cam.recordingPending = false
+      cam.lastCaptureMessage = `Camera capture timeout during ${stage}`
+      drone.addLog('ERROR', `${cam.lastCaptureMessage}${action ? `; pending=${action}` : ''}`)
+      this.pendingCaptureAction = null
+      this.captureRetriedAfterModeError = false
+    }, this.CAPTURE_STAGE_TIMEOUT_MS)
+  }
+
+  private static desiredMode(action: 'photo' | 'record-start' | 'record-stop'): 'PHOTO' | 'VIDEO' {
+    return action === 'photo' ? 'PHOTO' : 'VIDEO'
+  }
+
+  private static sendCapturePayload(action: 'photo' | 'record-start' | 'record-stop') {
+    const cam = useCameraStore()
+    const drone = useDroneStore()
+    if (action === 'photo') {
+      cam.captureFlowState = 'PHOTO_PENDING'
+      cam.lastCaptureMessage = 'Photo capture command pending'
+      drone.addLog('INFO', '[Camera capture] TX photo: FE 0x15 / 0x0020 / payload 01')
+      this.send(PacketBuilder.buildCameraTakePhoto())
+      this.armCaptureTimer('photo ACK')
+    } else if (action === 'record-start') {
+      cam.captureFlowState = 'VIDEO_START_PENDING'
+      cam.recordingPending = true
+      cam.lastCaptureMessage = 'Video start command pending'
+      drone.addLog('INFO', '[Camera capture] TX record start: FE 0x15 / 0x0020 / payload 00 01')
+      this.send(PacketBuilder.buildCameraStartRecord())
+      this.armCaptureTimer('record-start ACK')
+    } else {
+      cam.captureFlowState = 'VIDEO_STOP_PENDING'
+      cam.recordingPending = true
+      cam.lastCaptureMessage = 'Video stop command pending'
+      drone.addLog('INFO', '[Camera capture] TX record stop: FE 0x15 / 0x0020 / payload 00 00')
+      this.send(PacketBuilder.buildCameraStopRecord())
+      this.armCaptureTimer('record-stop ACK')
+    }
+  }
+
+  private static switchModeForPendingAction() {
+    const action = this.pendingCaptureAction
+    if (!action) return
+    const cam = useCameraStore()
+    const desired = this.desiredMode(action)
+    cam.captureFlowState = desired === 'PHOTO' ? 'SWITCHING_TO_PHOTO' : 'SWITCHING_TO_VIDEO'
+    cam.lastCaptureMessage = `Switching camera to ${desired.toLowerCase()} mode`
+    useDroneStore().addLog('INFO', `[Camera capture] TX mode switch ${desired}: FE 0x15 / 0x0020 / payload 03 ${desired === 'PHOTO' ? '01' : '00'}`)
+    this.send(PacketBuilder.buildCameraSetMode(desired))
+    this.armCaptureTimer(`${desired.toLowerCase()} mode ACK`)
+  }
+
+  private static continuePendingCaptureFromKnownMode() {
+    const action = this.pendingCaptureAction
+    if (!action) return
+    const cam = useCameraStore()
+    const desired = this.desiredMode(action)
+    if (cam.captureMode === desired) this.sendCapturePayload(action)
+    else this.switchModeForPendingAction()
+  }
+
+  private static beginCapture(action: 'photo' | 'record-start' | 'record-stop') {
+    const cam = useCameraStore()
+    const drone = useDroneStore()
+    if (this.pendingCaptureAction || cam.capturePending) {
+      drone.addLog('WARN', `[Camera capture] ignored ${action}; another capture transition is active (${cam.captureFlowState})`)
+      return
+    }
+    this.pendingCaptureAction = action
+    this.captureRetriedAfterModeError = false
+    cam.captureFlowState = 'SYNCING'
+    cam.lastCaptureMessage = `Preparing ${action}`
+
+    const proceed = () => {
+      // PotensicPro keeps an explicit CaptureMode. If our local mode is unknown,
+      // synchronize it first with getCameraStatus (command 0x02), then switch if needed.
+      if (cam.captureMode === 'UNKNOWN') {
+        drone.addLog('INFO', '[Camera capture] TX get camera status before capture: payload 02')
+        this.send(PacketBuilder.buildCameraGetStatus())
+        this.armCaptureTimer('camera-status ACK')
+      } else {
+        this.continuePendingCaptureFromKnownMode()
+      }
+    }
+
+    if (cam.galleryEntered) {
+      drone.addLog('INFO', '[Camera capture] leave gallery before capture (0x22)')
+      this.send(PacketBuilder.buildCameraQuitGallery())
+      cam.galleryEntered = false
+      cam.galleryLoading = false
+      cam.galleryState = 'CLOSED'
+      // Gallery quit has its own ACK path; a short settle is retained only for the playback->capture transition.
+      setTimeout(proceed, 250)
+    } else {
+      proceed()
+    }
+  }
+
+  static takePhoto() {
+    this.beginCapture('photo')
+  }
+
+  static startRecord() {
+    const cam = useCameraStore()
+    if (cam.recording || cam.recordingPending) return
+    this.beginCapture('record-start')
+  }
+
+  static stopRecord() {
+    const cam = useCameraStore()
+    if (!cam.recording || cam.recordingPending) return
+    this.beginCapture('record-stop')
+  }
+
+  static syncCaptureState() {
+    const cam = useCameraStore()
+    cam.captureFlowState = 'SYNCING'
+    this.send(PacketBuilder.buildCameraGetStatus())
+    this.armCaptureTimer('camera-status sync')
   }
 
   static setVideoResolution(index: number) {
@@ -496,15 +634,42 @@ export class CameraMediaService {
 
     if (status !== 0) {
       const statusText: Record<number, string> = {
-        1: 'Device busy',
-        2: 'No SD card',
-        3: 'SD card full',
-        4: 'Command not supported',
-        5: 'Argument invalid'
+        1: 'Command not supported',
+        2: 'Argument invalid',
+        3: 'Device busy',
+        4: 'Unknown error',
+        5: 'No SD card',
+        6: 'SD card full',
+        7: 'Option invalid',
+        8: 'Current mode not allowed',
+        9: 'Recording already started',
+        10: 'SD card needs format',
+        11: 'Not enough memory',
+        12: 'File system error',
+        23: 'File offset error',
+        24: 'File MD5 error',
+        37: 'Need sync state error'
       }
       const failure = statusText[status] || `status ${status}`
       drone.addLog('WARN', `Camera command 0x${cmd.toString(16).padStart(2, '0')} failed: ${failure}`)
       if (cmd === CAMERA_USB.RECORD) cam.recordingPending = false
+
+      if ([CAMERA_USB.TAKE_PHOTO, CAMERA_USB.RECORD, CAMERA_USB.MODE, 0x02].includes(cmd as any)) {
+        this.clearCaptureTimer()
+        const action = this.pendingCaptureAction
+        // PotensicPro exposes status 8 = current mode not allowed. For a capture command,
+        // do one controlled mode switch and retry instead of silently failing.
+        if (status === 8 && action && (cmd === CAMERA_USB.TAKE_PHOTO || cmd === CAMERA_USB.RECORD) && !this.captureRetriedAfterModeError) {
+          this.captureRetriedAfterModeError = true
+          drone.addLog('WARN', `[Camera capture] ${failure}; switching to required mode and retrying once`)
+          this.switchModeForPendingAction()
+          return true
+        }
+        cam.captureFlowState = 'ERROR'
+        cam.lastCaptureMessage = `Camera capture failed: ${failure}`
+        this.pendingCaptureAction = null
+        this.captureRetriedAfterModeError = false
+      }
       if ([CAMERA_USB.ENTER_GALLERY, CAMERA_USB.FILE_COUNT, CAMERA_USB.FILE_LIST].includes(cmd as any)) {
         this.failGallery(`Command 0x${cmd.toString(16).padStart(2, '0')} failed: ${failure}`)
       }
@@ -526,17 +691,61 @@ export class CameraMediaService {
     }
 
     switch (cmd) {
+      case 0x02: { // getCameraStatus()
+        this.clearCaptureTimer()
+        if (data.length) {
+          cam.captureMode = data[0] === 0 ? 'VIDEO' : data[0] === 1 ? 'PHOTO' : 'UNKNOWN'
+          if (data.length >= 2) {
+            cam.recording = data[0] === 0 && data[1] === 1
+            cam.recordingPending = false
+          }
+          const recordTime = data.length >= 4 ? (data[2] | (data[3] << 8)) : null
+          drone.addLog('INFO', `[Camera capture] status: mode=${cam.captureMode} recording=${cam.recording}${recordTime != null ? ` recordTime=${recordTime}s` : ''}`)
+        }
+        if (this.pendingCaptureAction) this.continuePendingCaptureFromKnownMode()
+        else cam.captureFlowState = 'IDLE'
+        break
+      }
+      case CAMERA_USB.MODE: {
+        this.clearCaptureTimer()
+        if (data.length) {
+          cam.captureMode = data[0] === 0 ? 'VIDEO' : data[0] === 1 ? 'PHOTO' : 'UNKNOWN'
+          drone.addLog('INFO', `[Camera capture] mode ACK: ${cam.captureMode}`)
+        }
+        if (this.pendingCaptureAction && cam.captureMode === this.desiredMode(this.pendingCaptureAction)) {
+          this.sendCapturePayload(this.pendingCaptureAction)
+        } else if (this.pendingCaptureAction) {
+          cam.captureFlowState = 'ERROR'
+          cam.lastCaptureMessage = `Camera mode ACK did not match requested mode`
+          drone.addLog('ERROR', `[Camera capture] ${cam.lastCaptureMessage}; mode=${cam.captureMode}`)
+          this.pendingCaptureAction = null
+          this.captureRetriedAfterModeError = false
+        } else {
+          cam.captureFlowState = 'IDLE'
+        }
+        break
+      }
       case CAMERA_USB.RECORD:
+        this.clearCaptureTimer()
         if (data.length) {
           cam.recording = data[0] === 1
           cam.recordingPending = false
+          cam.captureMode = 'VIDEO'
+          cam.captureFlowState = 'IDLE'
           cam.lastCaptureMessage = cam.recording ? 'Video recording started' : 'Video recording stopped'
           drone.addLog('INFO', cam.lastCaptureMessage)
+          this.pendingCaptureAction = null
+          this.captureRetriedAfterModeError = false
         }
         break
       case CAMERA_USB.TAKE_PHOTO:
+        this.clearCaptureTimer()
+        cam.captureMode = 'PHOTO'
+        cam.captureFlowState = 'IDLE'
         cam.lastCaptureMessage = 'Photo captured successfully'
         drone.addLog('INFO', cam.lastCaptureMessage)
+        this.pendingCaptureAction = null
+        this.captureRetriedAfterModeError = false
         break
       case 4: // format SD response: card state in data[0]
         if (data.length) cam.sd.state = data[0]

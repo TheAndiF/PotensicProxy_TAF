@@ -1,0 +1,503 @@
+--- a/webui/src/protocol/PacketBuilder.ts
++++ b/webui/src/protocol/PacketBuilder.ts
+@@ -190,6 +190,10 @@
+     const encoded = Math.max(0, Math.min(255, Math.round(ev * 2 + 4)))
+     return this.buildLegacyCameraUsb(new Uint8Array([15, mode, encoded]))
+   }
++  static buildCameraGetStatus(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([0x02])) }
++  static buildCameraSetMode(mode: 'PHOTO' | 'VIDEO'): Uint8Array {
++    return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.MODE, mode === 'PHOTO' ? 0x01 : 0x00]))
++  }
+   static buildCameraTakePhoto(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.TAKE_PHOTO])) }
+   static buildCameraStartRecord(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.RECORD, 0x01])) }
+   static buildCameraStopRecord(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([CAMERA_USB.RECORD, 0x00])) }
+--- a/webui/src/stores/useCameraStore.ts
++++ b/webui/src/stores/useCameraStore.ts
+@@ -12,6 +12,8 @@
+ }
+ 
+ export type GalleryState = 'CLOSED' | 'OPENING' | 'OPEN' | 'LOADING_COUNT' | 'LOADING_LIST' | 'READY' | 'ERROR'
++export type CaptureModeState = 'UNKNOWN' | 'PHOTO' | 'VIDEO'
++export type CaptureFlowState = 'IDLE' | 'SYNCING' | 'SWITCHING_TO_PHOTO' | 'SWITCHING_TO_VIDEO' | 'PHOTO_PENDING' | 'VIDEO_START_PENDING' | 'VIDEO_STOP_PENDING' | 'ERROR'
+ 
+ export const useCameraStore = defineStore('camera', () => {
+   const videoResolutionIndex = ref<number | null>(null)
+@@ -51,6 +53,9 @@
+   const galleryLoading = ref(false)
+   const recording = ref(false)
+   const recordingPending = ref(false)
++  const captureMode = ref<CaptureModeState>('UNKNOWN')
++  const captureFlowState = ref<CaptureFlowState>('IDLE')
++  const capturePending = computed(() => !['IDLE', 'ERROR'].includes(captureFlowState.value))
+   const lastCaptureMessage = ref('')
+   const download = reactive({
+     fileName: '',
+@@ -144,6 +149,9 @@
+     galleryLoading,
+     recording,
+     recordingPending,
++    captureMode,
++    captureFlowState,
++    capturePending,
+     lastCaptureMessage,
+     download,
+     lastResponse,
+--- a/webui/src/services/CameraMediaService.ts
++++ b/webui/src/services/CameraMediaService.ts
+@@ -46,6 +46,12 @@
+   private static currentMetaBatch: string[] | null = null
+   private static readonly META_TIMEOUT_MS = 2000
+   private static readonly META_MAX_RETRIES = 2
++
++  private static pendingCaptureAction: 'photo' | 'record-start' | 'record-stop' | null = null
++  private static captureTimer: ReturnType<typeof setTimeout> | null = null
++  private static captureRetriedAfterModeError = false
++  private static readonly CAPTURE_STAGE_TIMEOUT_MS = 2500
++
+   private static pendingDelete: null | {
+     fileName: string
+     resolve: () => void
+@@ -70,6 +76,7 @@
+     const store = useDroneStore()
+     store.addLog('INFO', 'Read camera configuration, resolutions, EV and SD-card state')
+     ;[
++      PacketBuilder.buildCameraGetStatus(),
+       PacketBuilder.buildCameraGetConfigMenu(),
+       PacketBuilder.buildCameraGetVideoSizes(),
+       PacketBuilder.buildCameraGetPhotoSizes(),
+@@ -83,6 +90,137 @@
+     ].forEach((p, i) => setTimeout(() => this.send(p), i * 70))
+   }
+ 
++  private static clearCaptureTimer() {
++    if (this.captureTimer) clearTimeout(this.captureTimer)
++    this.captureTimer = null
++  }
++
++  private static armCaptureTimer(stage: string) {
++    this.clearCaptureTimer()
++    this.captureTimer = setTimeout(() => {
++      const cam = useCameraStore()
++      const drone = useDroneStore()
++      const action = this.pendingCaptureAction
++      cam.captureFlowState = 'ERROR'
++      cam.recordingPending = false
++      cam.lastCaptureMessage = `Camera capture timeout during ${stage}`
++      drone.addLog('ERROR', `${cam.lastCaptureMessage}${action ? `; pending=${action}` : ''}`)
++      this.pendingCaptureAction = null
++      this.captureRetriedAfterModeError = false
++    }, this.CAPTURE_STAGE_TIMEOUT_MS)
++  }
++
++  private static desiredMode(action: 'photo' | 'record-start' | 'record-stop'): 'PHOTO' | 'VIDEO' {
++    return action === 'photo' ? 'PHOTO' : 'VIDEO'
++  }
++
++  private static sendCapturePayload(action: 'photo' | 'record-start' | 'record-stop') {
++    const cam = useCameraStore()
++    const drone = useDroneStore()
++    if (action === 'photo') {
++      cam.captureFlowState = 'PHOTO_PENDING'
++      cam.lastCaptureMessage = 'Photo capture command pending'
++      drone.addLog('INFO', '[Camera capture] TX photo: FE 0x15 / 0x0020 / payload 01')
++      this.send(PacketBuilder.buildCameraTakePhoto())
++      this.armCaptureTimer('photo ACK')
++    } else if (action === 'record-start') {
++      cam.captureFlowState = 'VIDEO_START_PENDING'
++      cam.recordingPending = true
++      cam.lastCaptureMessage = 'Video start command pending'
++      drone.addLog('INFO', '[Camera capture] TX record start: FE 0x15 / 0x0020 / payload 00 01')
++      this.send(PacketBuilder.buildCameraStartRecord())
++      this.armCaptureTimer('record-start ACK')
++    } else {
++      cam.captureFlowState = 'VIDEO_STOP_PENDING'
++      cam.recordingPending = true
++      cam.lastCaptureMessage = 'Video stop command pending'
++      drone.addLog('INFO', '[Camera capture] TX record stop: FE 0x15 / 0x0020 / payload 00 00')
++      this.send(PacketBuilder.buildCameraStopRecord())
++      this.armCaptureTimer('record-stop ACK')
++    }
++  }
++
++  private static switchModeForPendingAction() {
++    const action = this.pendingCaptureAction
++    if (!action) return
++    const cam = useCameraStore()
++    const desired = this.desiredMode(action)
++    cam.captureFlowState = desired === 'PHOTO' ? 'SWITCHING_TO_PHOTO' : 'SWITCHING_TO_VIDEO'
++    cam.lastCaptureMessage = `Switching camera to ${desired.toLowerCase()} mode`
++    useDroneStore().addLog('INFO', `[Camera capture] TX mode switch ${desired}: FE 0x15 / 0x0020 / payload 03 ${desired === 'PHOTO' ? '01' : '00'}`)
++    this.send(PacketBuilder.buildCameraSetMode(desired))
++    this.armCaptureTimer(`${desired.toLowerCase()} mode ACK`)
++  }
++
++  private static continuePendingCaptureFromKnownMode() {
++    const action = this.pendingCaptureAction
++    if (!action) return
++    const cam = useCameraStore()
++    const desired = this.desiredMode(action)
++    if (cam.captureMode === desired) this.sendCapturePayload(action)
++    else this.switchModeForPendingAction()
++  }
++
++  private static beginCapture(action: 'photo' | 'record-start' | 'record-stop') {
++    const cam = useCameraStore()
++    const drone = useDroneStore()
++    if (this.pendingCaptureAction || cam.capturePending) {
++      drone.addLog('WARN', `[Camera capture] ignored ${action}; another capture transition is active (${cam.captureFlowState})`)
++      return
++    }
++    this.pendingCaptureAction = action
++    this.captureRetriedAfterModeError = false
++    cam.captureFlowState = 'SYNCING'
++    cam.lastCaptureMessage = `Preparing ${action}`
++
++    const proceed = () => {
++      // PotensicPro keeps an explicit CaptureMode. If our local mode is unknown,
++      // synchronize it first with getCameraStatus (command 0x02), then switch if needed.
++      if (cam.captureMode === 'UNKNOWN') {
++        drone.addLog('INFO', '[Camera capture] TX get camera status before capture: payload 02')
++        this.send(PacketBuilder.buildCameraGetStatus())
++        this.armCaptureTimer('camera-status ACK')
++      } else {
++        this.continuePendingCaptureFromKnownMode()
++      }
++    }
++
++    if (cam.galleryEntered) {
++      drone.addLog('INFO', '[Camera capture] leave gallery before capture (0x22)')
++      this.send(PacketBuilder.buildCameraQuitGallery())
++      cam.galleryEntered = false
++      cam.galleryLoading = false
++      cam.galleryState = 'CLOSED'
++      // Gallery quit has its own ACK path; a short settle is retained only for the playback->capture transition.
++      setTimeout(proceed, 250)
++    } else {
++      proceed()
++    }
++  }
++
++  static takePhoto() {
++    this.beginCapture('photo')
++  }
++
++  static startRecord() {
++    const cam = useCameraStore()
++    if (cam.recording || cam.recordingPending) return
++    this.beginCapture('record-start')
++  }
++
++  static stopRecord() {
++    const cam = useCameraStore()
++    if (!cam.recording || cam.recordingPending) return
++    this.beginCapture('record-stop')
++  }
++
++  static syncCaptureState() {
++    const cam = useCameraStore()
++    cam.captureFlowState = 'SYNCING'
++    this.send(PacketBuilder.buildCameraGetStatus())
++    this.armCaptureTimer('camera-status sync')
++  }
++
+   static setVideoResolution(index: number) {
+     useDroneStore().addLog('INFO', `Set recording resolution index=${index} (Potensic camera cmd 0x0B)`)
+     this.send(PacketBuilder.buildCameraSetVideoSize(index))
+@@ -496,15 +634,42 @@
+ 
+     if (status !== 0) {
+       const statusText: Record<number, string> = {
+-        1: 'Device busy',
+-        2: 'No SD card',
+-        3: 'SD card full',
+-        4: 'Command not supported',
+-        5: 'Argument invalid'
++        1: 'Command not supported',
++        2: 'Argument invalid',
++        3: 'Device busy',
++        4: 'Unknown error',
++        5: 'No SD card',
++        6: 'SD card full',
++        7: 'Option invalid',
++        8: 'Current mode not allowed',
++        9: 'Recording already started',
++        10: 'SD card needs format',
++        11: 'Not enough memory',
++        12: 'File system error',
++        23: 'File offset error',
++        24: 'File MD5 error',
++        37: 'Need sync state error'
+       }
+       const failure = statusText[status] || `status ${status}`
+       drone.addLog('WARN', `Camera command 0x${cmd.toString(16).padStart(2, '0')} failed: ${failure}`)
+       if (cmd === CAMERA_USB.RECORD) cam.recordingPending = false
++
++      if ([CAMERA_USB.TAKE_PHOTO, CAMERA_USB.RECORD, CAMERA_USB.MODE, 0x02].includes(cmd as any)) {
++        this.clearCaptureTimer()
++        const action = this.pendingCaptureAction
++        // PotensicPro exposes status 8 = current mode not allowed. For a capture command,
++        // do one controlled mode switch and retry instead of silently failing.
++        if (status === 8 && action && (cmd === CAMERA_USB.TAKE_PHOTO || cmd === CAMERA_USB.RECORD) && !this.captureRetriedAfterModeError) {
++          this.captureRetriedAfterModeError = true
++          drone.addLog('WARN', `[Camera capture] ${failure}; switching to required mode and retrying once`)
++          this.switchModeForPendingAction()
++          return true
++        }
++        cam.captureFlowState = 'ERROR'
++        cam.lastCaptureMessage = `Camera capture failed: ${failure}`
++        this.pendingCaptureAction = null
++        this.captureRetriedAfterModeError = false
++      }
+       if ([CAMERA_USB.ENTER_GALLERY, CAMERA_USB.FILE_COUNT, CAMERA_USB.FILE_LIST].includes(cmd as any)) {
+         this.failGallery(`Command 0x${cmd.toString(16).padStart(2, '0')} failed: ${failure}`)
+       }
+@@ -526,17 +691,61 @@
+     }
+ 
+     switch (cmd) {
++      case 0x02: { // getCameraStatus()
++        this.clearCaptureTimer()
++        if (data.length) {
++          cam.captureMode = data[0] === 0 ? 'VIDEO' : data[0] === 1 ? 'PHOTO' : 'UNKNOWN'
++          if (data.length >= 2) {
++            cam.recording = data[0] === 0 && data[1] === 1
++            cam.recordingPending = false
++          }
++          const recordTime = data.length >= 4 ? (data[2] | (data[3] << 8)) : null
++          drone.addLog('INFO', `[Camera capture] status: mode=${cam.captureMode} recording=${cam.recording}${recordTime != null ? ` recordTime=${recordTime}s` : ''}`)
++        }
++        if (this.pendingCaptureAction) this.continuePendingCaptureFromKnownMode()
++        else cam.captureFlowState = 'IDLE'
++        break
++      }
++      case CAMERA_USB.MODE: {
++        this.clearCaptureTimer()
++        if (data.length) {
++          cam.captureMode = data[0] === 0 ? 'VIDEO' : data[0] === 1 ? 'PHOTO' : 'UNKNOWN'
++          drone.addLog('INFO', `[Camera capture] mode ACK: ${cam.captureMode}`)
++        }
++        if (this.pendingCaptureAction && cam.captureMode === this.desiredMode(this.pendingCaptureAction)) {
++          this.sendCapturePayload(this.pendingCaptureAction)
++        } else if (this.pendingCaptureAction) {
++          cam.captureFlowState = 'ERROR'
++          cam.lastCaptureMessage = `Camera mode ACK did not match requested mode`
++          drone.addLog('ERROR', `[Camera capture] ${cam.lastCaptureMessage}; mode=${cam.captureMode}`)
++          this.pendingCaptureAction = null
++          this.captureRetriedAfterModeError = false
++        } else {
++          cam.captureFlowState = 'IDLE'
++        }
++        break
++      }
+       case CAMERA_USB.RECORD:
++        this.clearCaptureTimer()
+         if (data.length) {
+           cam.recording = data[0] === 1
+           cam.recordingPending = false
++          cam.captureMode = 'VIDEO'
++          cam.captureFlowState = 'IDLE'
+           cam.lastCaptureMessage = cam.recording ? 'Video recording started' : 'Video recording stopped'
+           drone.addLog('INFO', cam.lastCaptureMessage)
++          this.pendingCaptureAction = null
++          this.captureRetriedAfterModeError = false
+         }
+         break
+       case CAMERA_USB.TAKE_PHOTO:
++        this.clearCaptureTimer()
++        cam.captureMode = 'PHOTO'
++        cam.captureFlowState = 'IDLE'
+         cam.lastCaptureMessage = 'Photo captured successfully'
+         drone.addLog('INFO', cam.lastCaptureMessage)
++        this.pendingCaptureAction = null
++        this.captureRetriedAfterModeError = false
+         break
+       case 4: // format SD response: card state in data[0]
+         if (data.length) cam.sd.state = data[0]
+--- a/webui/src/services/DroneControlService.ts
++++ b/webui/src/services/DroneControlService.ts
+@@ -9,6 +9,7 @@
+ import { useCameraStore } from '../stores/useCameraStore'
+ import { AndroidMediaService } from './AndroidMediaService'
+ import { RecognitionMetadataService } from './RecognitionMetadataService'
++import { CameraMediaService } from './CameraMediaService'
+ 
+ export class DroneControlService {
+   private static transport = UsbTransportService.getInstance()
+@@ -281,48 +282,16 @@
+ 
+   // === Camera Actions ===
+ 
+-  private static sendCaptureCommand(packet: Uint8Array, label: string) {
+-    const store = useDroneStore()
+-    const camera = useCameraStore()
+-    const send = () => {
+-      store.addLog('INFO', `${label}: FE 0x15 / camera function 0x0020`)
+-      this.transport.send(packet)
+-    }
+-
+-    // The camera does not reliably accept capture commands while it is in gallery/playback mode.
+-    // Leave gallery first and give the camera a short settling interval before capture.
+-    if (camera.galleryEntered) {
+-      store.addLog('INFO', `${label}: leave camera gallery before capture`)
+-      this.transport.send(PacketBuilder.buildCameraQuitGallery())
+-      camera.galleryEntered = false
+-      camera.galleryLoading = false
+-      camera.galleryState = 'CLOSED'
+-      window.setTimeout(send, 250)
+-      return
+-    }
+-    send()
+-  }
+-
+   static takePhoto() {
+-    const camera = useCameraStore()
+-    camera.lastCaptureMessage = 'Photo command sent'
+-    this.sendCaptureCommand(PacketBuilder.buildCameraTakePhoto(), 'Take photo (PotensicPro 0x0020 / 0x01)')
++    CameraMediaService.takePhoto()
+   }
+ 
+   static startRecord() {
+-    const camera = useCameraStore()
+-    if (camera.recordingPending || camera.recording) return
+-    camera.recordingPending = true
+-    camera.lastCaptureMessage = 'Video start command sent'
+-    this.sendCaptureCommand(PacketBuilder.buildCameraStartRecord(), 'Start video (PotensicPro 0x0020 / 0x00 0x01)')
++    CameraMediaService.startRecord()
+   }
+ 
+   static stopRecord() {
+-    const camera = useCameraStore()
+-    if (camera.recordingPending || !camera.recording) return
+-    camera.recordingPending = true
+-    camera.lastCaptureMessage = 'Video stop command sent'
+-    this.sendCaptureCommand(PacketBuilder.buildCameraStopRecord(), 'Stop video (PotensicPro 0x0020 / 0x00 0x00)')
++    CameraMediaService.stopRecord()
+   }
+ 
+   static toggleRecord() {
+--- a/webui/src/components/cockpit/FlightActions.vue
++++ b/webui/src/components/cockpit/FlightActions.vue
+@@ -10,8 +10,8 @@
+ 
+     <div class="panel-title" style="margin-top: 10px;">📷 {{ t('actions.camera') }}</div>
+     <div class="btn-grid">
+-      <button class="taf-btn" @click="DroneControlService.takePhoto()">📸 {{ t('actions.photo') }}</button>
+-      <button class="taf-btn" :class="{ 'taf-btn--danger': camera.recording }" :disabled="camera.recordingPending" @click="DroneControlService.toggleRecord()">🎥 {{ camera.recording ? t('actions.recordStop') : t('actions.recordStart') }}</button>
++      <button class="taf-btn" :disabled="camera.capturePending" @click="DroneControlService.takePhoto()">📸 {{ t('actions.photo') }}</button>
++      <button class="taf-btn" :class="{ 'taf-btn--danger': camera.recording }" :disabled="camera.recordingPending || camera.capturePending" @click="DroneControlService.toggleRecord()">🎥 {{ camera.recording ? t('actions.recordStop') : t('actions.recordStart') }}</button>
+       <button class="taf-btn taf-btn--primary" @click="DroneControlService.requestIdr()">🔄 {{ t('actions.keyframe') }}</button>
+       <button class="taf-btn" @click="DroneControlService.initLiveView()">📡 {{ t('actions.liveview') }}</button>
+     </div>
+--- a/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
++++ b/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+@@ -163,6 +163,12 @@
+         return wrapFE(buildInnerCommandWithShort(0x0020, data), 0x15)
+     }
+ 
++    /** PotensicPro UsbCameraHandler.getCameraStatus(): 0x0020 payload [0x02]. */
++    fun buildCameraGetStatus(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x02))
++
++    /** PotensicPro UsbCameraHandler.setCameraMode(): mode 1=photo, 0=record. */
++    fun buildCameraSetMode(photo: Boolean): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x03, if (photo) 0x01 else 0x00))
++
+     /** PotensicPro UsbCameraHandler.takePhoto(): 0x0020 payload [0x01]. */
+     fun buildTakePhoto(): ByteArray = buildLegacyCameraUsb(byteArrayOf(0x01))
+ 
+--- a/README.md
++++ b/README.md
+@@ -186,3 +186,7 @@
+ 
+ ### Virtual joystick and ATOM gimbal
+ The cockpit virtual joysticks are connected to PotensicPro's confirmed `Send4AxisData` flight function (`0x0001`). Throttle, yaw, pitch and roll are transmitted at the original app cadence of 80 ms while a virtual stick is actively held, with a neutral frame on release. The ATOM gimbal deliberately does not use the generic `Send4AxisData` gimbal byte because PotensicPro disables that app-side slider for ATOM-series aircraft. The camera control instead uses the confirmed ATOM pitch presets from `SendGimbalSettingData` (`0x001A`) and displays the received gimbal-state feedback as the actual angle.
++
++### Camera capture reliability (v1.3)
++
++The cockpit Photo and Video buttons now use the PotensicPro capture-mode workflow rather than sending capture commands blindly. Before a photo or record-start command, TAF synchronizes or switches the camera to the required mode and waits for the camera response. Recording state is updated only after the camera confirms start/stop. A mode rejection (`status 8`) causes one controlled mode correction and retry. This change is limited to the normal camera capture path; gallery/download behavior is otherwise unchanged in this revision.
+--- a/PROTOCOL.md
++++ b/PROTOCOL.md
+@@ -782,3 +782,35 @@
+ The original app's generic `SlideController` writes the `Send4AxisData.gimbal` byte, but explicitly hides that app-side slider for the ATOM series. TAF therefore does not invent continuous ATOM gimbal motion through that byte and keeps it neutral.
+ 
+ For ATOM, the app-confirmed absolute pitch controls are sent with flight function `0x001A` (`SendGimbalSettingData`): `pitchControl=1` for 0 degrees, `3` for -45 degrees and `2` for -90 degrees. TAF requests the synchronized gimbal settings first, preserves the remaining settings fields and then applies these confirmed presets. Gimbal state feedback is taken from the confirmed gimbal-state receive path and shown separately as the actual value.
++
++## Camera capture mode state machine (PotensicPro-aligned, 2026-10-02 v1.3)
++
++Normal photo/video capture uses the New-FC camera transport `FE 0x15` with inner `FF FD`, function `0x0020`.
++TAF must not treat photo or video as a stateless single command. PotensicPro keeps an explicit capture mode and exposes a status query.
++
++Confirmed payloads:
++
++- Get camera status: `02`
++- Switch to video/record mode: `03 00`
++- Switch to photo mode: `03 01`
++- Take photo: `01`
++- Start recording: `00 01`
++- Stop recording: `00 00`
++
++Response handling on the same camera function:
++
++- Command `02`: data byte 0 = mode (`00` video, `01` photo); when mode is video, data byte 1 indicates recording state and bytes 2..3 contain record time (uint16 LE) when present.
++- Command `03`: data byte 0 confirms mode (`00` video, `01` photo).
++- Command `01`: successful photo acknowledgement.
++- Command `00`: data byte 0 = `01` recording started, `00` recording stopped.
++
++TAF v1.3 capture flow:
++
++1. If gallery/playback is active, send `0x22` first and leave the gallery state.
++2. If the local capture mode is unknown, send `02` and wait for the response.
++3. If the desired mode differs, send `03 <mode>` and wait for the `03` acknowledgement.
++4. Only after the mode is confirmed, send photo/start/stop.
++5. UI state changes only after the camera acknowledgement.
++6. Each stage has a 2.5 s timeout. Status `8` (current mode not allowed) triggers one controlled mode switch + retry.
++
++Potensic camera status codes used by TAF now follow the PotensicPro mapping for the relevant range: 1 command not supported, 2 argument invalid, 3 device busy, 4 unknown error, 5 no SD card, 6 SD full, 7 option invalid, 8 current mode not allowed, 9 recording already started, 10 SD needs format, 11 not enough memory, 12 file system error, 23 file offset error, 24 file MD5 error, 37 need sync state error.
+--- /dev/null
++++ b/NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_KAMERA_CAPTURE_STATE_v1.3.md
+@@ -0,0 +1,21 @@
++# PotensicProxy_TAF - Nur Änderungen in Originalstruktur - Kamera Capture State - v1.3
++
++Datum: 2026-10-02
++
++Geänderte Dateien:
++
++- `webui/src/protocol/PacketBuilder.ts`
++- `webui/src/stores/useCameraStore.ts`
++- `webui/src/services/CameraMediaService.ts`
++- `webui/src/services/DroneControlService.ts`
++- `webui/src/components/cockpit/FlightActions.vue`
++- `app/src/main/java/com/potensic/proxy/DroneProtocol.kt`
++- `README.md`
++- `PROTOCOL.md`
++
++Neue Dokumentationsdateien:
++
++- `DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Kamera-Capture-State-Machine - v1.3.pdf`
++- `DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Kamera-Capture-State-Machine - v1.3.docx`
++
++Schwerpunkt der Änderung: PotensicPro-konforme CaptureMode-Synchronisation für Foto und Video mit Statusabfrage `02`, Moduswechsel `03 01`/`03 00`, ACK-gesteuertem Foto/Record Start/Stop, Timeout und einmaligem Retry bei `Current mode not allowed`.
+--- /dev/null
++++ b/COMMIT_MESSAGE_CAMERA_CAPTURE_STATE_2026-10-02_v1.3.txt
+@@ -0,0 +1,23 @@
++BL_Align camera capture mode state machine with PotensicPro
++Date: 2026-10-02
++
++Summary:
++- Added PotensicPro-compatible camera status and capture-mode commands on function 0x0020.
++- Added ACK-driven photo and video start/stop state handling instead of blind capture transmission.
++- Added capture-stage timeout and one controlled mode correction/retry for camera status 8.
++- Corrected camera error-code labels to the PotensicPro mapping.
++- Kept direct Photo and Video controls in the cockpit and disabled them while a capture transition is active.
++- Documented the capture state machine in README and PROTOCOL.
++
++Changed files:
++- webui/src/protocol/PacketBuilder.ts
++- webui/src/stores/useCameraStore.ts
++- webui/src/services/CameraMediaService.ts
++- webui/src/services/DroneControlService.ts
++- webui/src/components/cockpit/FlightActions.vue
++- app/src/main/java/com/potensic/proxy/DroneProtocol.kt
++- README.md
++- PROTOCOL.md
++- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_KAMERA_CAPTURE_STATE_v1.3.md
++- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Kamera-Capture-State-Machine - v1.3.docx
++- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Kamera-Capture-State-Machine - v1.3.pdf

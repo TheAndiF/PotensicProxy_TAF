@@ -9,6 +9,7 @@ import { useDroneStore } from '../stores/useDroneStore'
 import { useCameraStore } from '../stores/useCameraStore'
 import { AndroidMediaService } from './AndroidMediaService'
 import { RecognitionMetadataService } from './RecognitionMetadataService'
+import { CameraMediaService } from './CameraMediaService'
 
 export class DroneControlService {
   private static transport = UsbTransportService.getInstance()
@@ -281,48 +282,16 @@ export class DroneControlService {
 
   // === Camera Actions ===
 
-  private static sendCaptureCommand(packet: Uint8Array, label: string) {
-    const store = useDroneStore()
-    const camera = useCameraStore()
-    const send = () => {
-      store.addLog('INFO', `${label}: FE 0x15 / camera function 0x0020`)
-      this.transport.send(packet)
-    }
-
-    // The camera does not reliably accept capture commands while it is in gallery/playback mode.
-    // Leave gallery first and give the camera a short settling interval before capture.
-    if (camera.galleryEntered) {
-      store.addLog('INFO', `${label}: leave camera gallery before capture`)
-      this.transport.send(PacketBuilder.buildCameraQuitGallery())
-      camera.galleryEntered = false
-      camera.galleryLoading = false
-      camera.galleryState = 'CLOSED'
-      window.setTimeout(send, 250)
-      return
-    }
-    send()
-  }
-
   static takePhoto() {
-    const camera = useCameraStore()
-    camera.lastCaptureMessage = 'Photo command sent'
-    this.sendCaptureCommand(PacketBuilder.buildCameraTakePhoto(), 'Take photo (PotensicPro 0x0020 / 0x01)')
+    CameraMediaService.takePhoto()
   }
 
   static startRecord() {
-    const camera = useCameraStore()
-    if (camera.recordingPending || camera.recording) return
-    camera.recordingPending = true
-    camera.lastCaptureMessage = 'Video start command sent'
-    this.sendCaptureCommand(PacketBuilder.buildCameraStartRecord(), 'Start video (PotensicPro 0x0020 / 0x00 0x01)')
+    CameraMediaService.startRecord()
   }
 
   static stopRecord() {
-    const camera = useCameraStore()
-    if (camera.recordingPending || !camera.recording) return
-    camera.recordingPending = true
-    camera.lastCaptureMessage = 'Video stop command sent'
-    this.sendCaptureCommand(PacketBuilder.buildCameraStopRecord(), 'Stop video (PotensicPro 0x0020 / 0x00 0x00)')
+    CameraMediaService.stopRecord()
   }
 
   static toggleRecord() {

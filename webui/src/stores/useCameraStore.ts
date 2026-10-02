@@ -12,6 +12,8 @@ export type CameraMediaFile = {
 }
 
 export type GalleryState = 'CLOSED' | 'OPENING' | 'OPEN' | 'LOADING_COUNT' | 'LOADING_LIST' | 'READY' | 'ERROR'
+export type CaptureModeState = 'UNKNOWN' | 'PHOTO' | 'VIDEO'
+export type CaptureFlowState = 'IDLE' | 'SYNCING' | 'SWITCHING_TO_PHOTO' | 'SWITCHING_TO_VIDEO' | 'PHOTO_PENDING' | 'VIDEO_START_PENDING' | 'VIDEO_STOP_PENDING' | 'ERROR'
 
 export const useCameraStore = defineStore('camera', () => {
   const videoResolutionIndex = ref<number | null>(null)
@@ -51,6 +53,9 @@ export const useCameraStore = defineStore('camera', () => {
   const galleryLoading = ref(false)
   const recording = ref(false)
   const recordingPending = ref(false)
+  const captureMode = ref<CaptureModeState>('UNKNOWN')
+  const captureFlowState = ref<CaptureFlowState>('IDLE')
+  const capturePending = computed(() => !['IDLE', 'ERROR'].includes(captureFlowState.value))
   const lastCaptureMessage = ref('')
   const download = reactive({
     fileName: '',
@@ -144,6 +149,9 @@ export const useCameraStore = defineStore('camera', () => {
     galleryLoading,
     recording,
     recordingPending,
+    captureMode,
+    captureFlowState,
+    capturePending,
     lastCaptureMessage,
     download,
     lastResponse,

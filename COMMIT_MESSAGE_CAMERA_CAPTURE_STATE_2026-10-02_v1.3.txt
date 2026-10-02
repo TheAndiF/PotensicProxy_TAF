@@ -1,0 +1,23 @@
+BL_Align camera capture mode state machine with PotensicPro
+Date: 2026-10-02
+
+Summary:
+- Added PotensicPro-compatible camera status and capture-mode commands on function 0x0020.
+- Added ACK-driven photo and video start/stop state handling instead of blind capture transmission.
+- Added capture-stage timeout and one controlled mode correction/retry for camera status 8.
+- Corrected camera error-code labels to the PotensicPro mapping.
+- Kept direct Photo and Video controls in the cockpit and disabled them while a capture transition is active.
+- Documented the capture state machine in README and PROTOCOL.
+
+Changed files:
+- webui/src/protocol/PacketBuilder.ts
+- webui/src/stores/useCameraStore.ts
+- webui/src/services/CameraMediaService.ts
+- webui/src/services/DroneControlService.ts
+- webui/src/components/cockpit/FlightActions.vue
+- app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+- README.md
+- PROTOCOL.md
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_KAMERA_CAPTURE_STATE_v1.3.md
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Kamera-Capture-State-Machine - v1.3.docx
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Kamera-Capture-State-Machine - v1.3.pdf
