@@ -1,0 +1,147 @@
+diff -ruN base_v14/PotensicProxy_TAF/PROTOCOL.md work_v15/PotensicProxy_TAF/PROTOCOL.md
+--- base_v14/PotensicProxy_TAF/PROTOCOL.md	2026-10-02 19:57:12.000000000 +0000
++++ work_v15/PotensicProxy_TAF/PROTOCOL.md	2026-10-02 22:07:40.675830409 +0000
+@@ -823,3 +823,33 @@
+ On WebSocket/passthrough disconnect, pending capture, gallery metadata, delete and download state is terminated deterministically. The FE stream demuxer is reset. After reconnect, stale state is not resumed automatically; camera status `0x02` is requested before subsequent camera actions.
+ 
+ Potensic camera status codes used by TAF follow the PotensicPro mapping for the relevant range: 1 command not supported, 2 argument invalid, 3 device busy, 4 unknown error, 5 no SD card, 6 SD full, 7 option invalid, 8 current mode not allowed, 9 recording already started, 10 SD needs format, 11 not enough memory, 12 file system error, 23 file offset error, 24 file MD5 error, 37 need sync state error.
++
++## Camera log 0x39 payload decoding (ATOM, validated 2026-10-02 v1.5)
++
++The ATOM camera response path `FE 0x05 -> inner function 0x0020 -> command 0x39` carries `CameraLogData`, not a normal command/status response. PotensicPro parses the bytes relative to command `0x39` as follows:
++
++| Relative offset | Size | Field | Encoding / meaning |
++|---:|---:|---|---|
++| +0 | 1 | command | `0x39` |
++| +1 | 1 | source | `0=Linux`, `1=LiteOS`, `2=Gimbal` |
++| +2 | 2 | payloadLength | `uint16 LE` |
++| +4 | payloadLength | payload | source-specific raw bytes |
++
++`CameraLogData` copies exactly `payloadLength` bytes. PotensicPro's `CameraLogRecorder` writes the payload byte-for-byte into separate `CAMLinux`, `CAMLiteos`, and `gimbal` log files; it does not pass the raw payload through a generic text decoder.
++
++The USB capture `2026-10-02_23-58-07_log.xml` validates the same layout. Examples include source 0 with lengths `0x003F`, `0x004F`, `0x0044`, `0x0046`, `0x0063`, `0x0062`, `0x005F`, and source 2 with a 256-byte (`0x0100`) binary payload.
++
++For source 0 (Linux), every captured payload byte is XOR-obfuscated with `0x55`. TAF v1.5 therefore decodes Linux camera logs as `decoded = raw XOR 0x55`. Captured records become readable strings such as camera temperature, observer/cpu telemetry, work-mode state and connection-status messages. Embedded CR/LF/TAB/control bytes are escaped before writing to the Live System Log so one camera record remains one UI log entry.
++
++For source 2 (Gimbal), the validated payload is binary and must not be decoded as UTF-8 text. TAF logs a bounded hexadecimal preview together with the declared payload length. Source 1 (LiteOS) did not occur in the validated capture; TAF therefore preserves it as raw hexadecimal data until its encoding is confirmed instead of assuming the Linux XOR rule.
++
++Decoder rules:
++
++1. Handle `0x39` before ordinary command/status parsing.
++2. Require at least the 3-byte post-command header (`source + uint16LE length`).
++3. Reject a record when `payloadLength` exceeds the available bytes.
++4. Slice exactly `payloadLength` bytes; never include the inner-frame checksum or unrelated trailing bytes in the log payload.
++5. Linux (`source=0`): XOR each payload byte with `0x55`, then escape controls to one UI line.
++6. LiteOS (`source=1`): raw hex until validated.
++7. Gimbal (`source=2`): binary raw hex preview, never generic text decoding.
++8. Warn if unexpected bytes remain after the declared payload.
+diff -ruN base_v14/PotensicProxy_TAF/README.md work_v15/PotensicProxy_TAF/README.md
+--- base_v14/PotensicProxy_TAF/README.md	2026-10-02 19:57:12.000000000 +0000
++++ work_v15/PotensicProxy_TAF/README.md	2026-10-02 22:07:40.683830077 +0000
+@@ -196,3 +196,7 @@
+ ### Live system log
+ 
+ The live system log keeps a deterministic rolling buffer of at most 1000 lines. Its header remains visible while the log body scrolls, shows the current line count, and provides **Save Log** plus **Clear** controls. **Save Log** exports exactly the currently retained snapshot as UTF-8 text without clearing or pausing live logging.
++
++### Camera 0x39 diagnostic log decoding (v1.5)
++
++The browser camera service now follows PotensicPro's `CameraLogData` layout for asynchronous camera log command `0x39`: source byte, uint16-LE payload length, then exactly that many source payload bytes. Linux camera logs are decoded with the `0x55` XOR transformation validated against the 2026-10-02 USB capture and are escaped to one Live System Log entry per record. Gimbal camera logs remain binary and are shown as a bounded hex preview; LiteOS remains raw until a source-1 capture validates its encoding. Malformed/truncated length declarations are rejected instead of being interpreted as text.
+diff -ruN base_v14/PotensicProxy_TAF/webui/src/services/CameraMediaService.ts work_v15/PotensicProxy_TAF/webui/src/services/CameraMediaService.ts
+--- base_v14/PotensicProxy_TAF/webui/src/services/CameraMediaService.ts	2026-10-02 19:59:24.000000000 +0000
++++ work_v15/PotensicProxy_TAF/webui/src/services/CameraMediaService.ts	2026-10-02 22:06:55.664369858 +0000
+@@ -722,24 +722,79 @@
+     }
+   }
+ 
++  private static cameraLogHexPreview(bytes: Uint8Array, maxBytes = 48): string {
++    const shown = bytes.subarray(0, Math.min(bytes.length, maxBytes))
++    const hex = Array.from(shown, b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ')
++    return bytes.length > shown.length ? `${hex} ... (+${bytes.length - shown.length}B)` : hex
++  }
++
++  private static decodeLinuxCameraLog(payload: Uint8Array): string {
++    // Real ATOM USB captures show Linux camera-log bytes XOR-obfuscated with 0x55.
++    // Decode byte-for-byte, but escape control/non-printable bytes so one camera record
++    // always remains one Live System Log entry (important for the 1000-entry ring buffer).
++    const decoded = Uint8Array.from(payload, value => value ^ 0x55)
++    const parts: string[] = []
++    for (let i = 0; i < decoded.length; i++) {
++      const value = decoded[i]
++      if (value === 0x00) continue
++      if (value === 0x0d) {
++        if (i + 1 < decoded.length && decoded[i + 1] === 0x0a) i++
++        parts.push('\\n')
++      } else if (value === 0x0a) {
++        parts.push('\\n')
++      } else if (value === 0x09) {
++        parts.push('\\t')
++      } else if (value >= 0x20 && value <= 0x7e) {
++        parts.push(String.fromCharCode(value))
++      } else {
++        parts.push(`\\x${value.toString(16).padStart(2, '0').toUpperCase()}`)
++      }
++    }
++    return parts.join('').trim()
++  }
++
+   private static decodeCameraLog(raw: Uint8Array) {
+-    // CameraLogData (0x39) is asynchronous and therefore has no command-status byte.
+-    // Firmware variants prefix the ASCII text with a small source selector; preserve
+-    // unknown selectors without letting them affect the normal command state machine.
+-    const sourceNames: Record<number, string> = {
+-      0: 'LINUX',
+-      1: 'LITEOS',
+-      2: 'GIMBAL'
+-    }
+-    const trimmed = raw.subarray(0, Math.max(0, raw.length - (raw.length && raw[raw.length - 1] === 0 ? 1 : 0)))
+-    let source = 'CAMERA'
+-    let textBytes = trimmed
+-    if (trimmed.length > 1 && sourceNames[trimmed[0]]) {
+-      source = sourceNames[trimmed[0]]
+-      textBytes = trimmed.subarray(1)
++    // PotensicPro CameraLogData layout, relative to the bytes after command 0x39:
++    //   +0 source (0=Linux, 1=LiteOS, 2=Gimbal)
++    //   +1..+2 payloadLength uint16 LE
++    //   +3.. payloadLength raw bytes
++    // The original app writes these source payloads byte-for-byte to separate log files.
++    // Do not treat source/length/checksum bytes as text.
++    const drone = useDroneStore()
++    if (raw.length < 3) {
++      drone.addLog('WARN', `[CAMERA/LOG] malformed 0x39 header: ${raw.length}B (need at least 3B)`)
++      return
++    }
++
++    const sourceId = raw[0]
++    const declaredLength = raw[1] | (raw[2] << 8)
++    const availableLength = raw.length - 3
++    if (declaredLength > availableLength) {
++      drone.addLog('WARN', `[CAMERA/LOG] truncated 0x39 source=${sourceId} declared=${declaredLength}B available=${availableLength}B`)
++      return
++    }
++
++    const payload = raw.subarray(3, 3 + declaredLength)
++    const trailingLength = availableLength - declaredLength
++
++    if (sourceId === 0) {
++      const text = this.decodeLinuxCameraLog(payload)
++      drone.addLog('INFO', `[CAMERA/LINUX] ${text || `(empty decoded record, len=${declaredLength}B)`}`)
++    } else if (sourceId === 1) {
++      // No source=1 packet is present in the validated USB capture. Preserve it as raw
++      // bytes until its encoding is confirmed instead of guessing that Linux XOR applies.
++      drone.addLog('INFO', `[CAMERA/LITEOS] len=${declaredLength} raw=${this.cameraLogHexPreview(payload) || '(empty)'}`)
++    } else if (sourceId === 2) {
++      // Gimbal records are binary in the validated capture. Never pass them through a
++      // text decoder: that was the source of the previous replacement-character spam.
++      drone.addLog('INFO', `[CAMERA/GIMBAL] len=${declaredLength} raw=${this.cameraLogHexPreview(payload) || '(empty)'}`)
++    } else {
++      drone.addLog('INFO', `[CAMERA/UNKNOWN:${sourceId}] len=${declaredLength} raw=${this.cameraLogHexPreview(payload) || '(empty)'}`)
++    }
++
++    if (trailingLength > 0) {
++      drone.addLog('WARN', `[CAMERA/LOG] 0x39 source=${sourceId} has ${trailingLength} trailing byte(s) after declared payload`)
+     }
+-    const text = new TextDecoder('utf-8', { fatal: false }).decode(textBytes).replace(/\0+/g, '').trim()
+-    useDroneStore().addLog('INFO', `[CAMERA/${source}] ${text || '(empty camera log record)'}`)
+   }
+ 
+   private static confirmCaptureReady(modeByte: number | undefined, source: string) {

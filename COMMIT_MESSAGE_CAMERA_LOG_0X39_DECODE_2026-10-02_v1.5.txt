@@ -1,0 +1,27 @@
+BS_Decode ATOM camera 0x39 diagnostic logs
+Date: 2026-10-02
+
+Summary:
+- Parse asynchronous camera command 0x39 using the PotensicPro CameraLogData layout: source byte, uint16-LE payload length, and exact source payload.
+- Decode validated ATOM Linux camera-log payloads with XOR 0x55 and escape control bytes so each camera record remains one Live System Log entry.
+- Keep Gimbal camera logs binary and show a bounded hexadecimal preview instead of feeding binary data through a text decoder.
+- Keep LiteOS camera logs raw until a source=1 capture validates its encoding.
+- Reject truncated 0x39 payload declarations and report unexpected trailing bytes.
+- Document the implementation evidence from PotensicPro and the 2026-10-02 USB capture.
+
+Validation:
+- PASS: webui/node_modules/.bin/vue-tsc --noEmit
+- PASS: USB capture structure check: 37 command-0x39 frames parsed; 32 Linux and 5 Gimbal; no declared-length mismatch.
+- PASS: XOR 0x55 converts captured Linux source payloads into readable diagnostic text.
+- BLOCKED BY ENVIRONMENT: npm run build reaches Vite after TypeScript validation but cannot load @rollup/rollup-linux-x64-gnu from the supplied node_modules.
+- OPEN: real-device regression check after installing the updated build.
+
+Changed files:
+- webui/src/services/CameraMediaService.ts
+- PROTOCOL.md
+- README.md
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Kamera-Log-0x39-Dekodierung - v1.5.docx
+- DOCUMENTATION/2026-10-02 - PotensicProxy_TAF - Projektdokumentation - Kamera-Log-0x39-Dekodierung - v1.5.pdf
+- PATCH_CAMERA_LOG_0X39_DECODE_2026-10-02_v1.5.patch
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-02_CAMERA_LOG_0X39_DECODE_v1.5.md
+- COMMIT_MESSAGE_CAMERA_LOG_0X39_DECODE_2026-10-02_v1.5.txt

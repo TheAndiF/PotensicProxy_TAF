@@ -823,3 +823,33 @@ Download command `0x1B` is parsed as a stream of declared camera download frames
 On WebSocket/passthrough disconnect, pending capture, gallery metadata, delete and download state is terminated deterministically. The FE stream demuxer is reset. After reconnect, stale state is not resumed automatically; camera status `0x02` is requested before subsequent camera actions.
 
 Potensic camera status codes used by TAF follow the PotensicPro mapping for the relevant range: 1 command not supported, 2 argument invalid, 3 device busy, 4 unknown error, 5 no SD card, 6 SD full, 7 option invalid, 8 current mode not allowed, 9 recording already started, 10 SD needs format, 11 not enough memory, 12 file system error, 23 file offset error, 24 file MD5 error, 37 need sync state error.
+
+## Camera log 0x39 payload decoding (ATOM, validated 2026-10-02 v1.5)
+
+The ATOM camera response path `FE 0x05 -> inner function 0x0020 -> command 0x39` carries `CameraLogData`, not a normal command/status response. PotensicPro parses the bytes relative to command `0x39` as follows:
+
+| Relative offset | Size | Field | Encoding / meaning |
+|---:|---:|---|---|
+| +0 | 1 | command | `0x39` |
+| +1 | 1 | source | `0=Linux`, `1=LiteOS`, `2=Gimbal` |
+| +2 | 2 | payloadLength | `uint16 LE` |
+| +4 | payloadLength | payload | source-specific raw bytes |
+
+`CameraLogData` copies exactly `payloadLength` bytes. PotensicPro's `CameraLogRecorder` writes the payload byte-for-byte into separate `CAMLinux`, `CAMLiteos`, and `gimbal` log files; it does not pass the raw payload through a generic text decoder.
+
+The USB capture `2026-10-02_23-58-07_log.xml` validates the same layout. Examples include source 0 with lengths `0x003F`, `0x004F`, `0x0044`, `0x0046`, `0x0063`, `0x0062`, `0x005F`, and source 2 with a 256-byte (`0x0100`) binary payload.
+
+For source 0 (Linux), every captured payload byte is XOR-obfuscated with `0x55`. TAF v1.5 therefore decodes Linux camera logs as `decoded = raw XOR 0x55`. Captured records become readable strings such as camera temperature, observer/cpu telemetry, work-mode state and connection-status messages. Embedded CR/LF/TAB/control bytes are escaped before writing to the Live System Log so one camera record remains one UI log entry.
+
+For source 2 (Gimbal), the validated payload is binary and must not be decoded as UTF-8 text. TAF logs a bounded hexadecimal preview together with the declared payload length. Source 1 (LiteOS) did not occur in the validated capture; TAF therefore preserves it as raw hexadecimal data until its encoding is confirmed instead of assuming the Linux XOR rule.
+
+Decoder rules:
+
+1. Handle `0x39` before ordinary command/status parsing.
+2. Require at least the 3-byte post-command header (`source + uint16LE length`).
+3. Reject a record when `payloadLength` exceeds the available bytes.
+4. Slice exactly `payloadLength` bytes; never include the inner-frame checksum or unrelated trailing bytes in the log payload.
+5. Linux (`source=0`): XOR each payload byte with `0x55`, then escape controls to one UI line.
+6. LiteOS (`source=1`): raw hex until validated.
+7. Gimbal (`source=2`): binary raw hex preview, never generic text decoding.
+8. Warn if unexpected bytes remain after the declared payload.

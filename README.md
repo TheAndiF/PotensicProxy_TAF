@@ -196,3 +196,7 @@ Camera metadata (`0x20`) is assembled across fragments before JSON parsing. Down
 ### Live system log
 
 The live system log keeps a deterministic rolling buffer of at most 1000 lines. Its header remains visible while the log body scrolls, shows the current line count, and provides **Save Log** plus **Clear** controls. **Save Log** exports exactly the currently retained snapshot as UTF-8 text without clearing or pausing live logging.
+
+### Camera 0x39 diagnostic log decoding (v1.5)
+
+The browser camera service now follows PotensicPro's `CameraLogData` layout for asynchronous camera log command `0x39`: source byte, uint16-LE payload length, then exactly that many source payload bytes. Linux camera logs are decoded with the `0x55` XOR transformation validated against the 2026-10-02 USB capture and are escaped to one Live System Log entry per record. Gimbal camera logs remain binary and are shown as a bounded hex preview; LiteOS remains raw until a source-1 capture validates its encoding. Malformed/truncated length declarations are rejected instead of being interpreted as text.

@@ -722,24 +722,79 @@ export class CameraMediaService {
     }
   }
 
+  private static cameraLogHexPreview(bytes: Uint8Array, maxBytes = 48): string {
+    const shown = bytes.subarray(0, Math.min(bytes.length, maxBytes))
+    const hex = Array.from(shown, b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ')
+    return bytes.length > shown.length ? `${hex} ... (+${bytes.length - shown.length}B)` : hex
+  }
+
+  private static decodeLinuxCameraLog(payload: Uint8Array): string {
+    // Real ATOM USB captures show Linux camera-log bytes XOR-obfuscated with 0x55.
+    // Decode byte-for-byte, but escape control/non-printable bytes so one camera record
+    // always remains one Live System Log entry (important for the 1000-entry ring buffer).
+    const decoded = Uint8Array.from(payload, value => value ^ 0x55)
+    const parts: string[] = []
+    for (let i = 0; i < decoded.length; i++) {
+      const value = decoded[i]
+      if (value === 0x00) continue
+      if (value === 0x0d) {
+        if (i + 1 < decoded.length && decoded[i + 1] === 0x0a) i++
+        parts.push('\\n')
+      } else if (value === 0x0a) {
+        parts.push('\\n')
+      } else if (value === 0x09) {
+        parts.push('\\t')
+      } else if (value >= 0x20 && value <= 0x7e) {
+        parts.push(String.fromCharCode(value))
+      } else {
+        parts.push(`\\x${value.toString(16).padStart(2, '0').toUpperCase()}`)
+      }
+    }
+    return parts.join('').trim()
+  }
+
   private static decodeCameraLog(raw: Uint8Array) {
-    // CameraLogData (0x39) is asynchronous and therefore has no command-status byte.
-    // Firmware variants prefix the ASCII text with a small source selector; preserve
-    // unknown selectors without letting them affect the normal command state machine.
-    const sourceNames: Record<number, string> = {
-      0: 'LINUX',
-      1: 'LITEOS',
-      2: 'GIMBAL'
+    // PotensicPro CameraLogData layout, relative to the bytes after command 0x39:
+    //   +0 source (0=Linux, 1=LiteOS, 2=Gimbal)
+    //   +1..+2 payloadLength uint16 LE
+    //   +3.. payloadLength raw bytes
+    // The original app writes these source payloads byte-for-byte to separate log files.
+    // Do not treat source/length/checksum bytes as text.
+    const drone = useDroneStore()
+    if (raw.length < 3) {
+      drone.addLog('WARN', `[CAMERA/LOG] malformed 0x39 header: ${raw.length}B (need at least 3B)`)
+      return
     }
-    const trimmed = raw.subarray(0, Math.max(0, raw.length - (raw.length && raw[raw.length - 1] === 0 ? 1 : 0)))
-    let source = 'CAMERA'
-    let textBytes = trimmed
-    if (trimmed.length > 1 && sourceNames[trimmed[0]]) {
-      source = sourceNames[trimmed[0]]
-      textBytes = trimmed.subarray(1)
+
+    const sourceId = raw[0]
+    const declaredLength = raw[1] | (raw[2] << 8)
+    const availableLength = raw.length - 3
+    if (declaredLength > availableLength) {
+      drone.addLog('WARN', `[CAMERA/LOG] truncated 0x39 source=${sourceId} declared=${declaredLength}B available=${availableLength}B`)
+      return
     }
-    const text = new TextDecoder('utf-8', { fatal: false }).decode(textBytes).replace(/\0+/g, '').trim()
-    useDroneStore().addLog('INFO', `[CAMERA/${source}] ${text || '(empty camera log record)'}`)
+
+    const payload = raw.subarray(3, 3 + declaredLength)
+    const trailingLength = availableLength - declaredLength
+
+    if (sourceId === 0) {
+      const text = this.decodeLinuxCameraLog(payload)
+      drone.addLog('INFO', `[CAMERA/LINUX] ${text || `(empty decoded record, len=${declaredLength}B)`}`)
+    } else if (sourceId === 1) {
+      // No source=1 packet is present in the validated USB capture. Preserve it as raw
+      // bytes until its encoding is confirmed instead of guessing that Linux XOR applies.
+      drone.addLog('INFO', `[CAMERA/LITEOS] len=${declaredLength} raw=${this.cameraLogHexPreview(payload) || '(empty)'}`)
+    } else if (sourceId === 2) {
+      // Gimbal records are binary in the validated capture. Never pass them through a
+      // text decoder: that was the source of the previous replacement-character spam.
+      drone.addLog('INFO', `[CAMERA/GIMBAL] len=${declaredLength} raw=${this.cameraLogHexPreview(payload) || '(empty)'}`)
+    } else {
+      drone.addLog('INFO', `[CAMERA/UNKNOWN:${sourceId}] len=${declaredLength} raw=${this.cameraLogHexPreview(payload) || '(empty)'}`)
+    }
+
+    if (trailingLength > 0) {
+      drone.addLog('WARN', `[CAMERA/LOG] 0x39 source=${sourceId} has ${trailingLength} trailing byte(s) after declared payload`)
+    }
   }
 
   private static confirmCaptureReady(modeByte: number | undefined, source: string) {
