@@ -853,3 +853,21 @@ Decoder rules:
 6. LiteOS (`source=1`): raw hex until validated.
 7. Gimbal (`source=2`): binary raw hex preview, never generic text decoding.
 8. Warn if unexpected bytes remain after the declared payload.
+
+
+## Camera FE 0x05 inner-frame reassembly (ATOM, validated 2026-10-03 v0.959)
+
+Live/USB comparison showed that one outer FE `0x05` payload can contain more than one inner camera frame. The inner RX frame begins with `FF FE`; its little-endian length at offsets `+2/+3` defines the complete inner frame size as `4 + innerLength` bytes. Camera command/status parsing must therefore be performed only after this boundary has been reassembled.
+
+TAF v0.959 applies the following rules:
+
+- keep a persistent FE `0x05` inner-frame buffer across WebSocket/FE deliveries;
+- extract every complete `FF FE` frame by the declared inner length;
+- process multiple complete inner frames from one outer FE payload independently;
+- retain an incomplete inner frame until more FE `0x05` bytes arrive;
+- reset the camera inner-frame buffer on passthrough disconnect;
+- pass only the bytes belonging to one complete inner `0x0020` command to `CameraMediaService`;
+- for `0x1B`, concatenate only command-body fragments after `cmd/status`, then parse the confirmed DownloadData layout (`flag`, optional 32-byte final area, `uint64 LE offset`, `uint16 LE payloadLen`, payload);
+- never recover a malformed `0x1B` body by dropping arbitrary bytes inside media payload. If the body start is impossible (`flag` not 0/1/2 or invalid declared size), abort and require a clean restart.
+
+This addresses the observed failure sequence where the first 3072-byte media block completed, bytes from the following inner frame leaked into the same download buffer, random media/header bytes were interpreted as offsets/lengths, and the transfer remained stuck at offset 3072 until passthrough disconnect.

@@ -1,0 +1,250 @@
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -11,8 +11,8 @@
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 30
+-        versionName = "0.957"
++        versionCode = 32
++        versionName = "0.959"
+     }
+ 
+     buildTypes {
+
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.957",
++  "version": "0.959",
+   "private": true,
+   "type": "module",
+   "scripts": {
+
+--- a/webui/package-lock.json
++++ b/webui/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.957",
++  "version": "0.959",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.957",
++      "version": "0.959",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",
+
+--- a/webui/src/services/CameraMediaService.ts
++++ b/webui/src/services/CameraMediaService.ts
+@@ -41,6 +41,11 @@
+   private static readonly DOWNLOAD_INACTIVITY_TIMEOUT_MS = 15000
+   private static downloadLastProgressAt = 0
+   private static downloadFrameBuffer = new Uint8Array(0)
++  private static cameraInnerBuffer = new Uint8Array(0)
++  private static readonly MAX_CAMERA_INNER_FRAME = 2_000_000
++  private static transportReady = false
++  private static deferredPackets: Uint8Array[] = []
++  private static readonly MAX_DEFERRED_PACKETS = 32
+   private static metaQueue: string[][] = []
+   private static metaTimer: ReturnType<typeof setTimeout> | null = null
+   private static metaRetryCount = 0
+@@ -71,6 +76,8 @@
+   /** Reset transient camera/media state when browser passthrough is interrupted. */
+   static handleTransportDisconnect() {
+     const cam = useCameraStore()
++    this.transportReady = false
++    this.cameraInnerBuffer = new Uint8Array(0)
+     const drone = useDroneStore()
+ 
+     this.clearCaptureTimer()
+@@ -124,14 +131,23 @@
+   static handleTransportReconnect() {
+     const cam = useCameraStore()
+     cam.captureMode = 'UNKNOWN'
+-    useDroneStore().addLog('INFO', '[Camera] passthrough reconnected; synchronizing camera status (0x02)')
++    this.transportReady = true
++    const drone = useDroneStore()
++    drone.addLog('INFO', '[Camera] passthrough reconnected; synchronizing camera status (0x02)')
+     this.send(PacketBuilder.buildCameraGetStatus())
++    if (this.deferredPackets.length) {
++      const pending = this.deferredPackets.splice(0)
++      drone.addLog('INFO', `[Camera] sending ${pending.length} deferred command(s) after passthrough became ready`)
++      pending.forEach((packet, index) => setTimeout(() => this.sender?.(packet), index * 25))
++    }
+   }
+ 
+   private static send(packet: Uint8Array) {
+     const store = useDroneStore()
+-    if (!this.sender) {
+-      store.addLog('ERROR', 'Camera command not sent: transport is not initialized')
++    if (!this.sender || !this.transportReady) {
++      if (this.deferredPackets.length >= this.MAX_DEFERRED_PACKETS) this.deferredPackets.shift()
++      this.deferredPackets.push(packet.slice())
++      store.addLog('INFO', 'Camera command deferred until passthrough transport is ready')
+       return
+     }
+     this.sender(packet)
+@@ -876,8 +892,9 @@
+   }
+ 
+   private static downloadFrameLength(buffer: Uint8Array): number | null {
+-    if (buffer.length < 11) return null
++    if (buffer.length < 1) return null
+     const flag = buffer[0]
++    if (flag !== 0 && flag !== 1 && flag !== 2) return -1
+     const base = flag === 2 ? 33 : 1
+     if (buffer.length < base + 10) return null
+     const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+@@ -892,9 +909,11 @@
+       const expected = this.downloadFrameLength(this.downloadFrameBuffer)
+       if (expected == null) return
+       if (expected < 0 || expected > 2_000_000) {
+-        drone.addLog('WARN', `Camera download stream lost framing (${this.downloadFrameBuffer.length} buffered bytes); dropping one byte to resynchronize`)
+-        this.downloadFrameBuffer = this.downloadFrameBuffer.subarray(1).slice()
+-        continue
++        const preview = Array.from(this.downloadFrameBuffer.subarray(0, Math.min(16, this.downloadFrameBuffer.length)))
++          .map(v => v.toString(16).padStart(2, '0').toUpperCase()).join(' ')
++        drone.addLog('ERROR', `Camera download frame boundary invalid (${this.downloadFrameBuffer.length} buffered bytes, head=${preview}); aborting without byte-wise payload resync`)
++        this.failDownload('Camera download stream framing invalid; restart required')
++        return
+       }
+       if (this.downloadFrameBuffer.length < expected) {
+         drone.addLog('INFO', `Camera download partial frame buffered: ${this.downloadFrameBuffer.length}/${expected}B`)
+@@ -907,11 +926,73 @@
+   }
+ 
+   /**
+-   * Handle FE 0x05 camera responses whose inner message short is 0x0020.
+-   * Returns true when the packet belongs to this PotensicPro-compatible camera path.
++   * Handle FE 0x05 camera responses. An FE payload may contain multiple complete
++   * inner FF FE frames, and an inner frame may be split across consecutive FE
++   * payloads. Reassemble those boundaries first so bytes from a following camera
++   * record can never leak into the current command body.
+    */
+   static handleIncoming(feType: number, payload: Uint8Array): boolean {
+-    if (feType !== 0x05 || payload.length < 8 || payload[0] !== CAMERA_USB.RX_HEADER_0 || payload[1] !== CAMERA_USB.RX_HEADER_1) return false
++    if (feType !== 0x05 || payload.length === 0) return false
++    this.appendCameraInnerBytes(payload)
++    return true
++  }
++
++  private static appendCameraInnerBytes(bytes: Uint8Array) {
++    if (this.cameraInnerBuffer.length === 0) this.cameraInnerBuffer = bytes.slice()
++    else {
++      const merged = new Uint8Array(this.cameraInnerBuffer.length + bytes.length)
++      merged.set(this.cameraInnerBuffer, 0)
++      merged.set(bytes, this.cameraInnerBuffer.length)
++      this.cameraInnerBuffer = merged
++    }
++    this.drainCameraInnerFrames()
++  }
++
++  private static isCameraInnerHeader(buffer: Uint8Array, offset = 0): boolean {
++    return buffer.length >= offset + 2 &&
++      buffer[offset] === CAMERA_USB.RX_HEADER_0 &&
++      buffer[offset + 1] === CAMERA_USB.RX_HEADER_1
++  }
++
++  private static drainCameraInnerFrames() {
++    const drone = useDroneStore()
++    while (this.cameraInnerBuffer.length > 0) {
++      if (this.cameraInnerBuffer.length < 4) return
++
++      if (!this.isCameraInnerHeader(this.cameraInnerBuffer)) {
++        let next = -1
++        for (let i = 1; i + 1 < this.cameraInnerBuffer.length; i++) {
++          if (this.isCameraInnerHeader(this.cameraInnerBuffer, i)) { next = i; break }
++        }
++        if (next < 0) {
++          const keep = this.cameraInnerBuffer[this.cameraInnerBuffer.length - 1] === CAMERA_USB.RX_HEADER_0 ? 1 : 0
++          const dropped = this.cameraInnerBuffer.length - keep
++          if (dropped > 0) drone.addLog('WARN', `[Camera RX] discarded ${dropped} byte(s) before next inner frame header`)
++          this.cameraInnerBuffer = keep ? this.cameraInnerBuffer.slice(-1) : new Uint8Array(0)
++          return
++        }
++        drone.addLog('WARN', `[Camera RX] discarded ${next} byte(s) before inner frame header`)
++        this.cameraInnerBuffer = this.cameraInnerBuffer.slice(next)
++        continue
++      }
++
++      const innerLength = this.cameraInnerBuffer[2] | (this.cameraInnerBuffer[3] << 8)
++      const totalLength = 4 + innerLength
++      if (innerLength < 4 || totalLength > this.MAX_CAMERA_INNER_FRAME) {
++        drone.addLog('WARN', `[Camera RX] invalid inner frame length ${innerLength}; discarding header byte`)
++        this.cameraInnerBuffer = this.cameraInnerBuffer.slice(1)
++        continue
++      }
++      if (this.cameraInnerBuffer.length < totalLength) return
++
++      const frame = this.cameraInnerBuffer.slice(0, totalLength)
++      this.cameraInnerBuffer = this.cameraInnerBuffer.slice(totalLength)
++      this.handleCameraInnerFrame(frame)
++    }
++  }
++
++  private static handleCameraInnerFrame(payload: Uint8Array): boolean {
++    if (payload.length < 8 || !this.isCameraInnerHeader(payload)) return false
+     const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
+     const msgShort = view.getUint16(4, true)
+     if (msgShort !== CAMERA_USB.INNER_FUNCTION) return false
+
+--- a/README.md
++++ b/README.md
+@@ -47,6 +47,8 @@
+ 
+ ## Camera gallery status
+ 
++**v0.959 stream-framing update:** FE `0x05` camera payloads are now reassembled by the declared inner `FF FE` frame length before command decoding. Multiple inner camera frames in one FE payload are processed separately, while incomplete inner frames are retained for the next FE payload. This prevents bytes from a following camera record from being appended to the preceding `0x1B` download body or `0x39` log record. Download-body parsing no longer performs byte-by-byte resynchronization inside media payloads; an impossible `0x1B` body boundary aborts the transfer with a diagnostic instead of interpreting image/video bytes as a new header. Camera commands issued before passthrough readiness are deferred and flushed after WebSocket reconnect/status synchronization.
++
+ The drone-SD gallery now follows an explicit state machine (`CLOSED`, `OPENING`, `OPEN`, `LOADING_COUNT`, `LOADING_LIST`, `READY`, `ERROR`). Enter (`0x21`), file count (`0x18`) and paged file list (`0x19`) requests use bounded timeout/retry handling, so the UI no longer remains indefinitely at “Reading media list…”. File counts are decoded little-endian and the primary `0x19` filename parser starts at the PotensicPro-confirmed response offset; the previous tolerant filename scan remains only as a fallback for firmware variants.
+ 
+ The supplied change order also calls for `0x20` metadata and `0x1C` thumbnail block assembly/MD5 validation. The exact block response layout needed to implement those parsers is not present in the supplied TAF package or change-order wire description, so no guessed thumbnail frame parser was added. This remains device/original-app-source dependent.
+
+--- a/PROTOCOL.md
++++ b/PROTOCOL.md
+@@ -853,3 +853,21 @@
+ 6. LiteOS (`source=1`): raw hex until validated.
+ 7. Gimbal (`source=2`): binary raw hex preview, never generic text decoding.
+ 8. Warn if unexpected bytes remain after the declared payload.
++
++
++## Camera FE 0x05 inner-frame reassembly (ATOM, validated 2026-10-03 v0.959)
++
++Live/USB comparison showed that one outer FE `0x05` payload can contain more than one inner camera frame. The inner RX frame begins with `FF FE`; its little-endian length at offsets `+2/+3` defines the complete inner frame size as `4 + innerLength` bytes. Camera command/status parsing must therefore be performed only after this boundary has been reassembled.
++
++TAF v0.959 applies the following rules:
++
++- keep a persistent FE `0x05` inner-frame buffer across WebSocket/FE deliveries;
++- extract every complete `FF FE` frame by the declared inner length;
++- process multiple complete inner frames from one outer FE payload independently;
++- retain an incomplete inner frame until more FE `0x05` bytes arrive;
++- reset the camera inner-frame buffer on passthrough disconnect;
++- pass only the bytes belonging to one complete inner `0x0020` command to `CameraMediaService`;
++- for `0x1B`, concatenate only command-body fragments after `cmd/status`, then parse the confirmed DownloadData layout (`flag`, optional 32-byte final area, `uint64 LE offset`, `uint16 LE payloadLen`, payload);
++- never recover a malformed `0x1B` body by dropping arbitrary bytes inside media payload. If the body start is impossible (`flag` not 0/1/2 or invalid declared size), abort and require a clean restart.
++
++This addresses the observed failure sequence where the first 3072-byte media block completed, bytes from the following inner frame leaked into the same download buffer, random media/header bytes were interpreted as offsets/lengths, and the transfer remained stuck at offset 3072 until passthrough disconnect.
+
+--- a/VERSIONING.md
++++ b/VERSIONING.md
+@@ -19,3 +19,13 @@
+ ## Android BuildConfig requirement
+ 
+ `VersionInfo.kt` reads the backend version from `BuildConfig.VERSION_NAME`. With Android Gradle Plugin 8.x, BuildConfig generation is explicitly enabled in `app/build.gradle.kts` via `buildFeatures { buildConfig = true }`. Keep this enabled so the runtime backend version remains sourced from the central Android `versionName`.
++
++
++## Current development release
++
++- Software version: `0.959` (pre-1.0 development)
++- Android `versionCode`: `32`
++- Frontend source: `webui/package.json`
++- Backend/Android source: `app/build.gradle.kts`
++
++The documentation revision is tracked independently from the software version.

@@ -1,0 +1,29 @@
+BS_Fix camera RX and media download framing
+Date: 2026-10-03
+
+Summary:
+- Reassembled FE 0x05 camera inner FF FE frames by their declared little-endian inner length before command decoding.
+- Processed multiple complete inner camera frames from one FE payload independently and retained incomplete inner frames across deliveries.
+- Prevented following camera records from leaking into 0x1B download bodies and 0x39 diagnostic records.
+- Removed byte-by-byte resynchronization inside camera media payloads; impossible 0x1B body boundaries now abort cleanly with diagnostics.
+- Deferred camera commands issued before passthrough readiness and flushed them after WebSocket reconnect/status synchronization.
+- Advanced the pre-1.0 software version to 0.959 (Android versionCode 32) and updated protocol/version documentation.
+
+Validation:
+- PASS: webui/node_modules/.bin/vue-tsc --noEmit
+- PASS: synthetic inner-frame reassembly test using two real FE 0x05 / 0x39 captures, including split delivery and multi-frame concatenation.
+- BLOCKED BY ENVIRONMENT: Vite production bundle because the supplied node_modules lacks @rollup/rollup-linux-x64-gnu.
+- OPEN: real-device gallery download regression test and passthrough-disconnect root-cause test.
+
+Changed files:
+- app/build.gradle.kts
+- webui/package.json
+- webui/package-lock.json
+- webui/src/services/CameraMediaService.ts
+- README.md
+- PROTOCOL.md
+- VERSIONING.md
+- DOCUMENTATION/2026-10-03 - PotensicProxy_TAF - Projektdokumentation - Kamera-RX-Download-Framing - v1.6.docx
+- DOCUMENTATION/2026-10-03 - PotensicProxy_TAF - Projektdokumentation - Kamera-RX-Download-Framing - v1.6.pdf
+- PATCH_CAMERA_RX_DOWNLOAD_FRAMING_2026-10-03_v0.959.patch
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-03_CAMERA_RX_DOWNLOAD_FRAMING_v0.959.md

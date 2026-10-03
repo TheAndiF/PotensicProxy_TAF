@@ -47,6 +47,8 @@ For the long ATOM Flight Info layout, the parser applies the same +2-byte post-h
 
 ## Camera gallery status
 
+**v0.959 stream-framing update:** FE `0x05` camera payloads are now reassembled by the declared inner `FF FE` frame length before command decoding. Multiple inner camera frames in one FE payload are processed separately, while incomplete inner frames are retained for the next FE payload. This prevents bytes from a following camera record from being appended to the preceding `0x1B` download body or `0x39` log record. Download-body parsing no longer performs byte-by-byte resynchronization inside media payloads; an impossible `0x1B` body boundary aborts the transfer with a diagnostic instead of interpreting image/video bytes as a new header. Camera commands issued before passthrough readiness are deferred and flushed after WebSocket reconnect/status synchronization.
+
 The drone-SD gallery now follows an explicit state machine (`CLOSED`, `OPENING`, `OPEN`, `LOADING_COUNT`, `LOADING_LIST`, `READY`, `ERROR`). Enter (`0x21`), file count (`0x18`) and paged file list (`0x19`) requests use bounded timeout/retry handling, so the UI no longer remains indefinitely at “Reading media list…”. File counts are decoded little-endian and the primary `0x19` filename parser starts at the PotensicPro-confirmed response offset; the previous tolerant filename scan remains only as a fallback for firmware variants.
 
 The supplied change order also calls for `0x20` metadata and `0x1C` thumbnail block assembly/MD5 validation. The exact block response layout needed to implement those parsers is not present in the supplied TAF package or change-order wire description, so no guessed thumbnail frame parser was added. This remains device/original-app-source dependent.

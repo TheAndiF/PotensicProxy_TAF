@@ -41,6 +41,11 @@ export class CameraMediaService {
   private static readonly DOWNLOAD_INACTIVITY_TIMEOUT_MS = 15000
   private static downloadLastProgressAt = 0
   private static downloadFrameBuffer = new Uint8Array(0)
+  private static cameraInnerBuffer = new Uint8Array(0)
+  private static readonly MAX_CAMERA_INNER_FRAME = 2_000_000
+  private static transportReady = false
+  private static deferredPackets: Uint8Array[] = []
+  private static readonly MAX_DEFERRED_PACKETS = 32
   private static metaQueue: string[][] = []
   private static metaTimer: ReturnType<typeof setTimeout> | null = null
   private static metaRetryCount = 0
@@ -71,6 +76,8 @@ export class CameraMediaService {
   /** Reset transient camera/media state when browser passthrough is interrupted. */
   static handleTransportDisconnect() {
     const cam = useCameraStore()
+    this.transportReady = false
+    this.cameraInnerBuffer = new Uint8Array(0)
     const drone = useDroneStore()
 
     this.clearCaptureTimer()
@@ -124,14 +131,23 @@ export class CameraMediaService {
   static handleTransportReconnect() {
     const cam = useCameraStore()
     cam.captureMode = 'UNKNOWN'
-    useDroneStore().addLog('INFO', '[Camera] passthrough reconnected; synchronizing camera status (0x02)')
+    this.transportReady = true
+    const drone = useDroneStore()
+    drone.addLog('INFO', '[Camera] passthrough reconnected; synchronizing camera status (0x02)')
     this.send(PacketBuilder.buildCameraGetStatus())
+    if (this.deferredPackets.length) {
+      const pending = this.deferredPackets.splice(0)
+      drone.addLog('INFO', `[Camera] sending ${pending.length} deferred command(s) after passthrough became ready`)
+      pending.forEach((packet, index) => setTimeout(() => this.sender?.(packet), index * 25))
+    }
   }
 
   private static send(packet: Uint8Array) {
     const store = useDroneStore()
-    if (!this.sender) {
-      store.addLog('ERROR', 'Camera command not sent: transport is not initialized')
+    if (!this.sender || !this.transportReady) {
+      if (this.deferredPackets.length >= this.MAX_DEFERRED_PACKETS) this.deferredPackets.shift()
+      this.deferredPackets.push(packet.slice())
+      store.addLog('INFO', 'Camera command deferred until passthrough transport is ready')
       return
     }
     this.sender(packet)
@@ -876,8 +892,9 @@ export class CameraMediaService {
   }
 
   private static downloadFrameLength(buffer: Uint8Array): number | null {
-    if (buffer.length < 11) return null
+    if (buffer.length < 1) return null
     const flag = buffer[0]
+    if (flag !== 0 && flag !== 1 && flag !== 2) return -1
     const base = flag === 2 ? 33 : 1
     if (buffer.length < base + 10) return null
     const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
@@ -892,9 +909,11 @@ export class CameraMediaService {
       const expected = this.downloadFrameLength(this.downloadFrameBuffer)
       if (expected == null) return
       if (expected < 0 || expected > 2_000_000) {
-        drone.addLog('WARN', `Camera download stream lost framing (${this.downloadFrameBuffer.length} buffered bytes); dropping one byte to resynchronize`)
-        this.downloadFrameBuffer = this.downloadFrameBuffer.subarray(1).slice()
-        continue
+        const preview = Array.from(this.downloadFrameBuffer.subarray(0, Math.min(16, this.downloadFrameBuffer.length)))
+          .map(v => v.toString(16).padStart(2, '0').toUpperCase()).join(' ')
+        drone.addLog('ERROR', `Camera download frame boundary invalid (${this.downloadFrameBuffer.length} buffered bytes, head=${preview}); aborting without byte-wise payload resync`)
+        this.failDownload('Camera download stream framing invalid; restart required')
+        return
       }
       if (this.downloadFrameBuffer.length < expected) {
         drone.addLog('INFO', `Camera download partial frame buffered: ${this.downloadFrameBuffer.length}/${expected}B`)
@@ -907,11 +926,73 @@ export class CameraMediaService {
   }
 
   /**
-   * Handle FE 0x05 camera responses whose inner message short is 0x0020.
-   * Returns true when the packet belongs to this PotensicPro-compatible camera path.
+   * Handle FE 0x05 camera responses. An FE payload may contain multiple complete
+   * inner FF FE frames, and an inner frame may be split across consecutive FE
+   * payloads. Reassemble those boundaries first so bytes from a following camera
+   * record can never leak into the current command body.
    */
   static handleIncoming(feType: number, payload: Uint8Array): boolean {
-    if (feType !== 0x05 || payload.length < 8 || payload[0] !== CAMERA_USB.RX_HEADER_0 || payload[1] !== CAMERA_USB.RX_HEADER_1) return false
+    if (feType !== 0x05 || payload.length === 0) return false
+    this.appendCameraInnerBytes(payload)
+    return true
+  }
+
+  private static appendCameraInnerBytes(bytes: Uint8Array) {
+    if (this.cameraInnerBuffer.length === 0) this.cameraInnerBuffer = bytes.slice()
+    else {
+      const merged = new Uint8Array(this.cameraInnerBuffer.length + bytes.length)
+      merged.set(this.cameraInnerBuffer, 0)
+      merged.set(bytes, this.cameraInnerBuffer.length)
+      this.cameraInnerBuffer = merged
+    }
+    this.drainCameraInnerFrames()
+  }
+
+  private static isCameraInnerHeader(buffer: Uint8Array, offset = 0): boolean {
+    return buffer.length >= offset + 2 &&
+      buffer[offset] === CAMERA_USB.RX_HEADER_0 &&
+      buffer[offset + 1] === CAMERA_USB.RX_HEADER_1
+  }
+
+  private static drainCameraInnerFrames() {
+    const drone = useDroneStore()
+    while (this.cameraInnerBuffer.length > 0) {
+      if (this.cameraInnerBuffer.length < 4) return
+
+      if (!this.isCameraInnerHeader(this.cameraInnerBuffer)) {
+        let next = -1
+        for (let i = 1; i + 1 < this.cameraInnerBuffer.length; i++) {
+          if (this.isCameraInnerHeader(this.cameraInnerBuffer, i)) { next = i; break }
+        }
+        if (next < 0) {
+          const keep = this.cameraInnerBuffer[this.cameraInnerBuffer.length - 1] === CAMERA_USB.RX_HEADER_0 ? 1 : 0
+          const dropped = this.cameraInnerBuffer.length - keep
+          if (dropped > 0) drone.addLog('WARN', `[Camera RX] discarded ${dropped} byte(s) before next inner frame header`)
+          this.cameraInnerBuffer = keep ? this.cameraInnerBuffer.slice(-1) : new Uint8Array(0)
+          return
+        }
+        drone.addLog('WARN', `[Camera RX] discarded ${next} byte(s) before inner frame header`)
+        this.cameraInnerBuffer = this.cameraInnerBuffer.slice(next)
+        continue
+      }
+
+      const innerLength = this.cameraInnerBuffer[2] | (this.cameraInnerBuffer[3] << 8)
+      const totalLength = 4 + innerLength
+      if (innerLength < 4 || totalLength > this.MAX_CAMERA_INNER_FRAME) {
+        drone.addLog('WARN', `[Camera RX] invalid inner frame length ${innerLength}; discarding header byte`)
+        this.cameraInnerBuffer = this.cameraInnerBuffer.slice(1)
+        continue
+      }
+      if (this.cameraInnerBuffer.length < totalLength) return
+
+      const frame = this.cameraInnerBuffer.slice(0, totalLength)
+      this.cameraInnerBuffer = this.cameraInnerBuffer.slice(totalLength)
+      this.handleCameraInnerFrame(frame)
+    }
+  }
+
+  private static handleCameraInnerFrame(payload: Uint8Array): boolean {
+    if (payload.length < 8 || !this.isCameraInnerHeader(payload)) return false
     const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
     const msgShort = view.getUint16(4, true)
     if (msgShort !== CAMERA_USB.INNER_FUNCTION) return false
