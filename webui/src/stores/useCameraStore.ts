@@ -26,6 +26,23 @@ export const useCameraStore = defineStore('camera', () => {
   const zoomMaxSource = ref<'fallback' | 'camera'>('fallback')
   const zoomPending = ref(false)
   const zoomLastUpdate = ref<number | null>(null)
+  const initialization = reactive({
+    configMenuLoaded: false,
+    ready: false,
+    attempts: 0,
+    lastInitMessage: '',
+    model: '',
+    softVersion: '',
+    supportTimerPhoto: false,
+    supportAebPhoto: false
+  })
+  const photoMode = reactive({
+    loaded: false,
+    childMode: 0,
+    intervalTime: 0,
+    photoCount: 0,
+    isTimeTaking: false
+  })
   const manualMode = reactive({
     loaded: false,
     manual: false,
@@ -43,6 +60,10 @@ export const useCameraStore = defineStore('camera', () => {
     freeMb: null as number | null,
     totalMb: null as number | null,
     lastStatus: ''
+  })
+  const configState = reactive({
+    videoOsd: false,
+    remainCapture: null as number | null
   })
 
   const galleryEntered = ref(false)
@@ -138,8 +159,11 @@ export const useCameraStore = defineStore('camera', () => {
     zoomMaxSource,
     zoomPending,
     zoomLastUpdate,
+    initialization,
+    photoMode,
     manualMode,
     sd,
+    configState,
     galleryEntered,
     galleryState,
     galleryError,

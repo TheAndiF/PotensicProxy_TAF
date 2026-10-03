@@ -149,6 +149,17 @@ export class PacketBuilder {
   }
 
   static buildCameraGetConfigMenu(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([17])) }
+  static buildCameraSetTime(date = new Date()): Uint8Array {
+    return this.buildLegacyCameraUsb(new Uint8Array([
+      7,
+      Math.max(0, Math.min(255, date.getFullYear() - 2000)),
+      date.getMonth() + 1,
+      date.getDate(),
+      date.getHours(),
+      date.getMinutes(),
+      date.getSeconds()
+    ]))
+  }
   static buildCameraGetSdStatus(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([23])) }
   static buildCameraFormatSd(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([4])) }
   static buildCameraGetVideoSizes(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([8])) }
@@ -157,6 +168,8 @@ export class PacketBuilder {
   static buildCameraSetVideoSize(index: number): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([11, index & 0xff])) }
   static buildCameraGetCurrentPhotoSize(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([12])) }
   static buildCameraSetPhotoSize(index: number): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([13, index & 0xff])) }
+  static buildCameraGetRecordEv(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([14, 0])) }
+  static buildCameraGetTakePhotoEv(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([14, 1])) }
   static buildCameraGetEv(mode: 0 | 1): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([16, mode])) }
   static buildCameraGetManualModeInfo(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([52])) }
   static buildCameraGetExposureInfo(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([54])) }
@@ -174,6 +187,7 @@ export class PacketBuilder {
     return this.buildLegacyCameraUsb(data)
   }
   static buildCameraGetZoom(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([0x3f])) }
+  static buildCameraGetTakePhotoMode(): Uint8Array { return this.buildLegacyCameraUsb(new Uint8Array([0x40])) }
   static buildCameraSetManualMode(info: { manual: boolean; shutterDen: number; iso: number; manualWb: boolean; wb: number }): Uint8Array {
     const data = new Uint8Array(32)
     const view = new DataView(data.buffer)

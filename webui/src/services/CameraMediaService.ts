@@ -46,6 +46,12 @@ export class CameraMediaService {
   private static transportReady = false
   private static deferredPackets: Uint8Array[] = []
   private static readonly MAX_DEFERRED_PACKETS = 32
+  private static cameraInitTimer: ReturnType<typeof setTimeout> | null = null
+  private static readonly CAMERA_INIT_RETRY_MS = 1000
+  private static pendingZoomAfterInit = false
+  private static videoZoomByResolution = new Map<number, number>()
+  private static photoZoomByResolution = new Map<number, number>()
+  private static pendingPostModeExposureSync: 'PHOTO' | 'VIDEO' | null = null
   private static metaQueue: string[][] = []
   private static metaTimer: ReturnType<typeof setTimeout> | null = null
   private static metaRetryCount = 0
@@ -80,6 +86,8 @@ export class CameraMediaService {
     const cam = useCameraStore()
     this.transportReady = false
     this.cameraInnerBuffer = new Uint8Array(0)
+    if (this.cameraInitTimer) clearTimeout(this.cameraInitTimer)
+    this.cameraInitTimer = null
     const drone = useDroneStore()
 
     this.clearCaptureTimer()
@@ -136,13 +144,63 @@ export class CameraMediaService {
     cam.captureMode = 'UNKNOWN'
     this.transportReady = true
     const drone = useDroneStore()
-    drone.addLog('INFO', '[Camera] passthrough reconnected; synchronizing camera status (0x02)')
-    this.send(PacketBuilder.buildCameraGetStatus())
-    if (this.deferredPackets.length) {
-      const pending = this.deferredPackets.splice(0)
-      drone.addLog('INFO', `[Camera] sending ${pending.length} deferred command(s) after passthrough became ready`)
-      pending.forEach((packet, index) => setTimeout(() => this.sender?.(packet), index * 25))
+    if (!cam.initialization.configMenuLoaded) {
+      drone.addLog('INFO', '[Camera] passthrough reconnected; starting PotensicPro camera initialization with config menu 0x11')
+      this.startManufacturerInitialization()
+    } else {
+      drone.addLog('INFO', '[Camera] passthrough reconnected; camera config already loaded, synchronizing status (0x02)')
+      this.send(PacketBuilder.buildCameraGetStatus())
+      this.flushDeferredPackets('passthrough became ready')
     }
+  }
+
+  private static flushDeferredPackets(reason: string) {
+    if (!this.transportReady || !this.deferredPackets.length) return
+    const drone = useDroneStore()
+    const pending = this.deferredPackets.splice(0)
+    drone.addLog('INFO', `[Camera] sending ${pending.length} deferred command(s) after ${reason}`)
+    pending.forEach((packet, index) => setTimeout(() => this.sender?.(packet), index * 25))
+  }
+
+  private static startManufacturerInitialization() {
+    const cam = useCameraStore()
+    const drone = useDroneStore()
+    if (!this.transportReady || cam.initialization.configMenuLoaded || this.cameraInitTimer) return
+
+    const requestConfigMenu = () => {
+      this.cameraInitTimer = null
+      if (!this.transportReady || cam.initialization.configMenuLoaded) return
+      cam.initialization.attempts += 1
+      cam.initialization.lastInitMessage = `Reading PotensicPro camera config menu (0x11), attempt ${cam.initialization.attempts}`
+      drone.addLog('INFO', `[Camera init] ${cam.initialization.lastInitMessage}`)
+      this.send(PacketBuilder.buildCameraGetConfigMenu())
+      this.cameraInitTimer = setTimeout(requestConfigMenu, this.CAMERA_INIT_RETRY_MS)
+    }
+
+    requestConfigMenu()
+  }
+
+  private static completeManufacturerInitialization() {
+    const cam = useCameraStore()
+    const drone = useDroneStore()
+    if (this.cameraInitTimer) clearTimeout(this.cameraInitTimer)
+    this.cameraInitTimer = null
+    cam.initialization.configMenuLoaded = true
+    cam.initialization.ready = true
+    cam.initialization.lastInitMessage = 'PotensicPro camera config menu loaded; running original post-init queries'
+    drone.addLog('INFO', `[Camera init] ${cam.initialization.lastInitMessage}`)
+
+    // PotensicPro KernelActivity/RightController follow-up after EVENT_GET_CONFIG_MENU_SUCCESS:
+    // set camera clock, read manual mode, current zoom and photo child mode.
+    ;[
+      PacketBuilder.buildCameraSetTime(),
+      PacketBuilder.buildCameraGetManualModeInfo(),
+      PacketBuilder.buildCameraGetZoom(),
+      PacketBuilder.buildCameraGetTakePhotoMode()
+    ].forEach((packet, index) => setTimeout(() => this.send(packet), index * 70))
+
+    if (this.pendingZoomAfterInit) this.pendingZoomAfterInit = false
+    setTimeout(() => this.flushDeferredPackets('camera initialization completed'), 300)
   }
 
   private static send(packet: Uint8Array) {
@@ -158,7 +216,12 @@ export class CameraMediaService {
 
   static refreshSettings() {
     const store = useDroneStore()
+    const cam = useCameraStore()
     store.addLog('INFO', 'Read camera configuration, resolutions, EV and SD-card state')
+    if (!cam.initialization.configMenuLoaded) {
+      this.startManufacturerInitialization()
+      return
+    }
     ;[
       PacketBuilder.buildCameraGetStatus(),
       PacketBuilder.buildCameraGetConfigMenu(),
@@ -170,7 +233,8 @@ export class CameraMediaService {
       PacketBuilder.buildCameraGetExposureInfo(),
       PacketBuilder.buildCameraGetPhotoGps(),
       PacketBuilder.buildCameraGetSdStatus(),
-      PacketBuilder.buildCameraGetZoom()
+      PacketBuilder.buildCameraGetZoom(),
+      PacketBuilder.buildCameraGetTakePhotoMode()
     ].forEach((p, i) => setTimeout(() => this.send(p), i * 70))
   }
 
@@ -223,6 +287,19 @@ export class CameraMediaService {
       const cam = useCameraStore()
       const drone = useDroneStore()
       const action = this.pendingCaptureAction
+      if (stage === 'photo completion notification (0x2A)' && action === 'photo') {
+        // PotensicPro's takingPhotoRunnable only clears the local "taking photo" UI
+        // after 10 seconds. It does not synthesize a second shutter command or force
+        // a VIDEO mode switch.
+        cam.captureFlowState = 'IDLE'
+        cam.recordingPending = false
+        cam.lastCaptureMessage = 'Photo completion timeout; shutter UI reset while camera remains in PHOTO mode'
+        drone.addLog('WARN', `${cam.lastCaptureMessage}; no 0x2A received`)
+        this.pendingCaptureAction = null
+        this.pendingPhotoRequiresExplicitShutter = false
+        this.captureRetriedAfterModeError = false
+        return
+      }
       cam.captureFlowState = 'ERROR'
       cam.recordingPending = false
       cam.lastCaptureMessage = `Camera capture timeout during ${stage}`
@@ -281,6 +358,55 @@ export class CameraMediaService {
     drone.addLog('INFO', `[Camera capture] ${source} confirms PHOTO ready; waiting for explicit shutter press`)
   }
 
+  private static applyZoomLimitForCurrentMode() {
+    const cam = useCameraStore()
+    const isPhoto = cam.captureMode === 'PHOTO'
+    const resolution = isPhoto ? cam.photoResolutionIndex : cam.videoResolutionIndex
+    const map = isPhoto ? this.photoZoomByResolution : this.videoZoomByResolution
+    const reported = resolution != null ? map.get(resolution) : undefined
+    if (reported != null && reported >= 1) {
+      cam.zoomMax = reported
+      cam.zoomMaxSource = 'camera'
+      if (cam.zoomTarget > reported) cam.zoomTarget = reported
+      useDroneStore().addLog('INFO', `Camera max zoom=${reported}x for ${isPhoto ? 'photo' : 'video'} resolution id=${resolution}`)
+    }
+  }
+
+  private static applyPostModeExposureSync(mode: 'PHOTO' | 'VIDEO') {
+    const cam = useCameraStore()
+    const drone = useDroneStore()
+    this.pendingPostModeExposureSync = null
+    if (!cam.manualMode.loaded) {
+      this.pendingPostModeExposureSync = mode
+      drone.addLog('INFO', `[Camera capture] manual-mode state not loaded; requesting 0x34 before ${mode} exposure sync`)
+      this.send(PacketBuilder.buildCameraGetManualModeInfo())
+      return
+    }
+    if (cam.manualMode.manual) {
+      drone.addLog('INFO', `[Camera capture] re-applying manual camera parameters after ${mode} switch (PotensicPro resetToManualMode)`)
+      this.send(PacketBuilder.buildCameraSetManualMode({
+        manual: cam.manualMode.manual,
+        shutterDen: cam.manualMode.shutterDen,
+        iso: cam.manualMode.iso,
+        manualWb: cam.manualMode.manualWb,
+        wb: cam.manualMode.wb
+      }))
+    } else {
+      const evMode: 0 | 1 = mode === 'PHOTO' ? 1 : 0
+      drone.addLog('INFO', `[Camera capture] reading automatic ${mode} EV after mode switch (cmd 0x10, mode ${evMode})`)
+      this.send(PacketBuilder.buildCameraGetEv(evMode))
+    }
+  }
+
+  private static runManufacturerPostModeSync(mode: 'PHOTO' | 'VIDEO') {
+    const drone = useDroneStore()
+    drone.addLog('INFO', `[Camera capture] PotensicPro post-mode sync for ${mode}: SD status + mode EV + manual/auto exposure sync`)
+    this.applyZoomLimitForCurrentMode()
+    setTimeout(() => this.send(PacketBuilder.buildCameraGetSdStatus()), 0)
+    setTimeout(() => this.send(mode === 'PHOTO' ? PacketBuilder.buildCameraGetTakePhotoEv() : PacketBuilder.buildCameraGetRecordEv()), 50)
+    setTimeout(() => this.applyPostModeExposureSync(mode), 100)
+  }
+
   private static enterPhotoCompletingState(source: string, reason: string) {
     const cam = useCameraStore()
     const drone = useDroneStore()
@@ -333,6 +459,12 @@ export class CameraMediaService {
   private static beginCapture(action: 'photo' | 'record-start' | 'record-stop', modeSwitchOnly = false) {
     const cam = useCameraStore()
     const drone = useDroneStore()
+    if (!cam.initialization.ready) {
+      cam.lastCaptureMessage = 'Camera initialization is not complete yet'
+      drone.addLog('WARN', '[Camera capture] ignored action until PotensicPro camera initialization (0x11 config menu) completes')
+      this.startManufacturerInitialization()
+      return
+    }
     if (this.pendingCaptureAction || cam.capturePending) {
       drone.addLog('WARN', `[Camera capture] ignored ${action}; another capture transition is active (${cam.captureFlowState})`)
       return
@@ -418,6 +550,11 @@ export class CameraMediaService {
 
   static setZoom(zoom: number) {
     const cam = useCameraStore()
+    if (!cam.initialization.ready) {
+      useDroneStore().addLog('WARN', 'Set camera zoom ignored until PotensicPro camera initialization is complete')
+      this.startManufacturerInitialization()
+      return
+    }
     const maxZoom = Math.max(1, cam.zoomMax || 4)
     const value = Math.max(1, Math.min(maxZoom, Math.round(zoom * 100) / 100))
     cam.zoomTarget = value
@@ -427,6 +564,13 @@ export class CameraMediaService {
   }
 
   static getZoom() {
+    const cam = useCameraStore()
+    if (!cam.initialization.configMenuLoaded) {
+      this.pendingZoomAfterInit = true
+      useDroneStore().addLog('INFO', 'Read camera zoom deferred until config menu 0x11 is loaded (PotensicPro init order)')
+      this.startManufacturerInitialization()
+      return
+    }
     useDroneStore().addLog('INFO', 'Read camera zoom (Potensic camera cmd 0x3F)')
     this.send(PacketBuilder.buildCameraGetZoom())
   }
@@ -733,21 +877,47 @@ export class CameraMediaService {
     }
   }
 
-  private static parseConfigZoomCapabilities(data: Uint8Array) {
-    // PotensicPro UsbCameraHandler.parseAllParams(): data here starts at original response i+2.
-    // Layout: 4B camera state, model length+model, SD state, free/total 3B, then
-    // current+count+values for video/photo/recordEV/photoEV/split, six option bytes,
-    // followed by [videoZoomPairCount][resolution,maxZoom]... and the photo equivalent.
+  private static parseConfigMenu(data: Uint8Array): boolean {
+    // PotensicPro UsbCameraHandler.parseAllParams(), with `data` beginning immediately
+    // after the command status byte. Keep the same field order so capture mode, SD state,
+    // current resolution, EV values and mode-dependent zoom limits are synchronized before
+    // the user can start a camera action.
     const cam = useCameraStore()
+    const drone = useDroneStore()
     let pos = 0
-    if (data.length < 12) return
-    pos += 4
-    const modelLen = data[pos++] ?? 0
-    if (pos + modelLen + 7 > data.length) return
-    pos += modelLen
-    pos += 1 + 3 + 3
+    if (data.length < 12) return false
 
-    const readSupport = () => {
+    // Camera state: mode, recording flag, record time (uint16 LE).
+    const modeByte = data[pos++]
+    const recordingByte = data[pos++]
+    const recordTime = data[pos++] | (data[pos++] << 8)
+    cam.captureMode = modeByte === 0 ? 'VIDEO' : modeByte === 1 ? 'PHOTO' : 'UNKNOWN'
+    cam.recording = modeByte === 0 && recordingByte === 1
+    cam.recordingPending = false
+    drone.addLog('INFO', `[Camera init] config state: mode=${cam.captureMode} recording=${cam.recording} recordTime=${recordTime}s`)
+
+    // Camera model / firmware string.
+    const modelLen = data[pos++] ?? 0
+    if (pos + modelLen + 7 > data.length) return false
+    const modelRaw = new TextDecoder('ascii').decode(data.subarray(pos, pos + modelLen)).replace(/\0/g, '').trim()
+    pos += modelLen
+    const upper = modelRaw.toUpperCase()
+    const versionPos = upper.lastIndexOf('V')
+    if (versionPos >= 0) {
+      cam.initialization.model = modelRaw.slice(0, versionPos).trim()
+      cam.initialization.softVersion = modelRaw.slice(versionPos).trim()
+    } else {
+      cam.initialization.model = modelRaw
+      cam.initialization.softVersion = ''
+    }
+
+    // SD state + 24-bit free/total space.
+    cam.sd.state = data[pos++]
+    cam.sd.freeMb = data[pos++] | (data[pos++] << 8) | (data[pos++] << 16)
+    cam.sd.totalMb = data[pos++] | (data[pos++] << 8) | (data[pos++] << 16)
+    cam.sd.lastStatus = 'SD status received from config menu'
+
+    const readSupport = (): { current: number; values: number[] } | null => {
       if (pos + 2 > data.length) return null
       const current = data[pos++]
       const count = data[pos++]
@@ -757,36 +927,50 @@ export class CameraMediaService {
       return { current, values }
     }
 
-    const video = readSupport(); if (!video) return
-    const photo = readSupport(); if (!photo) return
-    if (!readSupport() || !readSupport() || !readSupport()) return
+    const video = readSupport(); if (!video) return false
+    const photo = readSupport(); if (!photo) return false
+    const recordEv = readSupport(); if (!recordEv) return false
+    const photoEv = readSupport(); if (!photoEv) return false
+    const split = readSupport(); if (!split) return false
+    void split
 
-    // Newer PotensicPro config-menu responses include RAW/video-OSD/photo-OSD/remain-capture (6 bytes).
-    if (pos + 6 > data.length) return
-    pos += 6
-    if (pos >= data.length) return
+    cam.videoResolutionIndex = video.current
+    cam.photoResolutionIndex = photo.current
+    cam.videoEv = (recordEv.current - 4) / 2
+    cam.photoEv = (photoEv.current - 4) / 2
 
-    const videoPairCount = data[pos++]
-    const videoZoom = new Map<number, number>()
-    for (let n = 0; n < videoPairCount && pos + 1 < data.length; n++) {
-      videoZoom.set(data[pos++], data[pos++])
-    }
-    if (pos >= data.length) return
-    const photoPairCount = data[pos++]
-    const photoZoom = new Map<number, number>()
-    for (let n = 0; n < photoPairCount && pos + 1 < data.length; n++) {
-      photoZoom.set(data[pos++], data[pos++])
+    // Newer config-menu payloads contain RAW / OSD flags and 24-bit remaining capture.
+    if (pos + 6 <= data.length) {
+      cam.manualMode.raw = data[pos++] === 1
+      cam.configState.videoOsd = data[pos++] === 1
+      cam.manualMode.photoOsd = data[pos++] === 1
+      cam.configState.remainCapture = data[pos++] | (data[pos++] << 8) | (data[pos++] << 16)
     }
 
-    // The cockpit currently controls the live/video camera path. Use the current video resolution
-    // capability exactly as PotensicPro does for record mode. Fall back only when no capability is reported.
-    const reported = videoZoom.get(video.current)
-    if (reported != null && reported >= 1) {
-      cam.zoomMax = reported
-      cam.zoomMaxSource = 'camera'
-      if (cam.zoomTarget > reported) cam.zoomTarget = reported
-      useDroneStore().addLog('INFO', `Camera max zoom=${reported}x for current video resolution id=${video.current}`)
+    this.videoZoomByResolution.clear()
+    this.photoZoomByResolution.clear()
+    if (pos < data.length) {
+      const videoPairCount = data[pos++]
+      for (let n = 0; n < videoPairCount && pos + 1 < data.length; n++) {
+        this.videoZoomByResolution.set(data[pos++], data[pos++])
+      }
+      if (pos < data.length) {
+        const photoPairCount = data[pos++]
+        for (let n = 0; n < photoPairCount && pos + 1 < data.length; n++) {
+          this.photoZoomByResolution.set(data[pos++], data[pos++])
+        }
+      }
     }
+
+    if (pos < data.length) {
+      const supportFlags = data[pos]
+      cam.initialization.supportTimerPhoto = (supportFlags & 0x01) !== 0
+      cam.initialization.supportAebPhoto = (supportFlags & 0x02) !== 0
+    }
+
+    this.applyZoomLimitForCurrentMode()
+    drone.addLog('INFO', `[Camera init] config menu parsed: model=${cam.initialization.model || 'unknown'} firmware=${cam.initialization.softVersion || 'unknown'} SD=${cam.sd.state} free=${cam.sd.freeMb ?? '?'}MB photoRes=${cam.photoResolutionIndex} videoRes=${cam.videoResolutionIndex}`)
+    return true
   }
 
   private static cameraLogHexPreview(bytes: Uint8Array, maxBytes = 48): string {
@@ -1065,12 +1249,10 @@ export class CameraMediaService {
       return true
     }
     if (cmd === 0x3a) {
-      const modeByte = commandBody.length ? commandBody[0] : undefined
-      cam.lastResponse = `mode-notify 0x3A mode=${modeByte ?? 'unknown'}`
-      if (modeByte === 0) cam.captureMode = 'VIDEO'
-      else if (modeByte === 1) cam.captureMode = 'PHOTO'
-      drone.addLog('INFO', `[Camera capture] asynchronous mode-ready notification 0x3A: ${cam.captureMode}`)
-      if (this.pendingCaptureAction) this.confirmCaptureReady(modeByte, '0x3A notification')
+      cam.lastResponse = `mode-pre-notify 0x3A data=${commandBody.length}B`
+      // PotensicPro names 0x3A MSG_ID_SWITCH_CAPTURE_MODE_PRE_NOTIFY and uses it for
+      // the visual blur transition only. It is not the authoritative capture-mode ACK.
+      drone.addLog('INFO', '[Camera capture] asynchronous 0x3A mode pre-notify received (UI transition only; not used as shutter readiness gate)')
       return true
     }
 
@@ -1118,9 +1300,9 @@ export class CameraMediaService {
           this.scheduleBusyRetry()
           return true
         }
-        // Status 8 means the current capture mode is not allowed. Switch to the required
-        // mode once, then wait for 0x3A or a confirming 0x02 status before retrying.
-        if (status === 8 && action && (cmd === CAMERA_USB.TAKE_PHOTO || cmd === CAMERA_USB.RECORD) && !this.captureRetriedAfterModeError) {
+        // Recording-only recovery: status 8 means the current mode is not allowed.
+        // The photo path intentionally does not auto-switch/retry, matching PotensicPro.
+        if (status === 8 && action && cmd === CAMERA_USB.RECORD && !this.captureRetriedAfterModeError) {
           this.captureRetriedAfterModeError = true
           drone.addLog('WARN', `[Camera capture] ${failure}; switching to required mode before one retry`)
           this.switchModeForPendingAction()
@@ -1173,17 +1355,19 @@ export class CameraMediaService {
         if (data.length) {
           cam.captureMode = data[0] === 0 ? 'VIDEO' : data[0] === 1 ? 'PHOTO' : 'UNKNOWN'
           drone.addLog('INFO', `[Camera capture] mode ACK: ${cam.captureMode}`)
+          if (cam.captureMode === 'PHOTO' || cam.captureMode === 'VIDEO') this.runManufacturerPostModeSync(cam.captureMode)
         }
         if (this.pendingCaptureAction && this.captureCommandInFlight()) {
           drone.addLog('INFO', '[Camera capture] late mode ACK received after capture command; no duplicate capture sent')
+        } else if (this.pendingCaptureAction === 'photo' && this.pendingPhotoRequiresExplicitShutter && cam.captureMode === 'PHOTO') {
+          // PotensicPro treats the successful 0x03 response itself as
+          // EVENT_SET_CAPTURE_MODE_SUCCESS. Enable the separate shutter action now;
+          // do not add an extra 0x02/0x3A readiness gate that the original app does not use.
+          this.finishPhotoModeReady('mode ACK')
         } else if (this.pendingCaptureAction && cam.captureMode === this.desiredMode(this.pendingCaptureAction)) {
           cam.captureFlowState = 'SYNCING'
-          cam.lastCaptureMessage = this.pendingPhotoRequiresExplicitShutter && this.pendingCaptureAction === 'photo'
-            ? 'Photo mode ACK received; waiting for readiness confirmation'
-            : 'Mode ACK received; waiting for camera readiness'
-          drone.addLog('INFO', this.pendingPhotoRequiresExplicitShutter && this.pendingCaptureAction === 'photo'
-            ? '[Camera capture] PHOTO mode ACK accepted; waiting for 0x3A or confirming 0x02 status before enabling manual shutter'
-            : '[Camera capture] mode ACK accepted; waiting for 0x3A or confirming 0x02 status before capture')
+          cam.lastCaptureMessage = 'Mode ACK received; waiting for camera readiness'
+          drone.addLog('INFO', '[Camera capture] mode ACK accepted; confirming 0x02 status before recording action')
           this.send(PacketBuilder.buildCameraGetStatus())
           this.armCaptureTimer('mode readiness confirmation')
         } else if (this.pendingCaptureAction) {
@@ -1213,10 +1397,18 @@ export class CameraMediaService {
         }
         break
       case CAMERA_USB.TAKE_PHOTO:
+        // PotensicPro reacts to EVENT_TAKE_PHOTO_SUCCESS by requesting SD state
+        // immediately, while the UI continues to show the in-progress photo state
+        // until the asynchronous 0x2A completion notification arrives.
+        this.getSdStatus()
         this.enterPhotoCompletingState('photo ACK 0x01', 'Photo acknowledged; waiting for completion')
         break
       case 42:
         this.completePhotoCapture('cmd 0x2A')
+        break
+      case 7:
+        cam.initialization.lastInitMessage = 'Camera clock synchronized (0x07)'
+        drone.addLog('INFO', '[Camera init] camera time set acknowledged')
         break
       case 4: // format SD response: card state in data[0]
         if (data.length) cam.sd.state = data[0]
@@ -1224,10 +1416,16 @@ export class CameraMediaService {
         this.getSdStatus()
         break
       case 11:
-        if (data.length) cam.videoResolutionIndex = data[0]
+        if (data.length) {
+          cam.videoResolutionIndex = data[0]
+          this.applyZoomLimitForCurrentMode()
+        }
         break
       case 13:
-        if (data.length) cam.photoResolutionIndex = data[0]
+        if (data.length) {
+          cam.photoResolutionIndex = data[0]
+          this.applyZoomLimitForCurrentMode()
+        }
         break
       case 15: {
         if (data.length >= 2) {
@@ -1265,10 +1463,14 @@ export class CameraMediaService {
           cam.manualMode.manualWb = data[7] === 1
           cam.manualMode.wb = dv.getUint16(8, true)
           cam.manualMode.loaded = true
+          if (cmd === 52 && this.pendingPostModeExposureSync) {
+            const mode = this.pendingPostModeExposureSync
+            setTimeout(() => this.applyPostModeExposureSync(mode), 20)
+          }
         }
         break
       case 17:
-        this.parseConfigZoomCapabilities(data)
+        if (this.parseConfigMenu(data)) this.completeManufacturerInitialization()
         break
       case 62:
       case 63:
@@ -1286,6 +1488,17 @@ export class CameraMediaService {
       case 59:
       case 60:
         if (data.length) cam.manualMode.photoGps = data[data.length - 1] === 1
+        break
+      case 64:
+        if (data.length >= 5) {
+          const dv = new DataView(data.buffer, data.byteOffset, data.byteLength)
+          cam.photoMode.childMode = data[0]
+          cam.photoMode.intervalTime = Math.floor(dv.getUint16(1, true) / 1000)
+          cam.photoMode.photoCount = dv.getUint16(3, true)
+          cam.photoMode.isTimeTaking = data.length >= 6 ? (data[5] & 0x0f) === 1 : false
+          cam.photoMode.loaded = true
+          drone.addLog('INFO', `[Camera init] photo mode: child=${cam.photoMode.childMode} interval=${cam.photoMode.intervalTime}s count=${cam.photoMode.photoCount} active=${cam.photoMode.isTimeTaking}`)
+        }
         break
       case 23:
         if (data.length >= 7) {
