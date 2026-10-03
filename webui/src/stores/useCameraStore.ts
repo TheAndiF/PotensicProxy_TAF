@@ -13,7 +13,7 @@ export type CameraMediaFile = {
 
 export type GalleryState = 'CLOSED' | 'OPENING' | 'OPEN' | 'LOADING_COUNT' | 'LOADING_LIST' | 'READY' | 'ERROR'
 export type CaptureModeState = 'UNKNOWN' | 'PHOTO' | 'VIDEO'
-export type CaptureFlowState = 'IDLE' | 'SYNCING' | 'SWITCHING_TO_PHOTO' | 'SWITCHING_TO_VIDEO' | 'PHOTO_PENDING' | 'VIDEO_START_PENDING' | 'VIDEO_STOP_PENDING' | 'ERROR'
+export type CaptureFlowState = 'IDLE' | 'SYNCING' | 'SWITCHING_TO_PHOTO' | 'SWITCHING_TO_VIDEO' | 'PHOTO_PENDING' | 'PHOTO_COMPLETING' | 'VIDEO_START_PENDING' | 'VIDEO_STOP_PENDING' | 'ERROR'
 
 export const useCameraStore = defineStore('camera', () => {
   const videoResolutionIndex = ref<number | null>(null)

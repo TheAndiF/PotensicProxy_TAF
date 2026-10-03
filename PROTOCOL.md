@@ -804,17 +804,19 @@ Response handling on the same camera function:
 - Command `01`: successful photo acknowledgement.
 - Command `00`: data byte 0 = `01` recording started, `00` recording stopped.
 
-TAF v1.4 capture flow:
+TAF v0.960 capture flow:
 
 1. Before capture, gallery/list/metadata activity is ended so capture owns the camera command state exclusively; an active file download is not interrupted and blocks a new capture.
 2. If the local capture mode is unknown, send `02` and wait for the response.
 3. If the desired mode differs, send `03 <mode>` and wait for the `03` acknowledgement.
 4. A successful `03` ACK alone is not treated as capture-ready. TAF waits for asynchronous mode notification `0x3A` and/or requests `02` again and requires the target mode to be confirmed.
-5. Only after this readiness confirmation is photo/start/stop sent. A late `03`/`02` response cannot trigger a duplicate capture while the capture command is already pending.
-6. Status `3` (`Device busy`) immediately cancels the pending ACK timer, applies a short backoff, re-synchronizes with `02`, and permits at most one controlled retry. Status `8` likewise permits one controlled mode correction/retry.
-7. UI state changes only after the camera acknowledgement. Each capture stage remains bounded by a timeout.
+5. **Photo path:** if the cockpit photo button is pressed while the camera is not already in `PHOTO` mode, TAF now mirrors PotensicPro's two-step user flow: it switches to `PHOTO`, waits for readiness confirmation, and then stops. A second explicit user press is required before `01` (shutter) is sent.
+6. Only after this readiness confirmation is photo/start/stop sent. A late `03`/`02` response cannot trigger a duplicate capture while the capture command is already pending.
+7. **Photo completion:** a successful `01` acknowledgement no longer finishes the photo action immediately. TAF waits for asynchronous photo-end command `0x2A` for up to 10 seconds before declaring the photo complete.
+8. **Busy handling:** for photo command `01`, status `3` (`Device busy`) no longer triggers an automatic retry. TAF keeps waiting for `0x2A`, matching the original app's "busy but still taking photo" behavior. For recording commands, the previous single controlled retry after status resync remains unchanged. Status `8` still permits one controlled mode correction/retry where appropriate.
+9. TAF no longer auto-switches back to `VIDEO` after the photo path. UI state remains bounded by explicit stage timeouts.
 
-Asynchronous camera records on function `0x0020` are distinguished from ordinary command responses. `0x39` is CameraLogData and is decoded/logged without treating its first data byte as a command status. `0x3A` is the camera mode-switch notification and participates in the readiness state machine.
+Asynchronous camera records on function `0x0020` are distinguished from ordinary command responses. `0x39` is CameraLogData and is decoded/logged without treating its first data byte as a command status. `0x3A` is the camera mode-switch notification and participates in the readiness state machine. `0x2A` is treated as the photo-end/completion notification for the photo flow.
 
 Gallery metadata command `0x20` may arrive as fragmented JSON. TAF accumulates fragments and calls `JSON.parse()` only after a complete JSON object/array is assembled; the accumulator is discarded on completion, timeout, gallery close, or passthrough disconnect.
 
