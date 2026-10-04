@@ -1,6 +1,18 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+val releaseKeystorePropertiesFile = rootProject.file("keystore.properties")
+require(releaseKeystorePropertiesFile.isFile) {
+    "Missing fixed release signing configuration: ${releaseKeystorePropertiesFile.absolutePath}"
+}
+
+val releaseKeystoreProperties = Properties().apply {
+    FileInputStream(releaseKeystorePropertiesFile).use { load(it) }
 }
 
 android {
@@ -11,13 +23,28 @@ android {
         applicationId = "com.potensic.proxy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 38
-        versionName = "0.965"
+        versionCode = 40
+        versionName = "0.967"
+    }
+
+    signingConfigs {
+        create("release") {
+            val configuredStoreFile = releaseKeystoreProperties.getProperty("storeFile")
+                ?: error("storeFile missing in keystore.properties")
+            storeFile = rootProject.file(configuredStoreFile)
+            storePassword = System.getenv("TAF_RELEASE_STORE_PASSWORD")
+                ?: releaseKeystoreProperties.getProperty("storePassword")
+            keyAlias = System.getenv("TAF_RELEASE_KEY_ALIAS")
+                ?: releaseKeystoreProperties.getProperty("keyAlias")
+            keyPassword = System.getenv("TAF_RELEASE_KEY_PASSWORD")
+                ?: releaseKeystoreProperties.getProperty("keyPassword")
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
