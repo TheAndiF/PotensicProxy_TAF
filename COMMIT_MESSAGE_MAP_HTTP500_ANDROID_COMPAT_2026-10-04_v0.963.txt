@@ -1,0 +1,22 @@
+BL_Fix Android-compatible map provider reads and diagnostics v0.963
+
+Date: 2026-10-04
+
+Summary:
+- Replaced InputStream.readNBytes with a bounded minSdk-26-compatible stream reader in the map provider backend.
+- Added deterministic HttpURLConnection cleanup and token-safe provider error logging.
+- Added explicit map-test diagnostics for unexpected backend and Android linkage failures.
+- Bumped Android/WebUI version to 0.963 and Android versionCode to 36.
+- Kept Map API v2 and all USB/BX3/camera/telemetry/flight-control interfaces unchanged.
+
+Changed files:
+- MAP_INTEGRATION_NOTES.md
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-04_MAP_HTTP500_ANDROID_KOMPATIBILITAET_v0.963.md
+- PATCH_MAP_HTTP500_ANDROID_COMPAT_2026-10-04_v0.963.patch
+- VERSIONING.md
+- app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/MapBackend.kt
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- webui/package-lock.json
+- webui/package.json
+- COMMIT_MESSAGE_MAP_HTTP500_ANDROID_COMPAT_2026-10-04_v0.963.txt

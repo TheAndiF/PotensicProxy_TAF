@@ -91,8 +91,28 @@ class WebServer(
                         val input = JSONObject(call.receiveText())
                         val result = withContext(Dispatchers.IO) { mapBackend.testConnection(input) }
                         call.respondText(result.toString(), ContentType.Application.Json)
+                    } catch (e: org.json.JSONException) {
+                        call.respondText(JSONObject().put("error", e.message ?: "invalid map test request").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    } catch (e: IllegalArgumentException) {
+                        call.respondText(JSONObject().put("error", e.message ?: "invalid map configuration").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
                     } catch (e: Exception) {
-                        call.respondText(JSONObject().put("error", e.message ?: "map provider test failed").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                        Log.e("[WebServer] POST /api/map/test failed", e)
+                        call.respondText(
+                            JSONObject()
+                                .put("error", "Map backend test failed: ${e.javaClass.simpleName}: ${e.message ?: "unknown error"}")
+                                .toString(),
+                            ContentType.Application.Json,
+                            HttpStatusCode.InternalServerError
+                        )
+                    } catch (e: LinkageError) {
+                        Log.e("[WebServer] POST /api/map/test linkage failure", e)
+                        call.respondText(
+                            JSONObject()
+                                .put("error", "Map backend runtime compatibility error: ${e.javaClass.simpleName}: ${e.message ?: "unknown error"}")
+                                .toString(),
+                            ContentType.Application.Json,
+                            HttpStatusCode.InternalServerError
+                        )
                     }
                 }
                 get("/api/map/tiles/{z}/{x}/{y}") {

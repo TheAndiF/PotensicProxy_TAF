@@ -147,3 +147,23 @@ v0.962 separates these responsibilities:
 This change does not bypass Android/WLAN reachability requirements. If the complete URL `http://<android-ip>:9090/` is unreachable, the Android service must be running, the device IP must still be current and the network must allow client-to-client traffic before map-provider diagnostics can run.
 
 Map API remains v2. No USB/BX3, camera, telemetry or flight-control protocol was changed.
+
+## v0.963 - Android-compatible provider reads and map diagnostics
+
+After v0.962 restored WebUI-to-backend reachability, the map settings page no longer showed a browser/network transport error. The provider test reached the Android backend but the local endpoint returned HTTP 500. This separated the remaining failure from the same-origin/LAN problem fixed in v0.962.
+
+The provider HTTP path in `MapBackend` still used `InputStream.readNBytes(Int)`, while the Android application supports devices from `minSdk = 26`. That Java API is not available on every Android API level covered by the application and can therefore fail at runtime on affected devices before a Mapbox provider result is converted into the normal `MapConnectionTest` response.
+
+v0.963 changes the provider path as follows:
+
+- Replaces `InputStream.readNBytes(Int)` with a manual bounded stream reader based on `InputStream.read(byte[], offset, length)` and `ByteArrayOutputStream`, preserving the existing response-size limits without requiring the newer API.
+- Keeps an extra one-byte sentinel read so oversized provider responses are rejected immediately rather than buffered without a bound.
+- Closes every `HttpURLConnection` with `disconnect()` in `finally`.
+- Uses the runtime backend version in the provider `User-Agent` instead of the old hard-coded `0.5` value.
+- Logs provider HTTP failures and transport/runtime compatibility failures to the existing system log without intentionally exposing the configured access token.
+- Handles unexpected `Exception` and `LinkageError` failures around `POST /api/map/test` explicitly, so future backend failures produce a diagnostic JSON error and a system-log entry instead of an unexplained Ktor HTTP 500.
+- Keeps validation/configuration failures as HTTP 400 responses.
+
+The map provider contract is otherwise unchanged: successful or provider-level failed tests are returned by `MapBackend.testConnection()` as the existing `MapConnectionTest` structure with `ok`, `httpStatus`, `resource`, `tokenType`, `contentType` and `message` fields. Map API remains v2.
+
+No USB/BX3, camera, telemetry, live-view or flight-control protocol was changed.

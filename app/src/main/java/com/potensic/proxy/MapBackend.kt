@@ -6,7 +6,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -190,28 +192,80 @@ class MapBackend(private val rootDir: File) {
     }
 
     private fun requestTile(candidate: JSONObject, z: Int, x: Int, y: Int, maxBytes: Int): HttpResult {
-        val url = buildTileUrl(candidate, z, x, y)
+        val resource = resourceLabel(candidate)
+        var conn: HttpURLConnection? = null
         return try {
-            val conn = URL(url).openConnection() as HttpURLConnection
+            conn = URL(buildTileUrl(candidate, z, x, y)).openConnection() as HttpURLConnection
             conn.connectTimeout = 10000
             conn.readTimeout = 15000
-            conn.setRequestProperty("User-Agent", "PotensicProxy-TAF/0.5")
+            conn.setRequestProperty("User-Agent", "PotensicProxy-TAF/${VersionInfo.BACKEND_VERSION}")
             val status = conn.responseCode
             val contentType = conn.contentType
             if (status !in 200..299) {
                 val message = try {
-                    conn.errorStream?.bufferedReader()?.use { it.readText().take(1024) }
+                    conn.errorStream?.use { readLimitedText(it, 4096) }
                 } catch (_: Exception) { null }
-                return HttpResult(status, contentType, null, message)
+                val safeMessage = sanitizeProviderMessage(message, candidate)
+                Log.w("[Map] provider test/download returned HTTP $status for $resource${safeMessage?.let { ": ${it.take(256)}" } ?: ""}")
+                HttpResult(status, contentType, null, safeMessage)
+            } else {
+                val declaredSize = conn.contentLengthLong
+                if (declaredSize > maxBytes) {
+                    HttpResult(status, contentType, null, "Provider response is larger than the configured limit")
+                } else {
+                    val bytes = conn.inputStream.use { readLimitedBytes(it, maxBytes) }
+                    if (bytes == null) HttpResult(status, contentType, null, "Provider response is larger than the configured limit")
+                    else HttpResult(status, contentType, bytes, null)
+                }
             }
-            val declaredSize = conn.contentLengthLong
-            if (declaredSize > maxBytes) return HttpResult(status, contentType, null, "Provider response is larger than the configured limit")
-            val bytes = conn.inputStream.use { it.readNBytes(maxBytes + 1) }
-            if (bytes.size > maxBytes) HttpResult(status, contentType, null, "Provider response is larger than the configured limit")
-            else HttpResult(status, contentType, bytes, null)
         } catch (e: Exception) {
-            HttpResult(0, null, null, e.message ?: "Provider connection failed")
+            val safeMessage = sanitizeProviderMessage(e.message, candidate) ?: "Provider connection failed"
+            // Do not attach the Throwable here: some URL/HTTP exception messages may contain
+            // the access_token query parameter. Keep the Live System Log token-free.
+            Log.e("[Map] provider request failed for $resource (${e.javaClass.simpleName}): $safeMessage")
+            HttpResult(0, null, null, "${e.javaClass.simpleName}: $safeMessage")
+        } catch (e: LinkageError) {
+            // Keep unexpected Android/API linkage problems visible in the Live System Log
+            // instead of letting Ktor collapse them into an opaque HTTP 500 response.
+            Log.e("[Map] provider request linkage failure for $resource (${e.javaClass.simpleName}): ${e.message}", e)
+            HttpResult(0, null, null, "${e.javaClass.simpleName}: ${e.message ?: "Provider runtime compatibility error"}")
+        } finally {
+            conn?.disconnect()
         }
+    }
+
+    /**
+     * Bounded stream reader compatible with the app's minSdk 26.
+     *
+     * java.io.InputStream.readNBytes(Int) is not available on all Android API levels
+     * supported by this app. Read manually and stop immediately after maxBytes + 1
+     * so oversized provider responses cannot grow memory usage without a bound.
+     */
+    private fun readLimitedBytes(input: InputStream, maxBytes: Int): ByteArray? {
+        require(maxBytes >= 0) { "maxBytes must not be negative" }
+        val output = ByteArrayOutputStream(minOf(maxBytes, 8192))
+        val buffer = ByteArray(8192)
+        var total = 0
+        while (true) {
+            val remainingWithSentinel = maxBytes - total + 1
+            val count = input.read(buffer, 0, minOf(buffer.size, remainingWithSentinel))
+            if (count < 0) break
+            total += count
+            if (total > maxBytes) return null
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
+
+    private fun readLimitedText(input: InputStream, maxBytes: Int): String? =
+        readLimitedBytes(input, maxBytes)?.toString(Charsets.UTF_8)
+
+    private fun sanitizeProviderMessage(message: String?, candidate: JSONObject): String? {
+        if (message.isNullOrBlank()) return message
+        val token = candidate.optString("accessToken")
+        if (token.isBlank()) return message
+        val encodedToken = URLEncoder.encode(token, "UTF-8")
+        return message.replace(token, "[redacted]").replace(encodedToken, "[redacted]")
     }
 
     private fun buildTileUrl(candidate: JSONObject, z: Int, x: Int, y: Int): String {

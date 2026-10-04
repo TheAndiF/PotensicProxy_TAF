@@ -23,8 +23,8 @@ also be incremented for Android package upgrades.
 
 ## Current development release
 
-- Software version: `0.962` (pre-1.0 development)
-- Android `versionCode`: `35`
+- Software version: `0.963` (pre-1.0 development)
+- Android `versionCode`: `36`
 - Frontend source: `webui/package.json`
 - Backend/Android source: `app/build.gradle.kts`
 
