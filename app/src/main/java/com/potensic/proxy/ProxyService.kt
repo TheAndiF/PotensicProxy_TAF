@@ -48,6 +48,7 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     val videoDecoder = VideoDecoder()
     lateinit var transportCapture: TransportCaptureManager; private set
     lateinit var droneProfileManager: DroneProfileManager; private set
+    private val pairingMonitor = PairingMonitor()
 
     // WiFi Direct transport
     var wifiTransport: WifiTransport? = null; private set
@@ -412,10 +413,29 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         }
     }
 
+    /** Start the PotensicPro-compatible ATOM MiniPair session and track it in the backend. */
+    fun startMiniPairing(): ByteArray {
+        val packet = PotensicProtocol.buildFpvMiniPair()
+        pairingMonitor.begin()
+        Log.i("[Pairing] Start requested: FE=0x16 function=0x0018 payloadLen=0 frame=${PotensicProtocol.bytesToHex(packet)}")
+        if (!isAnyConnected) {
+            Log.w("[Pairing] No active USB/WiFi transport; command cannot reach the controller until transport is connected")
+        }
+        sendDirectAny(packet)
+        return packet
+    }
+
+    fun pairingStatus(): PairingMonitor.Snapshot = pairingMonitor.snapshot()
+
+    fun resetPairingStatus() {
+        pairingMonitor.reset()
+    }
+
     override fun onDataReceived(data: ByteArray, length: Int) {
         // Never drop USB data ÔÇö dropping causes corrupted frames
         val copy = data.copyOf(length)
         transportCapture.recordUsbRx(copy)
+        pairingMonitor.feed(copy)
         rawDataQueue.offer(copy)
         scope.launch {
             webServer.broadcastUsbData(copy)

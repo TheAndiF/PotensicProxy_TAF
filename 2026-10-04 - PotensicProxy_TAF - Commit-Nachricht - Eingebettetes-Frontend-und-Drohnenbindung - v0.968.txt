@@ -1,0 +1,37 @@
+BL_Embed pairing UI and backend pairing monitor
+Date: 2026-10-04
+
+Summary:
+- Synchronized frontend and Android release version to 0.968 / versionCode 41.
+- Embedded a versioned pairing runtime bridge so the ATOM re-pair control is visible even with the previously bundled v0.965 core assets.
+- Added backend MiniPair state monitoring for 0x1715 bit 6, 0x1718 result handling, timeout reporting, and Live Log messages.
+- Added pairing status/reset API support and no-cache headers for WebUI entry documents.
+- Fixed the missing buildFpvMiniPair protocol facade method.
+- Kept applicationId and the fixed release signing identity unchanged for update compatibility.
+
+Changed files:
+- VERSIONING.md
+- app/build.gradle.kts
+- app/src/main/assets/web/index.html
+- app/src/main/assets/web/assets/taf-pairing-runtime-v0.968.js
+- app/src/main/java/com/potensic/proxy/PairingMonitor.kt
+- app/src/main/java/com/potensic/proxy/ProxyService.kt
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- app/src/main/java/com/potensic/proxy/api/WebUiRoutes.kt
+- app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt
+- webui/index.html
+- webui/package.json
+- webui/package-lock.json
+- webui/public/assets/taf-pairing-runtime-v0.968.js
+- DOCUMENTATION/2026-10-04 - PotensicProxy_TAF - Projektdokumentation - Eingebettetes-Frontend-und-Drohnenbindung - v0.968.docx
+- DOCUMENTATION/2026-10-04 - PotensicProxy_TAF - Projektdokumentation - Eingebettetes-Frontend-und-Drohnenbindung - v0.968.pdf
+- 2026-10-04 - PotensicProxy_TAF - Commit-Nachricht - Eingebettetes-Frontend-und-Drohnenbindung - v0.968.txt
+- 2026-10-04 - PotensicProxy_TAF - Patch - Eingebettetes-Frontend-und-Drohnenbindung - v0.968.patch
+
+Validation:
+- vue-tsc --noEmit passed.
+- node --check passed for both runtime bridge copies.
+- PairingMonitor synthetic fragmented-frame test passed for 0x1715 -> PAIRING and 0x1718 -> SUCCESS.
+- Version and embedded asset references were checked statically.
+- Full Vite build was not run in this Linux environment because the archived node_modules contains Windows-native Rollup/esbuild packages.
+- Full Android APK build was not run because Gradle 8.11.1 is not cached and this environment has no external network access.

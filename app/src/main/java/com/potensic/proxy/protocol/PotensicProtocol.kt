@@ -30,6 +30,7 @@ object PotensicProtocol {
         DroneProtocol.buildCombinedControl(throttle, yaw, pitch, roll, gimbalTilt)
     fun buildWifiDirectSwitch(enter: Boolean) = DroneProtocol.buildWifiDirectSwitch(enter)
     fun buildFpvSyncVersion() = DroneProtocol.buildFpvSyncVersion()
+    fun buildFpvMiniPair() = DroneProtocol.buildFpvMiniPair()
     fun buildCameraFunction(enablePreview: Boolean = true, enableH265: Boolean = true) =
         DroneProtocol.buildCameraFunction(enablePreview, enableH265)
     fun buildLiveViewStart() = DroneProtocol.buildLiveViewStart()

@@ -9,6 +9,7 @@ import com.potensic.proxy.Log
 fun Route.installWebUiRoutes(assetLoader: (String) -> ByteArray?) {
     // Web UI
     get("/") {
+        call.response.headers.append(HttpHeaders.CacheControl, "no-store, max-age=0")
         val html = assetLoader("web/index.html")
         if (html != null) {
             call.respondBytes(html, ContentType.Text.Html)
@@ -19,6 +20,7 @@ fun Route.installWebUiRoutes(assetLoader: (String) -> ByteArray?) {
     }
 
     get("/index.html") {
+        call.response.headers.append(HttpHeaders.CacheControl, "no-store, max-age=0")
         val html = assetLoader("web/index.html")
         if (html != null) {
             call.respondBytes(html, ContentType.Text.Html)

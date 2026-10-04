@@ -605,6 +605,32 @@ class WebServer(
                     ProxyService.instance?.sendAny(packet)
                     call.respondText(JSONObject().apply { put("cmd", "record"); put("action", if (stop) "stop" else "start") }.toString(), ContentType.Application.Json)
                 }
+                // ATOM / ATOM 2 controller-aircraft re-pairing (PotensicPro SendMiniPairData / function 0x18).
+                post("/api/cmd/pair") {
+                    val service = ProxyService.instance
+                    if (service == null) {
+                        call.respondText(
+                            JSONObject().put("error", "service not running").toString(),
+                            ContentType.Application.Json,
+                            HttpStatusCode.ServiceUnavailable
+                        )
+                    } else {
+                        val packet = service.startMiniPairing()
+                        call.respondText(
+                            JSONObject().apply {
+                                put("cmd", "pair")
+                                put("sent", true)
+                                put("size", packet.size)
+                            }.toString(),
+                            ContentType.Application.Json
+                        )
+                    }
+                }
+                post("/api/cmd/pair/reset") {
+                    ProxyService.instance?.resetPairingStatus()
+                    call.respondText("{\"cmd\":\"pair_reset\",\"ok\":true}", ContentType.Application.Json)
+                }
+
                 // RF probe control (CMD 5656 / 0x1618 FpvReqFreqParams)
                 post("/api/cmd/rf_probe") {
                     val enable = call.request.queryParameters["enable"]?.toBooleanStrictOrNull() ?: true
@@ -850,6 +876,15 @@ class WebServer(
                         put("usbWsClients", usbWsClients.size)
                         put("joystick", controlCoordinator.current().toJson())
                         put("state", droneState.toJson())
+                        ProxyService.instance?.pairingStatus()?.let { pairing ->
+                            put("pairing", JSONObject().apply {
+                                put("state", pairing.state.wireName)
+                                put("startedAtMs", pairing.startedAtMs ?: JSONObject.NULL)
+                                put("lastUpdatedMs", pairing.lastUpdatedMs)
+                                put("lastMessage", pairing.lastMessage)
+                                put("resultRawHex", pairing.resultRawHex ?: JSONObject.NULL)
+                            })
+                        }
                     }
                     call.respondText(json.toString(), ContentType.Application.Json)
                     Log.d("[WebServer] GET /api/status -> open=${usbManager.isConnected} linkReady=${usbManager.isLinkReady}")

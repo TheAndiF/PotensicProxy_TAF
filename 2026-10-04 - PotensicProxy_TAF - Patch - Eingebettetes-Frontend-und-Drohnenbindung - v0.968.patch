@@ -1,0 +1,724 @@
+--- a/VERSIONING.md
++++ b/VERSIONING.md
+@@ -23,8 +23,8 @@
+ 
+ ## Current development release
+ 
+-- Software version: `0.967` (pre-1.0 development)
+-- Android `versionCode`: `40`
++- Software version: `0.968` (pre-1.0 development)
++- Android `versionCode`: `41`
+ - Frontend source: `webui/package.json`
+ - Backend/Android source: `app/build.gradle.kts`
+ 
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 40
+-        versionName = "0.967"
++        versionCode = 41
++        versionName = "0.968"
+     }
+ 
+     signingConfigs {
+--- a/app/src/main/assets/web/index.html
++++ b/app/src/main/assets/web/index.html
+@@ -7,6 +7,7 @@
+     <title>Potensic Proxy - TAF</title>
+     <script type="module" crossorigin src="/assets/index-CbiV8CkK.js"></script>
+     <link rel="stylesheet" crossorigin href="/assets/index-C6xULv8J.css">
++    <script defer src="/assets/taf-pairing-runtime-v0.968.js"></script>
+   </head>
+   <body>
+     <div id="app"></div>
+--- a/app/src/main/assets/web/assets/taf-pairing-runtime-v0.968.js
++++ b/app/src/main/assets/web/assets/taf-pairing-runtime-v0.968.js
+@@ -0,0 +1,157 @@
++(() => {
++  'use strict'
++
++  const VERSION = '0.968'
++  const CARD_SELECTOR = '[data-taf-pairing-runtime="0.968"]'
++  const NATIVE_PAIRING_SELECTOR = '.pairing-card:not(.taf-runtime-pairing-card)'
++  let pollTimer = null
++
++  function patchFrontendVersionBadge() {
++    const candidates = document.querySelectorAll('.version-badge, .el-tag')
++    for (const el of candidates) {
++      const text = (el.textContent || '').trim()
++      if (!/frontend/i.test(text)) continue
++      const replaced = text.replace(/v\d+\.\d+(?:\.\d+)?/i, `v${VERSION}`)
++      if (replaced !== text) el.textContent = replaced
++    }
++    document.documentElement.dataset.tafEmbeddedFrontend = VERSION
++  }
++
++  function ensureStyles() {
++    if (document.getElementById('taf-pairing-runtime-style')) return
++    const style = document.createElement('style')
++    style.id = 'taf-pairing-runtime-style'
++    style.textContent = `
++      .taf-runtime-pairing-card { border-color: rgba(64, 158, 255, .65) !important; }
++      .taf-pairing-runtime-badge { display:inline-flex; align-items:center; min-height:22px; padding:0 9px; border-radius:4px; font-size:12px; font-weight:700; color:#fff; background:#909399; }
++      .taf-pairing-runtime-badge[data-state="waiting"], .taf-pairing-runtime-badge[data-state="pairing"] { background:#e6a23c; }
++      .taf-pairing-runtime-badge[data-state="success"] { background:#67c23a; }
++      .taf-pairing-runtime-badge[data-state="failed"], .taf-pairing-runtime-badge[data-state="timeout"] { background:#f56c6c; }
++      .taf-pairing-runtime-message { margin:8px 0 10px; padding:8px 10px; border:1px solid rgba(144,147,153,.3); border-radius:4px; font-size:12px; line-height:1.45; word-break:break-word; }
++      .taf-pairing-runtime-actions { display:flex; gap:8px; flex-wrap:wrap; }
++      .taf-pairing-runtime-note { margin-top:7px; opacity:.72; font-size:11px; line-height:1.4; }
++    `
++    document.head.appendChild(style)
++  }
++
++  function stateLabel(state) {
++    return String(state || 'idle').toUpperCase()
++  }
++
++  function getRuntimeCard() {
++    return document.querySelector(CARD_SELECTOR)
++  }
++
++  function renderPairing(state, message, rawHex) {
++    const card = getRuntimeCard()
++    if (!card) return
++    const normalized = String(state || 'idle').toLowerCase()
++    const badge = card.querySelector('[data-taf-pairing-badge]')
++    const msg = card.querySelector('[data-taf-pairing-message]')
++    const start = card.querySelector('[data-taf-pairing-start]')
++    if (badge) {
++      badge.dataset.state = normalized
++      badge.textContent = stateLabel(normalized)
++    }
++    if (msg) {
++      msg.textContent = message || 'No pairing session started'
++      msg.title = rawHex || ''
++    }
++    if (start) {
++      const busy = normalized === 'waiting' || normalized === 'pairing'
++      start.disabled = busy
++      start.textContent = busy ? 'Pairing in progress…' : '🔗 Re-pair Controller / Aircraft'
++    }
++  }
++
++  async function pollStatus() {
++    if (!getRuntimeCard()) return
++    try {
++      const response = await fetch(`/api/status?_tafPairing=${Date.now()}`, { cache: 'no-store' })
++      if (!response.ok) throw new Error(`HTTP ${response.status}`)
++      const data = await response.json()
++      if (data && data.pairing) {
++        renderPairing(data.pairing.state, data.pairing.lastMessage, data.pairing.resultRawHex)
++      }
++    } catch (_) {
++      // Keep the last known status. The normal application connection indicator already exposes backend outages.
++    }
++  }
++
++  async function startPairing() {
++    const ok = window.confirm(
++      'Start ATOM controller / aircraft pairing?\n\n' +
++      'The controller will enter MiniPair mode. Afterwards put the aircraft into frequency-pairing mode using its power button.'
++    )
++    if (!ok) return
++
++    renderPairing('waiting', 'Sending pairing command to the controller…')
++    try {
++      const response = await fetch('/api/cmd/pair', { method: 'POST', cache: 'no-store' })
++      const text = await response.text()
++      if (!response.ok) throw new Error(text || `HTTP ${response.status}`)
++      renderPairing('waiting', 'Pairing command sent; waiting for controller pairing mode')
++      await pollStatus()
++    } catch (error) {
++      renderPairing('failed', `Could not start pairing: ${error instanceof Error ? error.message : String(error)}`)
++    }
++  }
++
++  async function resetPairing() {
++    try {
++      await fetch('/api/cmd/pair/reset', { method: 'POST', cache: 'no-store' })
++    } catch (_) {}
++    renderPairing('idle', 'No pairing session started')
++  }
++
++  function ensurePairingCard() {
++    patchFrontendVersionBadge()
++
++    // A freshly rebuilt Vue bundle already contains the native v0.968 pairing panel.
++    // In that case this compatibility bridge deliberately stays out of the UI.
++    if (document.querySelector(NATIVE_PAIRING_SELECTOR)) {
++      const runtime = getRuntimeCard()
++      if (runtime) runtime.remove()
++      return
++    }
++
++    if (getRuntimeCard()) return
++    const panel = document.querySelector('.fpv-pane .fpv-controls-col .panel-box')
++    if (!panel) return
++
++    ensureStyles()
++    const card = document.createElement('div')
++    card.className = 'action-card highlight-card pairing-card taf-runtime-pairing-card'
++    card.dataset.tafPairingRuntime = VERSION
++    card.innerHTML = `
++      <div class="act-header">
++        <span class="act-name">ATOM Controller / Aircraft Pairing</span>
++        <span class="taf-pairing-runtime-badge" data-taf-pairing-badge data-state="idle">IDLE</span>
++      </div>
++      <p class="act-desc">
++        Starts the PotensicPro MiniPair sequence (FE 0x16 / function 0x18). After starting, put the aircraft into frequency-pairing mode using its power button.
++      </p>
++      <div class="taf-pairing-runtime-message" data-taf-pairing-message>No pairing session started</div>
++      <div class="taf-pairing-runtime-actions">
++        <button type="button" class="el-button el-button--primary el-button--small" data-taf-pairing-start>🔗 Re-pair Controller / Aircraft</button>
++        <button type="button" class="el-button el-button--small is-plain" data-taf-pairing-reset>Reset Status</button>
++      </div>
++      <div class="taf-pairing-runtime-note">Status and result are monitored by the Android backend from 0x1715 / 0x1718 and are written to the Live Log.</div>
++    `
++
++    const title = panel.querySelector('.box-title')
++    if (title && title.parentElement === panel) title.insertAdjacentElement('afterend', card)
++    else panel.prepend(card)
++
++    card.querySelector('[data-taf-pairing-start]')?.addEventListener('click', startPairing)
++    card.querySelector('[data-taf-pairing-reset]')?.addEventListener('click', resetPairing)
++
++    if (!pollTimer) pollTimer = window.setInterval(pollStatus, 1000)
++    pollStatus()
++  }
++
++  const observer = new MutationObserver(() => ensurePairingCard())
++  observer.observe(document.documentElement, { childList: true, subtree: true })
++  window.addEventListener('load', ensurePairingCard, { once: true })
++  ensurePairingCard()
++})()
+--- a/app/src/main/java/com/potensic/proxy/PairingMonitor.kt
++++ b/app/src/main/java/com/potensic/proxy/PairingMonitor.kt
+@@ -0,0 +1,202 @@
++package com.potensic.proxy
++
++import com.potensic.proxy.protocol.PotensicProtocol
++
++/**
++ * Backend-owned monitor for ATOM / ATOM 2 controller-aircraft MiniPair sessions.
++ *
++ * The Android service receives the USB transport as arbitrary byte chunks. This
++ * monitor performs only the minimal FE stream framing needed for pairing:
++ *  - 0x1715 / 5909: FpvRevConnectState, bit 6 (0x40) = MiniPair active
++ *  - 0x1718 / 5912: MiniPair result, payload bit 0 (0=success, 1=failure)
++ *
++ * Keeping this state in the backend makes pairing status and logging independent
++ * of whichever WebUI bundle happens to be cached by the browser/WebView.
++ */
++class PairingMonitor {
++    enum class State(val wireName: String) {
++        IDLE("idle"),
++        WAITING("waiting"),
++        PAIRING("pairing"),
++        SUCCESS("success"),
++        FAILED("failed"),
++        TIMEOUT("timeout")
++    }
++
++    data class Snapshot(
++        val state: State,
++        val startedAtMs: Long?,
++        val lastUpdatedMs: Long,
++        val lastMessage: String,
++        val resultRawHex: String?
++    )
++
++    private val lock = Any()
++    private var streamBuffer = ByteArray(0)
++    private var state = State.IDLE
++    private var startedAtMs: Long? = null
++    private var lastUpdatedMs: Long = System.currentTimeMillis()
++    private var lastMessage = "No pairing session started"
++    private var resultRawHex: String? = null
++    private var lastObservedPairing: Boolean? = null
++
++    fun begin() = synchronized(lock) {
++        streamBuffer = ByteArray(0)
++        state = State.WAITING
++        startedAtMs = System.currentTimeMillis()
++        lastUpdatedMs = startedAtMs!!
++        lastMessage = "Pairing command sent; waiting for controller pairing mode"
++        resultRawHex = null
++        lastObservedPairing = null
++        Log.i("[Pairing] Session state=WAITING; waiting for 0x1715 bit 6 and 0x1718 result")
++    }
++
++    fun reset() = synchronized(lock) {
++        state = State.IDLE
++        startedAtMs = null
++        lastUpdatedMs = System.currentTimeMillis()
++        lastMessage = "No pairing session started"
++        resultRawHex = null
++        lastObservedPairing = null
++        streamBuffer = ByteArray(0)
++        Log.i("[Pairing] Session state reset to IDLE")
++    }
++
++    fun snapshot(): Snapshot = synchronized(lock) {
++        checkTimeoutLocked()
++        Snapshot(state, startedAtMs, lastUpdatedMs, lastMessage, resultRawHex)
++    }
++
++    fun feed(chunk: ByteArray) = synchronized(lock) {
++        checkTimeoutLocked()
++        if (chunk.isEmpty()) return@synchronized
++
++        streamBuffer = if (streamBuffer.isEmpty()) {
++            chunk.copyOf()
++        } else {
++            ByteArray(streamBuffer.size + chunk.size).also {
++                System.arraycopy(streamBuffer, 0, it, 0, streamBuffer.size)
++                System.arraycopy(chunk, 0, it, streamBuffer.size, chunk.size)
++            }
++        }
++
++        var i = 0
++        var lastConsumed = 0
++        while (i + 16 <= streamBuffer.size) {
++            if (!hasFeHeaderAt(streamBuffer, i)) {
++                i++
++                continue
++            }
++
++            val payloadLen = readBeInt(streamBuffer, i + 12)
++            if (payloadLen < 0 || payloadLen > MAX_FE_PAYLOAD) {
++                i++
++                continue
++            }
++
++            val totalLen = 16 + payloadLen
++            if (i + totalLen > streamBuffer.size) {
++                // Keep the incomplete valid frame for the next USB read.
++                lastConsumed = i
++                break
++            }
++
++            val fullPacket = streamBuffer.copyOfRange(i, i + totalLen)
++            handleFePacketLocked(fullPacket)
++            i += totalLen
++            lastConsumed = i
++        }
++
++        streamBuffer = when {
++            lastConsumed > 0 -> streamBuffer.copyOfRange(lastConsumed, streamBuffer.size)
++            streamBuffer.size > MAX_STREAM_BUFFER -> streamBuffer.copyOfRange(streamBuffer.size - 16, streamBuffer.size)
++            else -> streamBuffer
++        }
++    }
++
++    private fun handleFePacketLocked(bytes: ByteArray) {
++        if (bytes.size < 22) return
++        if ((bytes[16].toInt() and 0xff) != 0xff) return
++        val marker = bytes[17].toInt() and 0xff
++        if (marker != 0xfd && marker != 0xfe) return
++
++        val cmdShort = (bytes[20].toInt() and 0xff) or ((bytes[21].toInt() and 0xff) shl 8)
++        when (cmdShort) {
++            FPV_CONNECT_STATE -> handleConnectStateLocked(bytes)
++            FPV_PAIR_RESULT, FPV_MINI_PAIR -> handlePairResultLocked(bytes, cmdShort)
++        }
++    }
++
++    private fun handleConnectStateLocked(bytes: ByteArray) {
++        if (bytes.size < 25) return
++        val flags = bytes[24].toInt() and 0xff
++        val isPairing = (flags and 0x40) != 0
++        val previous = lastObservedPairing
++        lastObservedPairing = isPairing
++
++        if (isPairing && state == State.WAITING) {
++            state = State.PAIRING
++            lastUpdatedMs = System.currentTimeMillis()
++            lastMessage = "Controller is in pairing mode; put the aircraft into frequency-pairing mode"
++            resultRawHex = PotensicProtocol.bytesToHex(bytes)
++            Log.i("[Pairing] Controller confirmed pairing mode via 0x1715 bit 6 (0x40); frame=$resultRawHex")
++        } else if (!isPairing && state == State.PAIRING && previous == true) {
++            lastUpdatedMs = System.currentTimeMillis()
++            lastMessage = "Controller left pairing mode; waiting for final pairing result"
++            resultRawHex = PotensicProtocol.bytesToHex(bytes)
++            Log.i("[Pairing] Controller left pairing mode; waiting for 0x1718 result")
++        }
++    }
++
++    private fun handlePairResultLocked(bytes: ByteArray, cmdShort: Int) {
++        if (bytes.size < 23) return
++        val resultByte = bytes[22].toInt() and 0xff
++        val success = (resultByte and 0x01) == 0
++        state = if (success) State.SUCCESS else State.FAILED
++        lastUpdatedMs = System.currentTimeMillis()
++        lastMessage = if (success) "Pairing successful" else "Pairing failed"
++        resultRawHex = PotensicProtocol.bytesToHex(bytes)
++        val cmdName = if (cmdShort == FPV_PAIR_RESULT) "0x1718" else "0x0018"
++        if (success) {
++            Log.i("[Pairing] SUCCESS via $cmdName; resultByte=0x${resultByte.toString(16).padStart(2, '0')}; frame=$resultRawHex")
++        } else {
++            Log.e("[Pairing] FAILED via $cmdName; resultByte=0x${resultByte.toString(16).padStart(2, '0')}; frame=$resultRawHex")
++        }
++    }
++
++    private fun checkTimeoutLocked() {
++        val started = startedAtMs ?: return
++        if ((state == State.WAITING || state == State.PAIRING) && System.currentTimeMillis() - started >= PAIRING_TIMEOUT_MS) {
++            state = State.TIMEOUT
++            lastUpdatedMs = System.currentTimeMillis()
++            lastMessage = "Pairing timeout: no successful result received within 60 seconds"
++            Log.e("[Pairing] TIMEOUT after 60 s; no successful 0x1718 result received")
++        }
++    }
++
++    private fun hasFeHeaderAt(bytes: ByteArray, offset: Int): Boolean {
++        if (offset + 6 > bytes.size) return false
++        return (bytes[offset].toInt() and 0xff) == 0xfe &&
++            bytes[offset + 1].toInt() == 0 &&
++            bytes[offset + 2].toInt() == 0 &&
++            bytes[offset + 3].toInt() == 0 &&
++            bytes[offset + 4].toInt() == 0 &&
++            bytes[offset + 5].toInt() == 0
++    }
++
++    private fun readBeInt(bytes: ByteArray, offset: Int): Int {
++        return ((bytes[offset].toInt() and 0xff) shl 24) or
++            ((bytes[offset + 1].toInt() and 0xff) shl 16) or
++            ((bytes[offset + 2].toInt() and 0xff) shl 8) or
++            (bytes[offset + 3].toInt() and 0xff)
++    }
++
++    companion object {
++        private const val FPV_CONNECT_STATE = 0x1715
++        private const val FPV_PAIR_RESULT = 0x1718
++        private const val FPV_MINI_PAIR = 0x0018
++        private const val PAIRING_TIMEOUT_MS = 60_000L
++        private const val MAX_FE_PAYLOAD = 1_000_000
++        private const val MAX_STREAM_BUFFER = 500_000
++    }
++}
+--- a/app/src/main/java/com/potensic/proxy/ProxyService.kt
++++ b/app/src/main/java/com/potensic/proxy/ProxyService.kt
+@@ -48,6 +48,7 @@
+     val videoDecoder = VideoDecoder()
+     lateinit var transportCapture: TransportCaptureManager; private set
+     lateinit var droneProfileManager: DroneProfileManager; private set
++    private val pairingMonitor = PairingMonitor()
+ 
+     // WiFi Direct transport
+     var wifiTransport: WifiTransport? = null; private set
+@@ -412,10 +413,29 @@
+         }
+     }
+ 
++    /** Start the PotensicPro-compatible ATOM MiniPair session and track it in the backend. */
++    fun startMiniPairing(): ByteArray {
++        val packet = PotensicProtocol.buildFpvMiniPair()
++        pairingMonitor.begin()
++        Log.i("[Pairing] Start requested: FE=0x16 function=0x0018 payloadLen=0 frame=${PotensicProtocol.bytesToHex(packet)}")
++        if (!isAnyConnected) {
++            Log.w("[Pairing] No active USB/WiFi transport; command cannot reach the controller until transport is connected")
++        }
++        sendDirectAny(packet)
++        return packet
++    }
++
++    fun pairingStatus(): PairingMonitor.Snapshot = pairingMonitor.snapshot()
++
++    fun resetPairingStatus() {
++        pairingMonitor.reset()
++    }
++
+     override fun onDataReceived(data: ByteArray, length: Int) {
+         // Never drop USB data ÔÇö dropping causes corrupted frames
+         val copy = data.copyOf(length)
+         transportCapture.recordUsbRx(copy)
++        pairingMonitor.feed(copy)
+         rawDataQueue.offer(copy)
+         scope.launch {
+             webServer.broadcastUsbData(copy)
+--- a/app/src/main/java/com/potensic/proxy/WebServer.kt
++++ b/app/src/main/java/com/potensic/proxy/WebServer.kt
+@@ -607,17 +607,28 @@
+                 }
+                 // ATOM / ATOM 2 controller-aircraft re-pairing (PotensicPro SendMiniPairData / function 0x18).
+                 post("/api/cmd/pair") {
+-                    val packet = PotensicProtocol.buildFpvMiniPair()
+-                    Log.i("[Pairing] Start requested: FE=0x16 function=0x0018 payloadLen=0 frame=${PotensicProtocol.bytesToHex(packet)}")
+-                    ProxyService.instance?.sendDirectAny(packet)
+-                    call.respondText(
+-                        JSONObject().apply {
+-                            put("cmd", "pair")
+-                            put("sent", true)
+-                            put("size", packet.size)
+-                        }.toString(),
+-                        ContentType.Application.Json
+-                    )
++                    val service = ProxyService.instance
++                    if (service == null) {
++                        call.respondText(
++                            JSONObject().put("error", "service not running").toString(),
++                            ContentType.Application.Json,
++                            HttpStatusCode.ServiceUnavailable
++                        )
++                    } else {
++                        val packet = service.startMiniPairing()
++                        call.respondText(
++                            JSONObject().apply {
++                                put("cmd", "pair")
++                                put("sent", true)
++                                put("size", packet.size)
++                            }.toString(),
++                            ContentType.Application.Json
++                        )
++                    }
++                }
++                post("/api/cmd/pair/reset") {
++                    ProxyService.instance?.resetPairingStatus()
++                    call.respondText("{\"cmd\":\"pair_reset\",\"ok\":true}", ContentType.Application.Json)
+                 }
+ 
+                 // RF probe control (CMD 5656 / 0x1618 FpvReqFreqParams)
+@@ -865,6 +876,15 @@
+                         put("usbWsClients", usbWsClients.size)
+                         put("joystick", controlCoordinator.current().toJson())
+                         put("state", droneState.toJson())
++                        ProxyService.instance?.pairingStatus()?.let { pairing ->
++                            put("pairing", JSONObject().apply {
++                                put("state", pairing.state.wireName)
++                                put("startedAtMs", pairing.startedAtMs ?: JSONObject.NULL)
++                                put("lastUpdatedMs", pairing.lastUpdatedMs)
++                                put("lastMessage", pairing.lastMessage)
++                                put("resultRawHex", pairing.resultRawHex ?: JSONObject.NULL)
++                            })
++                        }
+                     }
+                     call.respondText(json.toString(), ContentType.Application.Json)
+                     Log.d("[WebServer] GET /api/status -> open=${usbManager.isConnected} linkReady=${usbManager.isLinkReady}")
+--- a/app/src/main/java/com/potensic/proxy/api/WebUiRoutes.kt
++++ b/app/src/main/java/com/potensic/proxy/api/WebUiRoutes.kt
+@@ -9,6 +9,7 @@
+ fun Route.installWebUiRoutes(assetLoader: (String) -> ByteArray?) {
+     // Web UI
+     get("/") {
++        call.response.headers.append(HttpHeaders.CacheControl, "no-store, max-age=0")
+         val html = assetLoader("web/index.html")
+         if (html != null) {
+             call.respondBytes(html, ContentType.Text.Html)
+@@ -19,6 +20,7 @@
+     }
+ 
+     get("/index.html") {
++        call.response.headers.append(HttpHeaders.CacheControl, "no-store, max-age=0")
+         val html = assetLoader("web/index.html")
+         if (html != null) {
+             call.respondBytes(html, ContentType.Text.Html)
+--- a/app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt
++++ b/app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt
+@@ -30,6 +30,7 @@
+         DroneProtocol.buildCombinedControl(throttle, yaw, pitch, roll, gimbalTilt)
+     fun buildWifiDirectSwitch(enter: Boolean) = DroneProtocol.buildWifiDirectSwitch(enter)
+     fun buildFpvSyncVersion() = DroneProtocol.buildFpvSyncVersion()
++    fun buildFpvMiniPair() = DroneProtocol.buildFpvMiniPair()
+     fun buildCameraFunction(enablePreview: Boolean = true, enableH265: Boolean = true) =
+         DroneProtocol.buildCameraFunction(enablePreview, enableH265)
+     fun buildLiveViewStart() = DroneProtocol.buildLiveViewStart()
+--- a/webui/index.html
++++ b/webui/index.html
+@@ -5,6 +5,7 @@
+     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚁</text></svg>">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+     <title>Potensic Proxy - TAF</title>
++    <script defer src="/assets/taf-pairing-runtime-v0.968.js"></script>
+   </head>
+   <body>
+     <div id="app"></div>
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.966",
++  "version": "0.968",
+   "private": true,
+   "type": "module",
+   "scripts": {
+--- a/webui/package-lock.json
++++ b/webui/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.965",
++  "version": "0.968",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.965",
++      "version": "0.968",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",
+--- a/webui/public/assets/taf-pairing-runtime-v0.968.js
++++ b/webui/public/assets/taf-pairing-runtime-v0.968.js
+@@ -0,0 +1,157 @@
++(() => {
++  'use strict'
++
++  const VERSION = '0.968'
++  const CARD_SELECTOR = '[data-taf-pairing-runtime="0.968"]'
++  const NATIVE_PAIRING_SELECTOR = '.pairing-card:not(.taf-runtime-pairing-card)'
++  let pollTimer = null
++
++  function patchFrontendVersionBadge() {
++    const candidates = document.querySelectorAll('.version-badge, .el-tag')
++    for (const el of candidates) {
++      const text = (el.textContent || '').trim()
++      if (!/frontend/i.test(text)) continue
++      const replaced = text.replace(/v\d+\.\d+(?:\.\d+)?/i, `v${VERSION}`)
++      if (replaced !== text) el.textContent = replaced
++    }
++    document.documentElement.dataset.tafEmbeddedFrontend = VERSION
++  }
++
++  function ensureStyles() {
++    if (document.getElementById('taf-pairing-runtime-style')) return
++    const style = document.createElement('style')
++    style.id = 'taf-pairing-runtime-style'
++    style.textContent = `
++      .taf-runtime-pairing-card { border-color: rgba(64, 158, 255, .65) !important; }
++      .taf-pairing-runtime-badge { display:inline-flex; align-items:center; min-height:22px; padding:0 9px; border-radius:4px; font-size:12px; font-weight:700; color:#fff; background:#909399; }
++      .taf-pairing-runtime-badge[data-state="waiting"], .taf-pairing-runtime-badge[data-state="pairing"] { background:#e6a23c; }
++      .taf-pairing-runtime-badge[data-state="success"] { background:#67c23a; }
++      .taf-pairing-runtime-badge[data-state="failed"], .taf-pairing-runtime-badge[data-state="timeout"] { background:#f56c6c; }
++      .taf-pairing-runtime-message { margin:8px 0 10px; padding:8px 10px; border:1px solid rgba(144,147,153,.3); border-radius:4px; font-size:12px; line-height:1.45; word-break:break-word; }
++      .taf-pairing-runtime-actions { display:flex; gap:8px; flex-wrap:wrap; }
++      .taf-pairing-runtime-note { margin-top:7px; opacity:.72; font-size:11px; line-height:1.4; }
++    `
++    document.head.appendChild(style)
++  }
++
++  function stateLabel(state) {
++    return String(state || 'idle').toUpperCase()
++  }
++
++  function getRuntimeCard() {
++    return document.querySelector(CARD_SELECTOR)
++  }
++
++  function renderPairing(state, message, rawHex) {
++    const card = getRuntimeCard()
++    if (!card) return
++    const normalized = String(state || 'idle').toLowerCase()
++    const badge = card.querySelector('[data-taf-pairing-badge]')
++    const msg = card.querySelector('[data-taf-pairing-message]')
++    const start = card.querySelector('[data-taf-pairing-start]')
++    if (badge) {
++      badge.dataset.state = normalized
++      badge.textContent = stateLabel(normalized)
++    }
++    if (msg) {
++      msg.textContent = message || 'No pairing session started'
++      msg.title = rawHex || ''
++    }
++    if (start) {
++      const busy = normalized === 'waiting' || normalized === 'pairing'
++      start.disabled = busy
++      start.textContent = busy ? 'Pairing in progress…' : '🔗 Re-pair Controller / Aircraft'
++    }
++  }
++
++  async function pollStatus() {
++    if (!getRuntimeCard()) return
++    try {
++      const response = await fetch(`/api/status?_tafPairing=${Date.now()}`, { cache: 'no-store' })
++      if (!response.ok) throw new Error(`HTTP ${response.status}`)
++      const data = await response.json()
++      if (data && data.pairing) {
++        renderPairing(data.pairing.state, data.pairing.lastMessage, data.pairing.resultRawHex)
++      }
++    } catch (_) {
++      // Keep the last known status. The normal application connection indicator already exposes backend outages.
++    }
++  }
++
++  async function startPairing() {
++    const ok = window.confirm(
++      'Start ATOM controller / aircraft pairing?\n\n' +
++      'The controller will enter MiniPair mode. Afterwards put the aircraft into frequency-pairing mode using its power button.'
++    )
++    if (!ok) return
++
++    renderPairing('waiting', 'Sending pairing command to the controller…')
++    try {
++      const response = await fetch('/api/cmd/pair', { method: 'POST', cache: 'no-store' })
++      const text = await response.text()
++      if (!response.ok) throw new Error(text || `HTTP ${response.status}`)
++      renderPairing('waiting', 'Pairing command sent; waiting for controller pairing mode')
++      await pollStatus()
++    } catch (error) {
++      renderPairing('failed', `Could not start pairing: ${error instanceof Error ? error.message : String(error)}`)
++    }
++  }
++
++  async function resetPairing() {
++    try {
++      await fetch('/api/cmd/pair/reset', { method: 'POST', cache: 'no-store' })
++    } catch (_) {}
++    renderPairing('idle', 'No pairing session started')
++  }
++
++  function ensurePairingCard() {
++    patchFrontendVersionBadge()
++
++    // A freshly rebuilt Vue bundle already contains the native v0.968 pairing panel.
++    // In that case this compatibility bridge deliberately stays out of the UI.
++    if (document.querySelector(NATIVE_PAIRING_SELECTOR)) {
++      const runtime = getRuntimeCard()
++      if (runtime) runtime.remove()
++      return
++    }
++
++    if (getRuntimeCard()) return
++    const panel = document.querySelector('.fpv-pane .fpv-controls-col .panel-box')
++    if (!panel) return
++
++    ensureStyles()
++    const card = document.createElement('div')
++    card.className = 'action-card highlight-card pairing-card taf-runtime-pairing-card'
++    card.dataset.tafPairingRuntime = VERSION
++    card.innerHTML = `
++      <div class="act-header">
++        <span class="act-name">ATOM Controller / Aircraft Pairing</span>
++        <span class="taf-pairing-runtime-badge" data-taf-pairing-badge data-state="idle">IDLE</span>
++      </div>
++      <p class="act-desc">
++        Starts the PotensicPro MiniPair sequence (FE 0x16 / function 0x18). After starting, put the aircraft into frequency-pairing mode using its power button.
++      </p>
++      <div class="taf-pairing-runtime-message" data-taf-pairing-message>No pairing session started</div>
++      <div class="taf-pairing-runtime-actions">
++        <button type="button" class="el-button el-button--primary el-button--small" data-taf-pairing-start>🔗 Re-pair Controller / Aircraft</button>
++        <button type="button" class="el-button el-button--small is-plain" data-taf-pairing-reset>Reset Status</button>
++      </div>
++      <div class="taf-pairing-runtime-note">Status and result are monitored by the Android backend from 0x1715 / 0x1718 and are written to the Live Log.</div>
++    `
++
++    const title = panel.querySelector('.box-title')
++    if (title && title.parentElement === panel) title.insertAdjacentElement('afterend', card)
++    else panel.prepend(card)
++
++    card.querySelector('[data-taf-pairing-start]')?.addEventListener('click', startPairing)
++    card.querySelector('[data-taf-pairing-reset]')?.addEventListener('click', resetPairing)
++
++    if (!pollTimer) pollTimer = window.setInterval(pollStatus, 1000)
++    pollStatus()
++  }
++
++  const observer = new MutationObserver(() => ensurePairingCard())
++  observer.observe(document.documentElement, { childList: true, subtree: true })
++  window.addEventListener('load', ensurePairingCard, { once: true })
++  ensurePairingCard()
++})()
