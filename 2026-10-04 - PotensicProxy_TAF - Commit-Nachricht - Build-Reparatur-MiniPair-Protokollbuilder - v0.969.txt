@@ -1,0 +1,29 @@
+BL_Fix MiniPair protocol builder build break
+Date: 2026-10-04
+
+Summary:
+- Fixed the GitHub Actions Kotlin build failure caused by PotensicProtocol.buildFpvMiniPair() referencing a MiniPair builder that was missing from the committed DroneProtocol source.
+- Added DroneProtocol.buildFpvMiniPair() for the PotensicPro-compatible 0x0018 no-payload command routed through FE 0x16.
+- Added a CI source-completeness guard that checks both the protocol builder and the application-facing forwarding method before the Android build.
+- Bumped the software version to 0.969 and Android versionCode to 42.
+- Kept the fixed release signing configuration, applicationId, pairing monitor, and pairing UI behavior unchanged.
+
+Changed files:
+- .github/workflows/build-apk.yml
+- VERSIONING.md
+- app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+- webui/package.json
+- webui/package-lock.json
+- DOCUMENTATION/2026-10-04 - PotensicProxy_TAF - Projektdokumentation - Build-Reparatur-MiniPair-Protokollbuilder - v0.969.docx
+- DOCUMENTATION/2026-10-04 - PotensicProxy_TAF - Projektdokumentation - Build-Reparatur-MiniPair-Protokollbuilder - v0.969.pdf
+- 2026-10-04 - PotensicProxy_TAF - Commit-Nachricht - Build-Reparatur-MiniPair-Protokollbuilder - v0.969.txt
+- 2026-10-04 - PotensicProxy_TAF - Patch - Build-Reparatur-MiniPair-Protokollbuilder - v0.969.patch
+
+Validation:
+- Reviewed logs_100817386665.zip: WebUI build succeeded; the blocking failure was :app:compileDebugKotlin with unresolved reference buildFpvMiniPair in PotensicProtocol.kt.
+- Verified both MiniPair source methods are present using the same grep checks added to CI.
+- vue-tsc --noEmit passed.
+- DroneProtocol.kt and PotensicProtocol.kt compiled together with a minimal Android Log stub.
+- PotensicProtocol.buildFpvMiniPair() produced: fe000000000000160000000000000007fffd030018001b.
+- A complete local Android APK build was not executed because this container does not provide an Android SDK; the GitHub Actions workflow remains the authoritative full APK build environment.

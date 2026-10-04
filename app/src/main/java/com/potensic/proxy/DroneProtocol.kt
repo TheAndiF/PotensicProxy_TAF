@@ -546,6 +546,15 @@ object DroneProtocol {
     }
 
     /**
+     * ATOM / ATOM 2 controller-aircraft re-pair command from PotensicPro SendMiniPairData.
+     * Inner frame is function 0x0018 with no payload: FF FD 03 00 18 00 1B.
+     * The command is routed to the FPV/RF side through FE channel 0x16.
+     */
+    fun buildFpvMiniPair(): ByteArray {
+        return wrapFE(buildInnerCommandWithShort(0x0018, ByteArray(0)), 0x16)
+    }
+
+    /**
      * Camera function switch (0x1200 / 0x16).
      * 0x04 = preview, 0x10 = H.265, 0x20 = H.265 preview.
      * For H.265 LiveView the official app sends mask/value 0x34/0x34.

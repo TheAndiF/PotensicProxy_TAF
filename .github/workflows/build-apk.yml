@@ -53,6 +53,18 @@ jobs:
           done
           exit "$missing"
 
+      - name: Verify MiniPair protocol source completeness
+        shell: bash
+        run: |
+          grep -q "fun buildFpvMiniPair" app/src/main/java/com/potensic/proxy/DroneProtocol.kt || {
+            echo "::error file=app/src/main/java/com/potensic/proxy/DroneProtocol.kt::Missing DroneProtocol.buildFpvMiniPair implementation required by PotensicProtocol."
+            exit 1
+          }
+          grep -q "fun buildFpvMiniPair" app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt || {
+            echo "::error file=app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt::Missing PotensicProtocol.buildFpvMiniPair forwarding method."
+            exit 1
+          }
+
       - name: Remove checked-in WebUI build output
         run: rm -rf app/src/main/assets/web
 

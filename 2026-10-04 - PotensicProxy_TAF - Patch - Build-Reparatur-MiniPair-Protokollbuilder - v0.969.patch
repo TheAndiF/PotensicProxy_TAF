@@ -1,0 +1,96 @@
+--- a/.github/workflows/build-apk.yml
++++ b/.github/workflows/build-apk.yml
+@@ -53,6 +53,18 @@
+           done
+           exit "$missing"
+ 
++      - name: Verify MiniPair protocol source completeness
++        shell: bash
++        run: |
++          grep -q "fun buildFpvMiniPair" app/src/main/java/com/potensic/proxy/DroneProtocol.kt || {
++            echo "::error file=app/src/main/java/com/potensic/proxy/DroneProtocol.kt::Missing DroneProtocol.buildFpvMiniPair implementation required by PotensicProtocol."
++            exit 1
++          }
++          grep -q "fun buildFpvMiniPair" app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt || {
++            echo "::error file=app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt::Missing PotensicProtocol.buildFpvMiniPair forwarding method."
++            exit 1
++          }
++
+       - name: Remove checked-in WebUI build output
+         run: rm -rf app/src/main/assets/web
+ 
+
+--- a/VERSIONING.md
++++ b/VERSIONING.md
+@@ -23,8 +23,8 @@
+ 
+ ## Current development release
+ 
+-- Software version: `0.968` (pre-1.0 development)
+-- Android `versionCode`: `41`
++- Software version: `0.969` (pre-1.0 development)
++- Android `versionCode`: `42`
+ - Frontend source: `webui/package.json`
+ - Backend/Android source: `app/build.gradle.kts`
+ 
+
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 41
+-        versionName = "0.968"
++        versionCode = 42
++        versionName = "0.969"
+     }
+ 
+     signingConfigs {
+
+--- a/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
++++ b/app/src/main/java/com/potensic/proxy/DroneProtocol.kt
+@@ -545,6 +545,14 @@
+         return wrapFE(buildInnerCommandWithShort(0x1600, ByteArray(0)), 0x16)
+     }
+ 
++    /**
++     * ATOM / ATOM 2 controller-aircraft re-pair command from PotensicPro SendMiniPairData.
++     * Inner frame is function 0x0018 with no payload: FF FD 03 00 18 00 1B.
++     * The command is routed to the FPV/RF side through FE channel 0x16.
++     */
++    fun buildFpvMiniPair(): ByteArray {
++        return wrapFE(buildInnerCommandWithShort(0x0018, ByteArray(0)), 0x16)
++    }
+ 
+     /**
+      * Camera function switch (0x1200 / 0x16).
+
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.968",
++  "version": "0.969",
+   "private": true,
+   "type": "module",
+   "scripts": {
+
+--- a/webui/package-lock.json
++++ b/webui/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.968",
++  "version": "0.969",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.968",
++      "version": "0.969",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",
