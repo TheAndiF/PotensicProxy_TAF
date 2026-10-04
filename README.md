@@ -90,10 +90,14 @@ Each Recognition index record can carry a metadata snapshot captured at trigger 
 
 The backend owns map-provider configuration and tile proxying. The WebUI contains:
 
-- live map display with direct in-map source switching (OpenStreetMap, Mapbox presets and configured custom sources);
-- persistent backend-owned provider/token configuration and connection test;
-- explicit `Auto` (offline-first), `Offline only` and `Online first` map data modes;
+- a shared standard map view used by Cockpit, Mission Planning and the Map tab, with direct map-source/style and zoom controls;
+- immediate source/style refresh without a page reload while preserving the current center/zoom where possible;
+- persistent backend-owned provider/token configuration and connection test with compact token-status/info UI;
+- explicit `Auto` (local-first), `Offline only` and `Online first` map data modes, with the quick selector shown only on the large Cockpit map;
+- a separate persistent **temporary tile cache** for tiles learned during normal browsing, with size/tile-count metadata and a clear action that never removes deliberately downloaded offline areas;
 - offline-region download, update, full reload, tile deletion and removal where permitted by the selected provider;
+- a manual cartographic current/reference position for offline-area setup when drone GPS is unavailable; valid live drone GPS always takes precedence and the manual position never changes telemetry, Home/RTH or flight-control state;
+- localized map UI text through the existing English/German/Chinese i18n system;
 - mission library/editing;
 - Potensic mission export path.
 
@@ -138,6 +142,7 @@ The current backend includes, among others:
 | `GET/POST /api/map/config` | persistent map/provider configuration |
 | `POST /api/map/test` | provider/resource connection test |
 | `GET /api/map/tiles/{z}/{x}/{y}` | backend tile proxy with Auto/Offline/Online policy |
+| `GET/DELETE /api/map/cache/temporary` | inspect/clear the separate temporary browsing tile cache |
 | `GET/POST /api/map/regions` | list/start offline regions |
 | `POST /api/map/regions/{id}/update` | download missing/invalid region tiles |
 | `POST /api/map/regions/{id}/reload` | refresh all region tiles |

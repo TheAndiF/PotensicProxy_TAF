@@ -67,8 +67,8 @@
     </Teleport>
 
     <Teleport v-if="teleportsReady" :to="mapTarget">
-      <div :class="['teleported-view', { 'small-view': mainView !== 'map' }]">
-        <MapView/>
+      <div :class="['teleported-view', { 'small-view': mainView !== 'map', 'small-map-view': mainView !== 'map' }]">
+        <MapView :show-data-mode="mainView === 'map'" :compact="mainView !== 'map'"/>
         <span v-if="mainView !== 'map'" class="small-view-label">MAP</span>
       </div>
     </Teleport>
@@ -169,7 +169,7 @@ onBeforeUnmount(() => {
 .hidden-view-slot{position:absolute;left:-100000px;top:0;width:1px;height:1px;overflow:hidden;pointer-events:none}
 .pip-slot{overflow:hidden;border:2px solid #60708d;border-radius:8px;background:var(--ui-bg-stage);box-shadow:var(--ui-shadow-pip);cursor:pointer}
 .pip-overlay-slot{position:absolute;right:16px;bottom:54px;width:230px;height:150px;z-index:20}
-.teleported-view{position:relative;width:100%;height:100%;overflow:hidden}.teleported-view>*:first-child{width:100%;height:100%}.small-view>*:first-child{pointer-events:none}
+.teleported-view{position:relative;width:100%;height:100%;overflow:hidden}.teleported-view>*:first-child{width:100%;height:100%}.small-view>*:first-child{pointer-events:none}.small-map-view>*:first-child{pointer-events:auto}
 .small-view-label{position:absolute;left:7px;bottom:6px;z-index:30;background:rgba(13,16,26,.52);color:#fff;font-size:10px;font-weight:700;padding:3px 6px;border-radius:3px;pointer-events:none}
 .view-drawer{position:absolute;right:0;top:86px;z-index:42;display:flex;align-items:center}.view-drawer.open{gap:4px}
 .view-drawer-toggle{width:24px;height:48px;border:1px solid rgba(255,255,255,.18);border-right:0;border-radius:7px 0 0 7px;background:rgba(7,10,16,.44);color:#fff;cursor:pointer;backdrop-filter:blur(4px)}

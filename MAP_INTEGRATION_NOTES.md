@@ -1,7 +1,7 @@
 # PotensicProxy TAF - Map integration notes
 
-Version: v0.6  
-Date: 2026-09-27
+Version: v0.965
+Date: 2026-10-04
 
 ## Architecture
 
@@ -16,7 +16,7 @@ The map implementation keeps the existing frontend/backend boundary:
 
 The backend provides `GET /api/version`. The Settings view displays the project package, Android app, backend, WebUI, map module, map API and build-date versions.
 
-Current project package: `v0.6` / application version `0.6.0`.
+Current project package: `v0.965` / application version `0.965`.
 
 ## Map API
 
@@ -24,9 +24,14 @@ Current project package: `v0.6` / application version `0.6.0`.
 - `GET /api/map/config`
 - `POST /api/map/config`
 - `GET /api/map/tiles/{z}/{x}/{y}`
+- `GET /api/map/cache/temporary`
+- `DELETE /api/map/cache/temporary`
 - `GET /api/map/regions`
 - `POST /api/map/regions`
 - `GET /api/map/regions/{id}`
+- `POST /api/map/regions/{id}/update`
+- `POST /api/map/regions/{id}/reload`
+- `DELETE /api/map/regions/{id}/tiles`
 - `DELETE /api/map/regions/{id}`
 
 ## Offline provider restriction
@@ -35,7 +40,7 @@ The public `tile.openstreetmap.org` service is available for normal interactive 
 
 ## Build integration
 
-`webui/vite.config.ts` writes the production WebUI directly to `app/src/main/assets/web` and now cleans that output directory before writing a new build (`emptyOutDir: true`) so obsolete hashed assets are not retained.
+`webui/vite.config.ts` writes the production WebUI directly to `app/src/main/assets/web`. In the supplied v0.964 source, `emptyOutDir` is `false`; the Android `preBuild` integration still regenerates the WebUI before packaging.
 
 Android `preBuild` now depends on a `buildWebUi` Gradle task, so a normal Android build regenerates the embedded WebUI before packaging. The workstation must have Node.js/npm installed and the WebUI dependencies installed (`npm ci` once in `webui`).
 
@@ -213,3 +218,49 @@ Map API index is increased from 2 to 3. Existing endpoints remain compatible and
 - `DELETE /api/map/regions/{id}/tiles`
 
 No USB/BX3, camera, telemetry, LiveView or flight-control protocol is changed by v0.964.
+
+
+## v0.965 - Shared map controls, temporary cache separation, manual map position and i18n
+
+Version v0.965 implements the Map Source UI / standard-map-view change order on top of v0.964. Provider credentials and provider HTTP requests remain backend-owned.
+
+### Compact Map Source UI
+
+- Map-source settings use a common label/control grid; long token/mode explanations move into click/touch/focusable info popovers.
+- `Mapbox style` stays visible for both Mapbox variants. It is editable for Studio Static Tiles and visible but disabled for Satellite; switching providers does not clear the stored Studio style.
+- Stored-token and detected-token-type state are shown as compact chips. Secret tokens remain masked and backend-only.
+- Provider test/save behavior is unchanged, while the connection result is shown as a compact status block.
+
+### Temporary tile cache vs. downloaded offline areas
+
+- Normal interactive map downloads now go to `filesDir/map/tiles/temporary/<namespace>/...`.
+- Deliberately downloaded offline regions use `filesDir/map/tiles/offline/<namespace>/...`.
+- `Auto` reads downloaded offline tiles first, then temporary cache, and downloads only missing tiles into temporary cache.
+- `Offline only` reads both local stores and performs no provider request.
+- `Online first` requests the provider first, stores successful interactive tiles in temporary cache and falls back to local tiles on provider failure.
+- `GET /api/map/cache/temporary` reports tile count, byte size, last update, zoom range and an approximate geographic coverage envelope.
+- `DELETE /api/map/cache/temporary` deletes only the temporary browsing cache. Downloaded offline regions remain untouched.
+- The previous combined v0.964 cache layout is migrated once and idempotently: tiles intersecting known saved regions are placed in the offline store; remaining legacy tiles become temporary cache.
+- When an offline region is downloaded/updated, an already valid temporary tile may be copied into the offline store before an online request is attempted.
+- Optional `Save as offline area` conversion is not implemented in v0.965; the change order explicitly permits this to remain an open extension.
+
+### Manual cartographic current position
+
+- The offline-area editor adds `Set as current position` for valid latitude/longitude input.
+- Manual position is WebUI/cartographic state only. It is used for map centering/reference and is never written to drone telemetry, Home/RTH data, flight logs or flight-control state.
+- Valid live drone GPS always has priority over the manual position. `Use current drone position` is disabled when valid drone GPS is unavailable.
+
+### Shared standard map view and immediate refresh
+
+- Cockpit, Mission Planning and the Map tab reuse `MapTileLayer` and `MapSourceControls` for the common rendering/source/zoom behavior.
+- The small Cockpit map, Mission Planning and Map tab show source/view plus zoom. The large Cockpit map additionally shows the shared Map-data quick selector.
+- Saved source/style/data-mode changes are broadcast through the existing WebUI runtime and visible map instances rebind tiles immediately without requiring a page reload. Center/zoom and overlays stay in component state.
+- Tile loading failures expose a visible map-source error state instead of silently claiming the newly selected source is active.
+
+### i18n and API version
+
+- New map labels, buttons, status text, popovers and action messages are present for all currently supported WebUI locales: English, German and Chinese. Provider/product identifiers and technical values remain unchanged.
+- Map API index increases from v3 to **v4** for the temporary-cache endpoints.
+- Application/WebUI version is **0.965** and Android `versionCode` is **38**.
+
+No USB/BX3, camera, telemetry, Home/RTH or flight-control protocol is changed by v0.965.

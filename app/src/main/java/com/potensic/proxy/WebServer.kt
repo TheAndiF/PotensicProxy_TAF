@@ -125,6 +125,13 @@ class WebServer(
                     if (tile == null) call.respond(HttpStatusCode.NotFound)
                     else call.respondBytes(tile.first, ContentType.parse(tile.second))
                 }
+                get("/api/map/cache/temporary") {
+                    call.respondText(mapBackend.temporaryCacheInfo().toString(), ContentType.Application.Json)
+                }
+                delete("/api/map/cache/temporary") {
+                    call.respondText(mapBackend.clearTemporaryCache().toString(), ContentType.Application.Json)
+                }
+
                 get("/api/map/regions") { call.respondText(mapBackend.regions().toString(), ContentType.Application.Json) }
                 post("/api/map/regions") {
                     try {

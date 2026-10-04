@@ -46,9 +46,16 @@
 
     <section class="mission-map-wrap">
       <div ref="mapRoot" class="mission-map" @click="onMapClick" @wheel.prevent="onWheel" @mousedown="beginPan">
-        <div class="tiles">
-          <img v-for="t in tiles" :key="t.key" class="tile" :src="t.url" :style="{ left: t.left+'px', top: t.top+'px' }" draggable="false" />
-        </div>
+        <MapTileLayer
+          :center-latitude="center.latitude"
+          :center-longitude="center.longitude"
+          :zoom="zoom"
+          :width="size.w"
+          :height="size.h"
+          :revision="tileRevision"
+          @tile-error="tileError = true"
+          @tile-load="tileError = false"
+        />
         <svg class="route-layer" :width="size.w" :height="size.h">
           <polyline v-if="waypointScreen.length > 1" :points="waypointScreen.map(p => `${p.x},${p.y}`).join(' ')" />
         </svg>
@@ -56,10 +63,9 @@
         <div v-if="droneScreen" class="drone-marker" :style="{left:droneScreen.x+'px',top:droneScreen.y+'px',transform:`translate(-50%,-50%) rotate(${store.telemetry.heading||0}deg)`}">▲</div>
         <div v-if="homeScreen" class="home-marker" :style="{left:homeScreen.x+'px',top:homeScreen.y+'px'}">H</div>
         <div class="map-osd"><span>{{ center.latitude.toFixed(6) }}, {{ center.longitude.toFixed(6) }}</span><span>Z{{ zoom }}</span></div>
-        <div class="map-controls">
-          <button @click.stop="zoom=Math.min(19,zoom+1)">+</button><button @click.stop="zoom=Math.max(1,zoom-1)">−</button>
-          <button title="Auf Drohne zentrieren" @click.stop="centerOnDrone">⌖</button>
-        </div>
+        <MapSourceControls v-if="mapConfig" class="standard-controls" :config="mapConfig" v-model="zoom" :show-data-mode="false" @config-saved="mapConfig = $event" />
+        <button class="center-control" title="Auf Drohne zentrieren" @click.stop="centerOnDrone">⌖</button>
+        <div v-if="tileError" class="map-error">{{ t('map.sourceUnavailable') }}</div>
         <div class="attribution">{{ mapConfig?.attribution || '' }}</div>
       </div>
     </section>
@@ -100,14 +106,20 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useDroneStore } from '../../stores/useDroneStore'
-import { MapService } from '../../services/MapService'
+import { useI18n } from '../../i18n'
+import { MAP_CONFIG_CHANGED_EVENT, MapService } from '../../services/MapService'
 import { MissionService } from '../../services/MissionService'
 import type { MapConfig } from '../../types/map'
 import type { MissionGeometry, MissionSummary, MissionWaypoint, TAFMission } from '../../types/mission'
 import { ATOM1_CAPABILITIES, newMission, newWaypoint } from '../../types/mission'
+import MapTileLayer from '../map/MapTileLayer.vue'
+import MapSourceControls from '../map/MapSourceControls.vue'
+import { MAP_POSITION_CHANGED_EVENT } from '../../composables/useMapPosition'
+import { geoPoint, screenPoint as projectScreen, worldPoint } from '../../utils/mapProjection'
 import { circle, grid, pathLengthMeters, polygon, renumber, spiral, validateMission } from '../../mission/geometry'
 
 const store = useDroneStore()
+const { t } = useI18n()
 const mission = ref<TAFMission>(newMission())
 const library = ref<MissionSummary[]>([])
 const selectedMissionId = ref('')
@@ -115,6 +127,7 @@ const selectedWaypoint = ref<MissionWaypoint | null>(null)
 const mode = ref<'manual'>('manual')
 const params = reactive({ radius: 40, points: 16, width: 60, height: 80, spacing: 12, heading: 0 })
 const mapRoot = ref<HTMLElement|null>(null), size = ref({w:900,h:600}), zoom = ref(15), mapConfig=ref<MapConfig|null>(null)
+const tileRevision = ref(0), tileError = ref(false)
 const center = reactive({ latitude: 52.52, longitude: 13.405 })
 let observer: ResizeObserver | null = null
 let panning=false, panMoved=false, panStart={x:0,y:0}, panWorld={x:0,y:0}
@@ -123,10 +136,9 @@ const chunks = computed(() => Math.max(1, Math.ceil(mission.value.waypoints.leng
 const issues = computed(() => validateMission(mission.value))
 
 function validGps(){ const {latitude,longitude}=store.telemetry; return Number.isFinite(latitude)&&Number.isFinite(longitude)&&latitude>=-90&&latitude<=90&&longitude>=-180&&longitude<=180&&!(latitude===0&&longitude===0) }
-function world(lon:number,lat:number,z:number){const n=256*2**z,safe=Math.max(-85.05112878,Math.min(85.05112878,lat)),x=(lon+180)/360*n,s=Math.sin(safe*Math.PI/180),y=(.5-Math.log((1+s)/(1-s))/(4*Math.PI))*n;return{x,y}}
-function unworld(x:number,y:number,z:number){const n=256*2**z,lon=x/n*360-180,a=Math.PI*(1-2*y/n),lat=180/Math.PI*Math.atan(Math.sinh(a));return{latitude:lat,longitude:lon}}
-const tiles=computed(()=>{const c=world(center.longitude,center.latitude,zoom.value),z=zoom.value,n=1<<z,x0=Math.floor((c.x-size.value.w/2)/256)-1,x1=Math.floor((c.x+size.value.w/2)/256)+1,y0=Math.floor((c.y-size.value.h/2)/256)-1,y1=Math.floor((c.y+size.value.h/2)/256)+1,out:any[]=[];for(let tx=x0;tx<=x1;tx++)for(let ty=y0;ty<=y1;ty++){if(ty<0||ty>=n)continue;const x=((tx%n)+n)%n;out.push({key:`${z}/${x}/${ty}`,url:MapService.tileUrl(z,x,ty),left:tx*256-c.x+size.value.w/2,top:ty*256-c.y+size.value.h/2})}return out})
-function screenPoint(lat:number,lon:number){const c=world(center.longitude,center.latitude,zoom.value),p=world(lon,lat,zoom.value);return{x:p.x-c.x+size.value.w/2,y:p.y-c.y+size.value.h/2}}
+function world(lon:number,lat:number,z:number){return worldPoint(lon,lat,z)}
+function unworld(x:number,y:number,z:number){return geoPoint(x,y,z)}
+function screenPoint(lat:number,lon:number){return projectScreen(lat,lon,center.latitude,center.longitude,zoom.value,size.value.w,size.value.h)}
 const waypointScreen=computed(()=>mission.value.waypoints.map(wp=>({...screenPoint(wp.latitude,wp.longitude),wp})))
 const droneScreen=computed(()=>validGps()?screenPoint(store.telemetry.latitude,store.telemetry.longitude):null)
 const homeScreen=computed(()=>{const lat=store.telemetry.homeLatitude,lon=store.telemetry.homeLongitude;return store.telemetry.homeSynced&&typeof lat==='number'&&typeof lon==='number'?screenPoint(lat,lon):null})
@@ -153,10 +165,13 @@ async function loadSelected(){if(!selectedMissionId.value)return;try{mission.val
 async function deleteSelected(){if(!selectedMissionId.value)return;try{await ElMessageBox.confirm('Gespeicherte Mission wirklich löschen?','Mission löschen');await MissionService.remove(selectedMissionId.value);createMission();await refreshLibrary()}catch{}}
 async function exportPotensic(){if(await saveMission())window.location.href=MissionService.exportPotensicUrl(mission.value.id)}
 
-onMounted(async()=>{window.addEventListener('mousemove',movePan);window.addEventListener('mouseup',endPan);try{mapConfig.value=await MapService.getConfig();zoom.value=mapConfig.value.defaultZoom||15}catch{};if(validGps()){center.latitude=store.telemetry.latitude;center.longitude=store.telemetry.longitude}if(mapRoot.value){observer=new ResizeObserver(([e])=>{if(e.contentRect.width>0&&e.contentRect.height>0)size.value={w:e.contentRect.width,h:e.contentRect.height}});observer.observe(mapRoot.value)}await nextTick();await refreshLibrary()})
-onUnmounted(()=>{observer?.disconnect();window.removeEventListener('mousemove',movePan);window.removeEventListener('mouseup',endPan)})
+function onMapConfigChanged(event: Event){const detail=(event as CustomEvent<MapConfig>).detail;if(!detail)return;mapConfig.value=detail;tileRevision.value++;tileError.value=false}
+function onMapPositionChanged(event: Event){const detail=(event as CustomEvent<{latitude:number;longitude:number}>).detail;if(!detail)return;center.latitude=detail.latitude;center.longitude=detail.longitude}
+
+onMounted(async()=>{window.addEventListener('mousemove',movePan);window.addEventListener('mouseup',endPan);window.addEventListener(MAP_CONFIG_CHANGED_EVENT,onMapConfigChanged);window.addEventListener(MAP_POSITION_CHANGED_EVENT,onMapPositionChanged);try{mapConfig.value=await MapService.getConfig();zoom.value=mapConfig.value.defaultZoom||15}catch{};if(validGps()){center.latitude=store.telemetry.latitude;center.longitude=store.telemetry.longitude}if(mapRoot.value){observer=new ResizeObserver(([e])=>{if(e.contentRect.width>0&&e.contentRect.height>0)size.value={w:e.contentRect.width,h:e.contentRect.height}});observer.observe(mapRoot.value)}await nextTick();await refreshLibrary()})
+onUnmounted(()=>{observer?.disconnect();window.removeEventListener('mousemove',movePan);window.removeEventListener('mouseup',endPan);window.removeEventListener(MAP_CONFIG_CHANGED_EVENT,onMapConfigChanged);window.removeEventListener(MAP_POSITION_CHANGED_EVENT,onMapPositionChanged)})
 </script>
 
 <style scoped>
-.mission-page{height:100%;display:grid;grid-template-columns:260px minmax(420px,1fr) 300px;gap:8px;padding:8px;background:var(--ui-bg-stage);color:var(--text);box-sizing:border-box}.mission-sidebar,.inspector{min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px}.panel{background:var(--ui-bg-panel);border:1px solid var(--border);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:8px}.panel-title{font-size:12px;font-weight:800;color:var(--ui-text-strong);text-transform:uppercase;letter-spacing:.5px}.button-row,.tool-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}.form-grid,.waypoint-form{display:flex;flex-direction:column;gap:7px}.form-grid label,.waypoint-form label{font-size:10px;color:var(--muted);display:grid;grid-template-columns:1fr 116px;gap:8px;align-items:center}.mission-map-wrap{min-width:0;min-height:0}.mission-map{position:relative;width:100%;height:100%;overflow:hidden;background:#18202b;border:1px solid var(--border);border-radius:6px;user-select:none}.tiles{position:absolute;inset:0}.tile{position:absolute;width:256px;height:256px}.route-layer{position:absolute;inset:0;z-index:4;pointer-events:none}.route-layer polyline{fill:none;stroke:var(--cyan);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}.wp-marker{position:absolute;z-index:6;transform:translate(-50%,-50%);width:25px;height:25px;border-radius:50%;border:2px solid var(--ui-text-strong);background:var(--ui-primary);color:#fff;font-size:9px;font-weight:800;padding:0;cursor:pointer}.wp-marker.selected{box-shadow:0 0 0 3px var(--ui-warning)}.drone-marker{position:absolute;z-index:7;color:var(--ui-success);font-size:28px;text-shadow:0 1px 4px #000}.home-marker{position:absolute;z-index:7;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--ui-warning);color:#111;font-weight:800;border:2px solid #fff}.map-osd{position:absolute;left:10px;top:10px;z-index:8;display:flex;gap:6px}.map-osd span,.attribution{background:rgba(13,16,26,.82);border:1px solid var(--ui-border-control);border-radius:4px;padding:4px 7px;font-size:10px}.map-controls{position:absolute;right:10px;top:10px;z-index:8;display:flex;flex-direction:column}.map-controls button{width:34px;height:31px;background:var(--ui-bg-control);color:var(--ui-text-strong);border:1px solid var(--ui-border-strong);font-size:16px}.attribution{position:absolute;right:8px;bottom:7px;z-index:8;padding:2px 5px;font-size:9px}.stats{display:grid;grid-template-columns:repeat(3,1fr);text-align:center}.stats div{display:flex;flex-direction:column}.stats strong{font-size:16px;color:var(--cyan)}.stats span{font-size:9px;color:var(--muted)}.issue{display:grid;grid-template-columns:52px 1fr;gap:6px;padding:6px;border-radius:4px;font-size:10px;background:var(--ui-bg-control)}.issue.error strong{color:var(--ui-danger)}.issue.warning strong{color:var(--ui-warning)}.issue.info strong{color:var(--cyan)}.issue.ok strong{color:var(--ui-success)}.muted{font-size:11px;color:var(--muted);line-height:1.45}.validation{margin-bottom:8px}@media(max-width:1050px){.mission-page{grid-template-columns:220px 1fr}.inspector{display:none}}@media(max-width:760px){.mission-page{grid-template-columns:1fr;grid-template-rows:auto minmax(420px,1fr)}.mission-sidebar{max-height:280px}.mission-map-wrap{min-height:420px}}
+.mission-page{height:100%;display:grid;grid-template-columns:260px minmax(420px,1fr) 300px;gap:8px;padding:8px;background:var(--ui-bg-stage);color:var(--text);box-sizing:border-box}.mission-sidebar,.inspector{min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px}.panel{background:var(--ui-bg-panel);border:1px solid var(--border);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:8px}.panel-title{font-size:12px;font-weight:800;color:var(--ui-text-strong);text-transform:uppercase;letter-spacing:.5px}.button-row,.tool-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}.form-grid,.waypoint-form{display:flex;flex-direction:column;gap:7px}.form-grid label,.waypoint-form label{font-size:10px;color:var(--muted);display:grid;grid-template-columns:1fr 116px;gap:8px;align-items:center}.mission-map-wrap{min-width:0;min-height:0}.mission-map{position:relative;width:100%;height:100%;overflow:hidden;background:#18202b;border:1px solid var(--border);border-radius:6px;user-select:none}.tiles{position:absolute;inset:0}.tile{position:absolute;width:256px;height:256px}.route-layer{position:absolute;inset:0;z-index:4;pointer-events:none}.route-layer polyline{fill:none;stroke:var(--cyan);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}.wp-marker{position:absolute;z-index:6;transform:translate(-50%,-50%);width:25px;height:25px;border-radius:50%;border:2px solid var(--ui-text-strong);background:var(--ui-primary);color:#fff;font-size:9px;font-weight:800;padding:0;cursor:pointer}.wp-marker.selected{box-shadow:0 0 0 3px var(--ui-warning)}.drone-marker{position:absolute;z-index:7;color:var(--ui-success);font-size:28px;text-shadow:0 1px 4px #000}.home-marker{position:absolute;z-index:7;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--ui-warning);color:#111;font-weight:800;border:2px solid #fff}.map-osd{position:absolute;left:10px;top:10px;z-index:8;display:flex;gap:6px}.map-osd span,.attribution{background:rgba(13,16,26,.82);border:1px solid var(--ui-border-control);border-radius:4px;padding:4px 7px;font-size:10px}.standard-controls{position:absolute;right:10px;top:10px;z-index:8}.center-control{position:absolute;right:10px;top:76px;z-index:9;width:34px;height:31px;background:var(--ui-bg-control);color:var(--ui-text-strong);border:1px solid var(--ui-border-strong);font-size:16px}.map-error{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:10;background:rgba(13,16,26,.88);border:1px solid var(--ui-danger);color:var(--ui-danger);padding:6px 9px;border-radius:4px;font-size:11px}.attribution{position:absolute;right:8px;bottom:7px;z-index:8;padding:2px 5px;font-size:9px}.stats{display:grid;grid-template-columns:repeat(3,1fr);text-align:center}.stats div{display:flex;flex-direction:column}.stats strong{font-size:16px;color:var(--cyan)}.stats span{font-size:9px;color:var(--muted)}.issue{display:grid;grid-template-columns:52px 1fr;gap:6px;padding:6px;border-radius:4px;font-size:10px;background:var(--ui-bg-control)}.issue.error strong{color:var(--ui-danger)}.issue.warning strong{color:var(--ui-warning)}.issue.info strong{color:var(--cyan)}.issue.ok strong{color:var(--ui-success)}.muted{font-size:11px;color:var(--muted);line-height:1.45}.validation{margin-bottom:8px}@media(max-width:1050px){.mission-page{grid-template-columns:220px 1fr}.inspector{display:none}}@media(max-width:760px){.mission-page{grid-template-columns:1fr;grid-template-rows:auto minmax(420px,1fr)}.mission-sidebar{max-height:280px}.mission-map-wrap{min-height:420px}}
 </style>

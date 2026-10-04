@@ -1,7 +1,7 @@
 <template>
   <div class="map-page">
     <section class="map-stage">
-      <MapView />
+      <MapView :show-data-mode="false" />
     </section>
     <aside class="map-settings">
       <MapSettingsView />

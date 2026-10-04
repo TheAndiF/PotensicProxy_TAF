@@ -21,6 +21,8 @@ class MapBackend(private val rootDir: File) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val mapDir = File(rootDir, "map").apply { mkdirs() }
     private val cacheDir = File(mapDir, "tiles").apply { mkdirs() }
+    private val temporaryCacheDir = File(cacheDir, "temporary").apply { mkdirs() }
+    private val offlineCacheDir = File(cacheDir, "offline").apply { mkdirs() }
     private val configFile = File(mapDir, "config.json")
     private val regionsFile = File(mapDir, "regions.json")
     private val jobs = ConcurrentHashMap<String, JSONObject>()
@@ -29,7 +31,10 @@ class MapBackend(private val rootDir: File) {
 
     @Volatile private var config: JSONObject = loadConfig()
 
-    init { recoverInterruptedRegions() }
+    init {
+        migrateLegacyCacheLayout()
+        recoverInterruptedRegions()
+    }
 
     private data class HttpResult(
         val status: Int,
@@ -170,27 +175,28 @@ class MapBackend(private val rootDir: File) {
         val n = 1 shl z
         if (x !in 0 until n || y !in 0 until n) return null
         val current = JSONObject(config.toString())
-        val file = tileFile(current, z, x, y)
-        val cached = readCachedTile(file)
+        val offlineFile = offlineTileFile(current, z, x, y)
+        val temporaryFile = temporaryTileFile(current, z, x, y)
+        val local = readCachedTile(offlineFile) ?: readCachedTile(temporaryFile)
         return when (current.optString("dataMode", "auto")) {
-            "offline" -> cached
+            "offline" -> local
             "online" -> {
-                // Online mode deliberately refreshes from the provider first. If the
-                // provider is temporarily unavailable, keep the last valid local tile
-                // as a resilient fallback instead of blanking the map.
+                // Online first deliberately refreshes from the provider. Successful
+                // display requests are stored only in the temporary cache; explicitly
+                // downloaded offline areas remain isolated in the offline cache.
                 val fresh = downloadTile(current, z, x, y)
                 if (fresh != null) {
-                    file.parentFile?.mkdirs()
-                    file.writeBytes(fresh)
+                    temporaryFile.parentFile?.mkdirs()
+                    temporaryFile.writeBytes(fresh)
                     fresh to guessContentType(fresh)
-                } else cached
+                } else local
             }
             else -> {
-                // Auto is cache-first: already downloaded/offline tiles are preferred,
-                // and only missing tiles are fetched and persisted.
-                cached ?: downloadTile(current, z, x, y)?.let { bytes ->
-                    file.parentFile?.mkdirs()
-                    file.writeBytes(bytes)
+                // Auto is local-first across both persistent offline areas and the
+                // temporary browsing cache. Missing tiles are fetched into temporary.
+                local ?: downloadTile(current, z, x, y)?.let { bytes ->
+                    temporaryFile.parentFile?.mkdirs()
+                    temporaryFile.writeBytes(bytes)
                     bytes to guessContentType(bytes)
                 }
             }
@@ -339,17 +345,132 @@ class MapBackend(private val rootDir: File) {
         return digest.take(10).joinToString("") { "%02x".format(it) }
     }
 
-    private fun tileFile(candidate: JSONObject, z: Int, x: Int, y: Int): File =
-        tileFile(cacheNamespace(candidate), z, x, y)
+    private fun temporaryTileFile(candidate: JSONObject, z: Int, x: Int, y: Int): File =
+        temporaryTileFile(cacheNamespace(candidate), z, x, y)
 
-    private fun tileFile(namespace: String, z: Int, x: Int, y: Int): File =
-        File(cacheDir, "$namespace/$z/$x/$y.tile")
+    private fun temporaryTileFile(namespace: String, z: Int, x: Int, y: Int): File =
+        File(temporaryCacheDir, "$namespace/$z/$x/$y.tile")
+
+    private fun offlineTileFile(candidate: JSONObject, z: Int, x: Int, y: Int): File =
+        offlineTileFile(cacheNamespace(candidate), z, x, y)
+
+    private fun offlineTileFile(namespace: String, z: Int, x: Int, y: Int): File =
+        File(offlineCacheDir, "$namespace/$z/$x/$y.tile")
 
     private fun guessContentType(bytes: ByteArray): String = when {
         bytes.size >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() -> "image/png"
         bytes.size >= 3 && bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte() -> "image/jpeg"
         bytes.size >= 12 && String(bytes, 8, 4) == "WEBP" -> "image/webp"
         else -> "application/octet-stream"
+    }
+
+    /** Metadata for tiles learned during normal map browsing. */
+    @Synchronized fun temporaryCacheInfo(): JSONObject {
+        var tileCount = 0
+        var sizeBytes = 0L
+        var lastUpdated = 0L
+        var minZoom: Int? = null
+        var maxZoom: Int? = null
+        var west: Double? = null
+        var east: Double? = null
+        var south: Double? = null
+        var north: Double? = null
+        val namespaces = mutableSetOf<String>()
+
+        temporaryCacheDir.listFiles()?.filter { it.isDirectory }?.forEach namespaceLoop@ { namespaceDir ->
+            namespaces += namespaceDir.name
+            namespaceDir.walkTopDown().filter { it.isFile && it.name.endsWith(".tile") }.forEach fileLoop@ { file ->
+                val rel = file.relativeTo(namespaceDir).invariantSeparatorsPath.split('/')
+                if (rel.size != 3) return@fileLoop
+                val z = rel[0].toIntOrNull() ?: return@fileLoop
+                val x = rel[1].toIntOrNull() ?: return@fileLoop
+                val y = rel[2].removeSuffix(".tile").toIntOrNull() ?: return@fileLoop
+                if (!isValidCachedTile(file)) return@fileLoop
+                tileCount++
+                sizeBytes += file.length()
+                lastUpdated = max(lastUpdated, file.lastModified())
+                minZoom = minZoom?.let { min(it, z) } ?: z
+                maxZoom = maxZoom?.let { max(it, z) } ?: z
+                val tileWest = tileXToLon(x, z)
+                val tileEast = tileXToLon(x + 1, z)
+                val tileNorth = tileYToLat(y, z)
+                val tileSouth = tileYToLat(y + 1, z)
+                west = west?.let { min(it, tileWest) } ?: tileWest
+                east = east?.let { max(it, tileEast) } ?: tileEast
+                south = south?.let { min(it, tileSouth) } ?: tileSouth
+                north = north?.let { max(it, tileNorth) } ?: tileNorth
+            }
+        }
+
+        return JSONObject().apply {
+            put("tileCount", tileCount)
+            put("sizeBytes", sizeBytes)
+            put("lastUpdated", if (lastUpdated > 0) lastUpdated else JSONObject.NULL)
+            put("namespaceCount", namespaces.size)
+            put("minZoom", minZoom ?: JSONObject.NULL)
+            put("maxZoom", maxZoom ?: JSONObject.NULL)
+            if (west != null && east != null && south != null && north != null) {
+                put("bounds", JSONObject().apply {
+                    put("west", west); put("east", east); put("south", south); put("north", north)
+                })
+            } else put("bounds", JSONObject.NULL)
+        }
+    }
+
+    /** Clears browsing cache only. Deliberately downloaded offline areas are untouched. */
+    @Synchronized fun clearTemporaryCache(): JSONObject {
+        val before = temporaryCacheInfo()
+        temporaryCacheDir.listFiles()?.forEach { it.deleteRecursively() }
+        temporaryCacheDir.mkdirs()
+        return JSONObject().apply {
+            put("deletedTiles", before.optInt("tileCount"))
+            put("deletedBytes", before.optLong("sizeBytes"))
+            put("cache", temporaryCacheInfo())
+        }
+    }
+
+    /**
+     * v0.964 stored browsing and offline tiles in the same namespace directories.
+     * On first v0.965 start, split those legacy files using stored region geometry:
+     * tiles belonging to a saved region become offline tiles, all others become
+     * temporary browsing cache. The migration is idempotent.
+     */
+    private fun migrateLegacyCacheLayout() {
+        try {
+            val storedRegions = try {
+                if (regionsFile.exists()) JSONArray(regionsFile.readText()) else JSONArray()
+            } catch (_: Exception) { JSONArray() }
+            val regionsByNamespace = mutableMapOf<String, MutableList<JSONObject>>()
+            for (i in 0 until storedRegions.length()) {
+                val region = storedRegions.optJSONObject(i) ?: continue
+                val namespace = region.optString("cacheNamespace")
+                if (namespace.isNotBlank()) regionsByNamespace.getOrPut(namespace) { mutableListOf() }.add(region)
+            }
+
+            cacheDir.listFiles()?.filter { it.isDirectory && it.name != "temporary" && it.name != "offline" }?.forEach namespaceLoop@ { namespaceDir ->
+                val namespace = namespaceDir.name
+                namespaceDir.walkTopDown().filter { it.isFile && it.name.endsWith(".tile") }.toList().forEach fileLoop@ { file ->
+                    val rel = file.relativeTo(namespaceDir).invariantSeparatorsPath.split('/')
+                    if (rel.size != 3) return@fileLoop
+                    val z = rel[0].toIntOrNull() ?: return@fileLoop
+                    val x = rel[1].toIntOrNull() ?: return@fileLoop
+                    val y = rel[2].removeSuffix(".tile").toIntOrNull() ?: return@fileLoop
+                    val belongsToOfflineRegion = regionsByNamespace[namespace].orEmpty().any { region ->
+                        z in region.optInt("minZoom", 1)..region.optInt("maxZoom", 19) &&
+                            tileIntersectsCircle(x, y, z, region.optDouble("latitude"), region.optDouble("longitude"), region.optDouble("radiusM"))
+                    }
+                    val target = if (belongsToOfflineRegion) offlineTileFile(namespace, z, x, y) else temporaryTileFile(namespace, z, x, y)
+                    target.parentFile?.mkdirs()
+                    if (!target.exists()) {
+                        if (!file.renameTo(target)) file.copyTo(target, overwrite = false)
+                    }
+                    if (file.exists()) file.delete()
+                }
+                pruneEmptyDirectories(namespaceDir)
+            }
+        } catch (e: Exception) {
+            Log.w("[Map] legacy tile-cache migration failed: ${e.message}")
+        }
     }
 
     @Synchronized fun regions(): JSONArray = try {
@@ -480,13 +601,21 @@ class MapBackend(private val rootDir: File) {
             try {
                 for (z in minZoom..maxZoom) {
                     forEachRegionTile(lat, lon, radiusM, z) { x, y ->
-                        val f = tileFile(source, z, x, y)
+                        val f = offlineTileFile(source, z, x, y)
                         if (forceRefresh || !isValidCachedTile(f)) {
-                            val b = downloadTile(source, z, x, y)
-                            if (b != null) {
+                            val temporary = temporaryTileFile(source, z, x, y)
+                            val copiedFromTemporary = !forceRefresh && isValidCachedTile(temporary) && try {
                                 f.parentFile?.mkdirs()
-                                f.writeBytes(b)
-                            } else errors++
+                                temporary.copyTo(f, overwrite = true)
+                                true
+                            } catch (_: Exception) { false }
+                            if (!copiedFromTemporary) {
+                                val b = downloadTile(source, z, x, y)
+                                if (b != null) {
+                                    f.parentFile?.mkdirs()
+                                    f.writeBytes(b)
+                                } else errors++
+                            }
                         }
                         done++
                         region.put("downloaded", done)
@@ -583,7 +712,7 @@ class MapBackend(private val rootDir: File) {
         val radiusM = region.getDouble("radiusM")
         for (z in region.getInt("minZoom")..region.getInt("maxZoom")) {
             forEachRegionTile(lat, lon, radiusM, z) { x, y ->
-                val file = tileFile(namespace, z, x, y)
+                val file = offlineTileFile(namespace, z, x, y)
                 if (isValidCachedTile(file)) {
                     count++
                     bytes += file.length()
@@ -619,12 +748,12 @@ class MapBackend(private val rootDir: File) {
                         tileIntersectsCircle(x, y, z, other.optDouble("latitude"), other.optDouble("longitude"), other.optDouble("radiusM"))
                 }
                 if (!shared) {
-                    val file = tileFile(namespace, z, x, y)
+                    val file = offlineTileFile(namespace, z, x, y)
                     if (file.exists() && file.delete()) deleted++
                 }
             }
         }
-        pruneEmptyDirectories(File(cacheDir, namespace))
+        pruneEmptyDirectories(File(offlineCacheDir, namespace))
         return deleted
     }
 

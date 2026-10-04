@@ -1,4 +1,4 @@
-import type { MapConfig, MapConnectionTest, OfflineRegion, VersionInfo } from '../types/map'
+import type { MapConfig, MapConnectionTest, OfflineRegion, TemporaryTileCacheClearResult, TemporaryTileCacheInfo, VersionInfo } from '../types/map'
 import { useDroneStore } from '../stores/useDroneStore'
 import { FRONTEND_VERSION } from '../version'
 
@@ -74,6 +74,16 @@ export const MapService = {
   tileUrl(z: number, x: number, y: number, revision?: number | string) {
     const suffix = revision === undefined ? '' : `?rev=${encodeURIComponent(String(revision))}`
     return `${baseUrl()}/api/map/tiles/${z}/${x}/${y}${suffix}`
+  },
+  async temporaryCache(): Promise<TemporaryTileCacheInfo> {
+    const r = await fetch(`${baseUrl()}/api/map/cache/temporary`)
+    if (!r.ok) throw new Error(await errorText(r))
+    return r.json()
+  },
+  async clearTemporaryCache(): Promise<TemporaryTileCacheClearResult> {
+    const r = await fetch(`${baseUrl()}/api/map/cache/temporary`, { method: 'DELETE' })
+    if (!r.ok) throw new Error(await errorText(r))
+    return r.json()
   },
   async regions(): Promise<OfflineRegion[]> {
     const r = await fetch(`${baseUrl()}/api/map/regions`)

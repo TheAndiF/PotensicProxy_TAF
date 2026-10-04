@@ -54,6 +54,22 @@ export interface OfflineRegion {
   attribution?: string
 }
 
+export interface TemporaryTileCacheInfo {
+  tileCount: number
+  sizeBytes: number
+  lastUpdated?: number | null
+  namespaceCount?: number
+  minZoom?: number | null
+  maxZoom?: number | null
+  bounds?: { west: number; east: number; south: number; north: number } | null
+}
+
+export interface TemporaryTileCacheClearResult {
+  deletedTiles: number
+  deletedBytes: number
+  cache: TemporaryTileCacheInfo
+}
+
 export interface VersionInfo {
   projectVersion: string
   appVersion: string
