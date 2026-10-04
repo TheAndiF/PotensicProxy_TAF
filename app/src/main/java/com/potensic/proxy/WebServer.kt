@@ -64,7 +64,7 @@ class WebServer(
 
     fun start(port: Int = 9090) {
         Log.i("[WebServer] Starting on port $port...")
-        server = embeddedServer(CIO, port = port) {
+        server = embeddedServer(CIO, host = "0.0.0.0", port = port) {
             install(WebSockets)
             routing {
                 installWebUiRoutes(assetLoader)
@@ -939,7 +939,7 @@ class WebServer(
             }
         }
         server!!.start(wait = false)
-        Log.i("[WebServer] Started on port $port")
+        Log.i("[WebServer] Started on 0.0.0.0:$port (LAN-accessible while Android network permits)")
     }
 
     /**

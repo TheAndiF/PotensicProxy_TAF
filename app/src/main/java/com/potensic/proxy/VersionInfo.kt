@@ -16,7 +16,7 @@ object VersionInfo {
         get() = "v$BACKEND_VERSION"
 
     const val MAP_API_VERSION = 2
-    const val BUILD_DATE = "2026-09-28"
+    const val BUILD_DATE = "2026-10-04"
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("projectVersion", PROJECT_VERSION)

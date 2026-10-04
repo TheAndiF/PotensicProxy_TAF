@@ -132,3 +132,18 @@ Validation performed for this delivery:
 - A complete local Android Gradle build could not be repeated in the isolated repair environment because Gradle 8.11.1 is not cached and outbound DNS/network access is unavailable. The v0.6 repair therefore addresses the exact Kotlin compiler error reported by CI; the next GitHub Actions run remains the authoritative full APK build verification.
 
 No BX3, USB, telemetry, video, flight-control or map HTTP interface was changed by this repair. Map API remains v2. Project/application/backend/WebUI/map-module versions are updated to v0.6 / 0.6.0.
+
+## v0.962 - Same-origin map backend and explicit LAN bind
+
+A runtime failure showed `NetworkError when attempting to fetch resource` while the map settings page was loaded from the Android-hosted WebUI. The map frontend had coupled its HTTP base URL to the configurable drone/relay target (`potensic_target_host`). A relay/legacy host could therefore redirect local map API requests away from the Android backend and trigger transport/CORS failures before any provider HTTP status was available.
+
+v0.962 separates these responsibilities:
+
+- Production map API and tile requests use the origin that served the running WebUI (`window.location.origin`).
+- The configurable drone/relay target no longer changes `/api/version`, `/api/map/config`, `/api/map/test`, `/api/map/tiles/*` or `/api/map/regions*`.
+- The Vite development server on port 5173 keeps the previous configurable backend target for workstation development.
+- Ktor/CIO is started with an explicit `0.0.0.0:9090` bind. This matches Ktor's all-interface default but makes the intended LAN behavior explicit in code and logs.
+
+This change does not bypass Android/WLAN reachability requirements. If the complete URL `http://<android-ip>:9090/` is unreachable, the Android service must be running, the device IP must still be current and the network must allow client-to-client traffic before map-provider diagnostics can run.
+
+Map API remains v2. No USB/BX3, camera, telemetry or flight-control protocol was changed.

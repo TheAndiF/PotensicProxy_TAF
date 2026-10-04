@@ -3,9 +3,18 @@ import { useDroneStore } from '../stores/useDroneStore'
 import { FRONTEND_VERSION } from '../version'
 
 function baseUrl() {
-  const store = useDroneStore()
-  const proto = window.location.protocol === 'https:' ? 'https:' : 'http:'
-  return `${proto}//${store.normalizedHost}`
+  // Map APIs belong to the same Android/Ktor backend that served the WebUI.
+  // Do not follow the configurable drone/relay target here: that setting may
+  // legitimately point to another host and would make map requests fail with
+  // NetworkError/CORS errors even though the local WebUI is still loaded.
+  // Keep the Vite development workflow usable by forwarding map calls to the
+  // configured target while running the frontend dev server.
+  if (window.location.port === '5173') {
+    const store = useDroneStore()
+    const proto = window.location.protocol === 'https:' ? 'https:' : 'http:'
+    return `${proto}//${store.normalizedHost}`
+  }
+  return window.location.origin
 }
 
 async function errorText(r: Response): Promise<string> {

@@ -1,0 +1,201 @@
+diff --git a/COMMIT_MESSAGE_MAP_BACKEND_REACHABILITY_2026-10-04_v0.962.txt b/COMMIT_MESSAGE_MAP_BACKEND_REACHABILITY_2026-10-04_v0.962.txt
+new file mode 100644
+index 0000000..1e09d2b
+--- /dev/null
++++ b/COMMIT_MESSAGE_MAP_BACKEND_REACHABILITY_2026-10-04_v0.962.txt
+@@ -0,0 +1,6 @@
++BL_Fix map backend reachability and same-origin routing v0.962
++
++- route production map API/tile requests to the WebUI's own origin
++- keep configurable relay target isolated from local map backend traffic
++- bind embedded Ktor/CIO server explicitly to 0.0.0.0:9090
++- bump Android/WebUI version to 0.962 and versionCode to 35
+diff --git a/MAP_INTEGRATION_NOTES.md b/MAP_INTEGRATION_NOTES.md
+index 79e0d25..9365c50 100644
+--- a/MAP_INTEGRATION_NOTES.md
++++ b/MAP_INTEGRATION_NOTES.md
+@@ -132,3 +132,18 @@ Validation performed for this delivery:
+ - A complete local Android Gradle build could not be repeated in the isolated repair environment because Gradle 8.11.1 is not cached and outbound DNS/network access is unavailable. The v0.6 repair therefore addresses the exact Kotlin compiler error reported by CI; the next GitHub Actions run remains the authoritative full APK build verification.
+ 
+ No BX3, USB, telemetry, video, flight-control or map HTTP interface was changed by this repair. Map API remains v2. Project/application/backend/WebUI/map-module versions are updated to v0.6 / 0.6.0.
++
++## v0.962 - Same-origin map backend and explicit LAN bind
++
++A runtime failure showed `NetworkError when attempting to fetch resource` while the map settings page was loaded from the Android-hosted WebUI. The map frontend had coupled its HTTP base URL to the configurable drone/relay target (`potensic_target_host`). A relay/legacy host could therefore redirect local map API requests away from the Android backend and trigger transport/CORS failures before any provider HTTP status was available.
++
++v0.962 separates these responsibilities:
++
++- Production map API and tile requests use the origin that served the running WebUI (`window.location.origin`).
++- The configurable drone/relay target no longer changes `/api/version`, `/api/map/config`, `/api/map/test`, `/api/map/tiles/*` or `/api/map/regions*`.
++- The Vite development server on port 5173 keeps the previous configurable backend target for workstation development.
++- Ktor/CIO is started with an explicit `0.0.0.0:9090` bind. This matches Ktor's all-interface default but makes the intended LAN behavior explicit in code and logs.
++
++This change does not bypass Android/WLAN reachability requirements. If the complete URL `http://<android-ip>:9090/` is unreachable, the Android service must be running, the device IP must still be current and the network must allow client-to-client traffic before map-provider diagnostics can run.
++
++Map API remains v2. No USB/BX3, camera, telemetry or flight-control protocol was changed.
+diff --git a/NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-04_MAP_BACKEND_ERREICHBARKEIT_v0.962.md b/NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-04_MAP_BACKEND_ERREICHBARKEIT_v0.962.md
+new file mode 100644
+index 0000000..9a25ebd
+--- /dev/null
++++ b/NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-04_MAP_BACKEND_ERREICHBARKEIT_v0.962.md
+@@ -0,0 +1,38 @@
++# Nur Änderungen in Originalstruktur – Map-Backend-Erreichbarkeit v0.962
++
++Datum: 2026-10-04
++
++## Anlass
++
++In der Map-WebUI konnten Kartenkacheln und Offline-Bereiche mit `NetworkError when attempting to fetch resource` ausfallen. Die Map-Requests wurden bislang aus `potensic_target_host` / `store.normalizedHost` aufgebaut. Dieser Host ist jedoch für die Drohnen-/Relay-Verbindung konfigurierbar und muss nicht mit dem Android-Gerät identisch sein, das die WebUI und das lokale Map-Backend bereitstellt.
++
++Zusätzlich wird der Ktor-Webserver nun explizit auf `0.0.0.0` gebunden, damit die beabsichtigte Erreichbarkeit über die Android-LAN/WLAN-IP nicht von einem impliziten Engine-Default abhängt.
++
++## Änderungen
++
++- `webui/src/services/MapService.ts`
++  - Produktionsbetrieb: Map-API und Tile-URLs verwenden `window.location.origin`.
++  - Damit bleiben `/api/version`, `/api/map/config`, `/api/map/test`, `/api/map/tiles/*` und `/api/map/regions*` immer an das Backend gekoppelt, das die laufende WebUI ausgeliefert hat.
++  - `potensic_target_host` bzw. die Remote-/Relay-Zieladresse beeinflusst die Kartenfunktion nicht mehr.
++  - Im Vite-Entwicklungsbetrieb bleibt die bisherige Weiterleitung über `store.normalizedHost` erhalten.
++
++- `app/src/main/java/com/potensic/proxy/WebServer.kt`
++  - Ktor/CIO wird explizit mit `host = "0.0.0.0"` und Port `9090` gestartet.
++  - Start-Log weist die LAN-Bindung explizit aus.
++
++- Versionsstand
++  - Android/WebUI: `0.962`
++  - Android `versionCode`: `35`
++  - Build-Datum: `2026-10-04`
++
++## Nicht geändert
++
++- Keine Änderung an USB/BX3-Protokollen, Flugsteuerung oder Kamera-Protokollen.
++- Keine Änderung an Mapbox-Token-Speicherung oder Provider-URLs.
++- Die tatsächliche LAN-Erreichbarkeit setzt weiterhin voraus, dass der Android-Prozess läuft und das verwendete WLAN/LAN Client-to-Client-Verbindungen nicht blockiert.
++
++## Validierung
++
++- `vue-tsc --noEmit` läuft mit den gelieferten Quellen fehlerfrei durch.
++- Die Vite-Bündelung konnte in der isolierten Linux-Umgebung nicht abgeschlossen werden, weil das mitgelieferte `webui/node_modules` nur die Windows-Rollup-Nativmodule enthält (`@rollup/rollup-linux-x64-gnu` fehlt). Der Android-Gradle-Build ruft `npm run build` über `preBuild` auf und erzeugt die eingebetteten WebUI-Assets auf der normalen Build-/CI-Plattform neu.
++- Die Ktor-3.1.x-`embeddedServer`-Signatur unterstützt `host = "0.0.0.0"`; die explizite Angabe ist daher quellseitig kompatibel.
+diff --git a/VERSIONING.md b/VERSIONING.md
+index 6dc0b3b..c7a4bfb 100644
+--- a/VERSIONING.md
++++ b/VERSIONING.md
+@@ -23,8 +23,8 @@ also be incremented for Android package upgrades.
+ 
+ ## Current development release
+ 
+-- Software version: `0.961` (pre-1.0 development)
+-- Android `versionCode`: `34`
++- Software version: `0.962` (pre-1.0 development)
++- Android `versionCode`: `35`
+ - Frontend source: `webui/package.json`
+ - Backend/Android source: `app/build.gradle.kts`
+ 
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 08bea9e..c0359ed 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -11,8 +11,8 @@ android {
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 34
+-        versionName = "0.961"
++        versionCode = 35
++        versionName = "0.962"
+     }
+ 
+     buildTypes {
+diff --git a/app/src/main/java/com/potensic/proxy/VersionInfo.kt b/app/src/main/java/com/potensic/proxy/VersionInfo.kt
+index 49d9eec..547d8f9 100644
+--- a/app/src/main/java/com/potensic/proxy/VersionInfo.kt
++++ b/app/src/main/java/com/potensic/proxy/VersionInfo.kt
+@@ -16,7 +16,7 @@ object VersionInfo {
+         get() = "v$BACKEND_VERSION"
+ 
+     const val MAP_API_VERSION = 2
+-    const val BUILD_DATE = "2026-09-28"
++    const val BUILD_DATE = "2026-10-04"
+ 
+     fun toJson(): JSONObject = JSONObject().apply {
+         put("projectVersion", PROJECT_VERSION)
+diff --git a/app/src/main/java/com/potensic/proxy/WebServer.kt b/app/src/main/java/com/potensic/proxy/WebServer.kt
+index 2ea696c..2197605 100644
+--- a/app/src/main/java/com/potensic/proxy/WebServer.kt
++++ b/app/src/main/java/com/potensic/proxy/WebServer.kt
+@@ -64,7 +64,7 @@ class WebServer(
+ 
+     fun start(port: Int = 9090) {
+         Log.i("[WebServer] Starting on port $port...")
+-        server = embeddedServer(CIO, port = port) {
++        server = embeddedServer(CIO, host = "0.0.0.0", port = port) {
+             install(WebSockets)
+             routing {
+                 installWebUiRoutes(assetLoader)
+@@ -939,7 +939,7 @@ class WebServer(
+             }
+         }
+         server!!.start(wait = false)
+-        Log.i("[WebServer] Started on port $port")
++        Log.i("[WebServer] Started on 0.0.0.0:$port (LAN-accessible while Android network permits)")
+     }
+ 
+     /**
+diff --git a/webui/package-lock.json b/webui/package-lock.json
+index 34e35e1..34e5499 100644
+--- a/webui/package-lock.json
++++ b/webui/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.961",
++  "version": "0.962",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.961",
++      "version": "0.962",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",
+diff --git a/webui/package.json b/webui/package.json
+index 54ed0e9..9f79991 100644
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.961",
++  "version": "0.962",
+   "private": true,
+   "type": "module",
+   "scripts": {
+diff --git a/webui/src/services/MapService.ts b/webui/src/services/MapService.ts
+index eb52cc9..c791d92 100644
+--- a/webui/src/services/MapService.ts
++++ b/webui/src/services/MapService.ts
+@@ -3,9 +3,18 @@ import { useDroneStore } from '../stores/useDroneStore'
+ import { FRONTEND_VERSION } from '../version'
+ 
+ function baseUrl() {
+-  const store = useDroneStore()
+-  const proto = window.location.protocol === 'https:' ? 'https:' : 'http:'
+-  return `${proto}//${store.normalizedHost}`
++  // Map APIs belong to the same Android/Ktor backend that served the WebUI.
++  // Do not follow the configurable drone/relay target here: that setting may
++  // legitimately point to another host and would make map requests fail with
++  // NetworkError/CORS errors even though the local WebUI is still loaded.
++  // Keep the Vite development workflow usable by forwarding map calls to the
++  // configured target while running the frontend dev server.
++  if (window.location.port === '5173') {
++    const store = useDroneStore()
++    const proto = window.location.protocol === 'https:' ? 'https:' : 'http:'
++    return `${proto}//${store.normalizedHost}`
++  }
++  return window.location.origin
+ }
+ 
+ async function errorText(r: Response): Promise<string> {

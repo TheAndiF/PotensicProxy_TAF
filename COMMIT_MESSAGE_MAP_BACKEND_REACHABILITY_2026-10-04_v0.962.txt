@@ -1,0 +1,6 @@
+BL_Fix map backend reachability and same-origin routing v0.962
+
+- route production map API/tile requests to the WebUI's own origin
+- keep configurable relay target isolated from local map backend traffic
+- bind embedded Ktor/CIO server explicitly to 0.0.0.0:9090
+- bump Android/WebUI version to 0.962 and versionCode to 35
