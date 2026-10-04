@@ -2,6 +2,8 @@ import type { MapConfig, MapConnectionTest, OfflineRegion, VersionInfo } from '.
 import { useDroneStore } from '../stores/useDroneStore'
 import { FRONTEND_VERSION } from '../version'
 
+export const MAP_CONFIG_CHANGED_EVENT = 'potensic-map-config-changed'
+
 function baseUrl() {
   // Map APIs belong to the same Android/Ktor backend that served the WebUI.
   // Do not follow the configurable drone/relay target here: that setting may
@@ -26,6 +28,16 @@ async function errorText(r: Response): Promise<string> {
   }
 }
 
+function broadcastConfig(config: MapConfig) {
+  window.dispatchEvent(new CustomEvent<MapConfig>(MAP_CONFIG_CHANGED_EVENT, { detail: config }))
+}
+
+async function regionAction(id: string, action: 'update' | 'reload'): Promise<OfflineRegion> {
+  const r = await fetch(`${baseUrl()}/api/map/regions/${encodeURIComponent(id)}/${action}`, { method: 'POST' })
+  if (!r.ok) throw new Error(await errorText(r))
+  return r.json()
+}
+
 export const MapService = {
   async getVersion(): Promise<VersionInfo> {
     const r = await fetch(`${baseUrl()}/api/version`)
@@ -46,7 +58,9 @@ export const MapService = {
       body: JSON.stringify(config)
     })
     if (!r.ok) throw new Error(await errorText(r))
-    return r.json()
+    const saved = await r.json() as MapConfig
+    broadcastConfig(saved)
+    return saved
   },
   async testConfig(config: Partial<MapConfig>): Promise<MapConnectionTest> {
     const r = await fetch(`${baseUrl()}/api/map/test`, {
@@ -57,8 +71,9 @@ export const MapService = {
     if (!r.ok) throw new Error(await errorText(r))
     return r.json()
   },
-  tileUrl(z: number, x: number, y: number) {
-    return `${baseUrl()}/api/map/tiles/${z}/${x}/${y}`
+  tileUrl(z: number, x: number, y: number, revision?: number | string) {
+    const suffix = revision === undefined ? '' : `?rev=${encodeURIComponent(String(revision))}`
+    return `${baseUrl()}/api/map/tiles/${z}/${x}/${y}${suffix}`
   },
   async regions(): Promise<OfflineRegion[]> {
     const r = await fetch(`${baseUrl()}/api/map/regions`)
@@ -71,6 +86,17 @@ export const MapService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(region)
     })
+    if (!r.ok) throw new Error(await errorText(r))
+    return r.json()
+  },
+  async updateRegion(id: string): Promise<OfflineRegion> {
+    return regionAction(id, 'update')
+  },
+  async reloadRegion(id: string): Promise<OfflineRegion> {
+    return regionAction(id, 'reload')
+  },
+  async clearRegionTiles(id: string): Promise<OfflineRegion> {
+    const r = await fetch(`${baseUrl()}/api/map/regions/${encodeURIComponent(id)}/tiles`, { method: 'DELETE' })
     if (!r.ok) throw new Error(await errorText(r))
     return r.json()
   },

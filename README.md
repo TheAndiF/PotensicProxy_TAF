@@ -90,10 +90,10 @@ Each Recognition index record can carry a metadata snapshot captured at trigger 
 
 The backend owns map-provider configuration and tile proxying. The WebUI contains:
 
-- live map display;
-- provider configuration and connection test;
-- default zoom and map data mode;
-- offline-region management where permitted by the selected provider;
+- live map display with direct in-map source switching (OpenStreetMap, Mapbox presets and configured custom sources);
+- persistent backend-owned provider/token configuration and connection test;
+- explicit `Auto` (offline-first), `Offline only` and `Online first` map data modes;
+- offline-region download, update, full reload, tile deletion and removal where permitted by the selected provider;
 - mission library/editing;
 - Potensic mission export path.
 
@@ -135,8 +135,13 @@ The current backend includes, among others:
 | `POST /api/video/activate` | explicit LiveView activation |
 | `POST /api/video/request-idr` | request keyframe/IDR |
 | `GET/POST /api/drone/profile` | read/select central drone profile |
-| `GET/POST /api/map/config` | map configuration |
-| `GET /api/map/tiles/{z}/{x}/{y}` | backend tile proxy |
+| `GET/POST /api/map/config` | persistent map/provider configuration |
+| `POST /api/map/test` | provider/resource connection test |
+| `GET /api/map/tiles/{z}/{x}/{y}` | backend tile proxy with Auto/Offline/Online policy |
+| `GET/POST /api/map/regions` | list/start offline regions |
+| `POST /api/map/regions/{id}/update` | download missing/invalid region tiles |
+| `POST /api/map/regions/{id}/reload` | refresh all region tiles |
+| `DELETE /api/map/regions/{id}/tiles` | delete unshared region tiles and keep definition |
 | `GET/PUT/DELETE /api/missions/...` | mission storage |
 | `GET /api/missions/{id}/export/potensic` | Potensic export |
 | `WS /ws/usb` | bidirectional USB passthrough |

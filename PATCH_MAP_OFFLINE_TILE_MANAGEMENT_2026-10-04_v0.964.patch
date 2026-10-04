@@ -1,0 +1,1407 @@
+diff --git a/COMMIT_MESSAGE_MAP_OFFLINE_TILE_MANAGEMENT_2026-10-04_v0.964.txt b/COMMIT_MESSAGE_MAP_OFFLINE_TILE_MANAGEMENT_2026-10-04_v0.964.txt
+new file mode 100644
+index 0000000..cd444eb
+--- /dev/null
++++ b/COMMIT_MESSAGE_MAP_OFFLINE_TILE_MANAGEMENT_2026-10-04_v0.964.txt
+@@ -0,0 +1,32 @@
++BL_Add persistent map switching and offline tile lifecycle v0.964
++
++Date: 2026-10-04
++
++Summary:
++- Kept map provider/token configuration persistent in the Android backend and made map/region JSON writes safer.
++- Added direct in-map switching between OSM, Mapbox presets/custom style and Custom XYZ sources.
++- Defined Auto as offline/cache-first, Offline as cache-only and Online as provider-first with cache fallback.
++- Added offline region update, full reload, tile-only deletion and region removal with shared-tile protection.
++- Added cache size/tile status to offline region management and synchronized map settings across views.
++- Added Map API v3 region-maintenance endpoints and disabled browser tile caching so backend data-mode policy remains authoritative.
++- Bumped Android/WebUI version to 0.964 and Android versionCode to 37.
++
++Changed files:
++- MAP_INTEGRATION_NOTES.md
++- README.md
++- VERSIONING.md
++- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-04_MAP_OFFLINE_TILE_VERWALTUNG_v0.964.md
++- COMMIT_MESSAGE_MAP_OFFLINE_TILE_MANAGEMENT_2026-10-04_v0.964.txt
++- PATCH_MAP_OFFLINE_TILE_MANAGEMENT_2026-10-04_v0.964.patch
++- DOCUMENTATION/2026-10-04 - PotensicProxy_TAF - Aenderungsdokumentation - Kartenquellen-und-Offline-Tile-Verwaltung - v0.1.docx
++- DOCUMENTATION/2026-10-04 - PotensicProxy_TAF - Aenderungsdokumentation - Kartenquellen-und-Offline-Tile-Verwaltung - v0.1.pdf
++- app/build.gradle.kts
++- app/src/main/java/com/potensic/proxy/MapBackend.kt
++- app/src/main/java/com/potensic/proxy/VersionInfo.kt
++- app/src/main/java/com/potensic/proxy/WebServer.kt
++- webui/package-lock.json
++- webui/package.json
++- webui/src/components/cockpit/MapView.vue
++- webui/src/components/settings/MapSettingsView.vue
++- webui/src/services/MapService.ts
++- webui/src/types/map.ts
+diff --git a/MAP_INTEGRATION_NOTES.md b/MAP_INTEGRATION_NOTES.md
+index 8454bb7..b4abd2f 100644
+--- a/MAP_INTEGRATION_NOTES.md
++++ b/MAP_INTEGRATION_NOTES.md
+@@ -167,3 +167,49 @@ v0.963 changes the provider path as follows:
+ The map provider contract is otherwise unchanged: successful or provider-level failed tests are returned by `MapBackend.testConnection()` as the existing `MapConnectionTest` structure with `ok`, `httpStatus`, `resource`, `tokenType`, `contentType` and `message` fields. Map API remains v2.
+ 
+ No USB/BX3, camera, telemetry, live-view or flight-control protocol was changed.
++
++## v0.964 - Persistent map configuration, in-map source switching and offline tile lifecycle
++
++Version v0.964 extends the existing backend-owned map integration without moving provider credentials or tile-provider requests into the browser.
++
++### Persistent provider/token configuration
++
++- The backend configuration in `filesDir/map/config.json` remains the persistent source for provider settings and the access token. It survives WebUI reloads, app restarts and device restarts; Android app-data reset or uninstall removes it.
++- `GET /api/map/config` still returns a stored token only as `********` plus `hasAccessToken` and `tokenType`; the clear token is not echoed back to the WebUI.
++- Config and offline-region JSON files are now written through a temporary file/replace step to reduce the risk of a partially written file after interruption.
++- Custom XYZ configuration now has its own `customTileUrlTemplate` field so switching to OpenStreetMap does not overwrite a previously configured custom source.
++
++### Source and data-mode switching inside the map
++
++The map overlay now provides direct source and data-mode selectors. The user can switch the visible map without leaving the map itself. Presets include OpenStreetMap, Mapbox Satellite, Mapbox Streets, Mapbox Outdoors, the configured Mapbox custom style and a configured custom XYZ source.
++
++The backend remains authoritative for tile access. Browser tile responses use `Cache-Control: no-store` so browser image caching cannot hide a provider/data-mode change. A frontend tile revision also forces currently visible tiles to be requested again after a saved configuration change.
++
++Data modes are now explicit:
++
++- `auto`: cache/offline first. A valid local tile is returned immediately; only missing/invalid tiles are downloaded and then cached.
++- `offline`: cache only. No provider request is performed; a missing tile returns unavailable.
++- `online`: provider first. The provider is queried and a successful response replaces the local cached tile. If the provider is temporarily unavailable, an already valid local tile is used as a resilience fallback.
++
++### Offline-region lifecycle
++
++Stored offline regions now retain their source identity and expose cached tile count plus byte size after download/maintenance operations. Region maintenance actions are available from the Map settings panel:
++
++- `Update`: downloads only missing/invalid tiles for the region.
++- `Reload`: refreshes every tile from the region's stored provider/source. An existing tile is replaced only after a successful provider response so an interrupted reload does not intentionally destroy the previous valid copy.
++- `Delete tiles`: deletes locally cached tiles belonging only to that region while keeping the region definition. Tiles that are also referenced by another stored region with the same cache namespace are preserved.
++- `Remove`: removes the region definition and asynchronously deletes its unshared cached tiles.
++
++An interrupted `downloading`, `updating`, `reloading` or `clearing` state from a previous Android process is recovered as `interrupted` on the next backend start so the region is not permanently locked.
++
++The public OpenStreetMap tile service remains excluded from bulk/offline prefetching. Provider-specific caching/offline terms remain the user's/provider account responsibility.
++
++### Map API v3 additions
++
++Map API index is increased from 2 to 3. Existing endpoints remain compatible and the following maintenance endpoints are added:
++
++- `POST /api/map/regions/{id}/update`
++- `POST /api/map/regions/{id}/reload`
++- `DELETE /api/map/regions/{id}/tiles`
++
++No USB/BX3, camera, telemetry, LiveView or flight-control protocol is changed by v0.964.
+diff --git a/NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-04_MAP_OFFLINE_TILE_VERWALTUNG_v0.964.md b/NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-04_MAP_OFFLINE_TILE_VERWALTUNG_v0.964.md
+new file mode 100644
+index 0000000..51d5d53
+--- /dev/null
++++ b/NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-04_MAP_OFFLINE_TILE_VERWALTUNG_v0.964.md
+@@ -0,0 +1,87 @@
++# Nur Änderungen in Originalstruktur - Map Offline-Tile-Verwaltung v0.964
++
++Datum: 2026-10-04
++
++## Anlass
++
++Die Kartenfunktion soll nach der Wiederherstellung der Backend-Erreichbarkeit und der Android-kompatiblen Providerkommunikation als dauerhaft nutzbare Kartenlösung erweitert werden. Gewünscht sind eine persistente Speicherung des Karten-Keys, die direkte Umschaltung zwischen Satellit/Karte/weiteren Quellen innerhalb der Karte, ein eindeutig steuerbares Offline-/Online-Verhalten sowie Wartungsfunktionen für bereits heruntergeladene Tiles.
++
++## Änderungen
++
++- `app/src/main/java/com/potensic/proxy/MapBackend.kt`
++  - Bestehende backendseitige Token-/Providerkonfiguration wird als dauerhafte app-interne Konfiguration beibehalten und jetzt atomarer geschrieben (`config.json.tmp` -> Ziel). Der Token wird weiterhin nicht im Klartext an die WebUI zurückgegeben.
++  - Eigene `customTileUrlTemplate`-Konfiguration ergänzt, damit die Umschaltung auf OpenStreetMap eine konfigurierte Custom-XYZ-Quelle nicht überschreibt.
++  - Karten-Datenmodi präzisiert:
++    - `auto`: lokaler Cache wird bevorzugt; nur fehlende/ungültige Tiles werden online geladen und gespeichert.
++    - `offline`: ausschließlich lokaler Cache; keine Provideranfrage.
++    - `online`: Provider wird bevorzugt abgefragt und der Cache aktualisiert; bei temporärem Providerfehler kann ein bereits gültiger Cache-Tile als Fallback genutzt werden.
++  - Offline-Regionen speichern zusätzlich die für einen späteren Update-/Reload-Vorgang notwendige Quellenidentität sowie `cachedTiles` und `sizeBytes`.
++  - `Update` lädt nur fehlende/ungültige Tiles nach.
++  - `Reload` lädt alle Tiles erneut vom gespeicherten Provider und ersetzt vorhandene Dateien erst nach erfolgreichem Download.
++  - `Delete tiles` löscht die nur dieser Region zugeordneten Cache-Tiles, lässt die Regionsdefinition bestehen und erhält Tiles, die von einer anderen gespeicherten Region mit gleichem Cache-Namespace mitbenutzt werden.
++  - `Remove` entfernt die Regionsdefinition und löscht nicht geteilte Tiles asynchron.
++  - Nach Prozess-/App-Neustart werden liegen gebliebene aktive Statuswerte als `interrupted` wieder freigegeben.
++  - Regionsmetadaten werden ebenfalls atomarer geschrieben.
++
++- `app/src/main/java/com/potensic/proxy/WebServer.kt`
++  - Browserseitiges Tile-Caching wird für `/api/map/tiles/*` mit `Cache-Control: no-store` unterbunden, damit allein der Backendmodus Auto/Offline/Online über die Cache-Nutzung entscheidet.
++  - Neue Map-API-v3-Endpunkte:
++    - `POST /api/map/regions/{id}/update`
++    - `POST /api/map/regions/{id}/reload`
++    - `DELETE /api/map/regions/{id}/tiles`
++  - Laufende Regionsoperationen liefern bei konkurrierenden Wartungsaufrufen `HTTP 409`.
++
++- `webui/src/components/cockpit/MapView.vue`
++  - Direktes Kartenmenü als Overlay in der Karte ergänzt.
++  - Umschaltung zwischen OpenStreetMap, Mapbox Satellite, Mapbox Streets, Mapbox Outdoors, dem konfigurierten Mapbox-Stil und Custom XYZ möglich.
++  - Direkte Umschaltung zwischen `Auto`, `Offline only` und `Online first` möglich.
++  - Gespeicherter/fehlender Mapbox-Token wird im Kartenoverlay nur als Status angezeigt.
++  - Nach Provider-/Modusänderung werden sichtbare Tiles mit neuer Revision angefordert, ohne Position oder Zoom zurückzusetzen.
++
++- `webui/src/components/settings/MapSettingsView.vue`
++  - Dauerhafte Token-Speicherung und deren Grenzen werden in der Oberfläche sichtbar erklärt.
++  - Datenmodus-Verhalten wird verständlich beschrieben.
++  - Offline-Bereichsverwaltung um `Update`, `Reload`, `Delete tiles` und `Remove` erweitert.
++  - Bestätigungsdialoge für Reload, Tile-Löschung und Regionsentfernung ergänzt.
++  - Cache-Größe und vorhandene Tile-Anzahl werden angezeigt.
++  - Konfigurationsänderungen aus dem Kartenoverlay werden live in die Einstellungen übernommen.
++
++- `webui/src/services/MapService.ts`
++  - Konfigurationsänderungsereignis zwischen Kartenoverlay und Einstellungsansicht ergänzt.
++  - Tile-Revision für kontrolliertes Neuladen ergänzt.
++  - API-Aufrufe für Update, Reload und Tile-Löschung ergänzt.
++
++- `webui/src/types/map.ts`
++  - `MapDataMode`, `customTileUrlTemplate` und zusätzliche Offline-Regionsmetadaten ergänzt.
++
++- Versionsstand
++  - Android/WebUI: `0.964`
++  - Android `versionCode`: `37`
++  - Map API: `3`
++  - Build-Datum: `2026-10-04`
++
++## Erwartetes Verhalten
++
++1. Ein einmal gespeicherter Token bleibt nach WebUI-, App- und Geräte-Neustart im Android-Backend erhalten und wird an den Browser nur maskiert zurückgegeben. Android-App-Daten löschen bzw. Deinstallation entfernt die gespeicherte Konfiguration.
++2. Kartenquelle und Datenmodus können direkt in der Karte umgeschaltet werden; Position und Zoom bleiben erhalten.
++3. `Auto` verwendet vorhandene Offline-/Cache-Tiles zuerst und lädt nur Fehlendes online nach.
++4. `Offline only` erzeugt keine Provideranfragen und zeigt nur bereits lokal vorhandene Tiles.
++5. `Online first` aktualisiert Tiles bevorzugt vom Provider und nutzt vorhandene lokale Tiles nur als Fallback bei einem Providerfehler.
++6. Offline-Regionen können nachgeladen, vollständig aktualisiert, von lokalen Tiles bereinigt oder vollständig entfernt werden.
++7. Das Löschen von Tiles einer Region zerstört keine Tiles, die von einer weiteren gespeicherten Region mit derselben Kartenquelle benötigt werden.
++8. Die öffentliche OpenStreetMap-Tile-Infrastruktur bleibt für Bulk-/Offline-Prefetch gesperrt.
++
++## Validierung
++
++- `vue-tsc --noEmit`: fehlerfrei.
++- `MapBackend.kt` wurde mit Kotlin/JVM und lokalen Stubs für Android-/Projektabhängigkeiten syntaktisch und typseitig kompiliert; keine Kotlin-Fehler in der geänderten Backenddatei.
++- `git diff --check`: wird vor Auslieferung ausgeführt.
++- Vite-Produktionserzeugung kann in der isolierten Linux-Umgebung mit dem im Paket enthaltenen `node_modules` nicht abgeschlossen werden, da die optionale Linux-Rollup-Nativabhängigkeit `@rollup/rollup-linux-x64-gnu` fehlt.
++- Der vollständige Android-Gradle-Build kann in dieser Umgebung nicht gestartet werden, weil Gradle 8.11.1 nicht lokal vorliegt und `services.gradle.org` aufgrund fehlenden Netzwerkzugriffs nicht aufgelöst werden kann.
++- Der Geräte-/CI-Lauf bleibt Bestandteil der Abnahme.
++
++## Nicht geändert
++
++- Keine Änderung an USB/BX3, Kamera, LiveView, Telemetrie oder Flugsteuerungsprotokollen.
++- Keine Auslagerung des Mapbox-Tokens in die WebUI.
++- Keine Freigabe von OSM-Bulk-/Offline-Prefetch.
+diff --git a/README.md b/README.md
+index 8a39d1b..70ed194 100644
+--- a/README.md
++++ b/README.md
+@@ -90,10 +90,10 @@ Each Recognition index record can carry a metadata snapshot captured at trigger
+ 
+ The backend owns map-provider configuration and tile proxying. The WebUI contains:
+ 
+-- live map display;
+-- provider configuration and connection test;
+-- default zoom and map data mode;
+-- offline-region management where permitted by the selected provider;
++- live map display with direct in-map source switching (OpenStreetMap, Mapbox presets and configured custom sources);
++- persistent backend-owned provider/token configuration and connection test;
++- explicit `Auto` (offline-first), `Offline only` and `Online first` map data modes;
++- offline-region download, update, full reload, tile deletion and removal where permitted by the selected provider;
+ - mission library/editing;
+ - Potensic mission export path.
+ 
+@@ -135,8 +135,13 @@ The current backend includes, among others:
+ | `POST /api/video/activate` | explicit LiveView activation |
+ | `POST /api/video/request-idr` | request keyframe/IDR |
+ | `GET/POST /api/drone/profile` | read/select central drone profile |
+-| `GET/POST /api/map/config` | map configuration |
+-| `GET /api/map/tiles/{z}/{x}/{y}` | backend tile proxy |
++| `GET/POST /api/map/config` | persistent map/provider configuration |
++| `POST /api/map/test` | provider/resource connection test |
++| `GET /api/map/tiles/{z}/{x}/{y}` | backend tile proxy with Auto/Offline/Online policy |
++| `GET/POST /api/map/regions` | list/start offline regions |
++| `POST /api/map/regions/{id}/update` | download missing/invalid region tiles |
++| `POST /api/map/regions/{id}/reload` | refresh all region tiles |
++| `DELETE /api/map/regions/{id}/tiles` | delete unshared region tiles and keep definition |
+ | `GET/PUT/DELETE /api/missions/...` | mission storage |
+ | `GET /api/missions/{id}/export/potensic` | Potensic export |
+ | `WS /ws/usb` | bidirectional USB passthrough |
+diff --git a/VERSIONING.md b/VERSIONING.md
+index a2ae818..61c3547 100644
+--- a/VERSIONING.md
++++ b/VERSIONING.md
+@@ -23,8 +23,8 @@ also be incremented for Android package upgrades.
+ 
+ ## Current development release
+ 
+-- Software version: `0.963` (pre-1.0 development)
+-- Android `versionCode`: `36`
++- Software version: `0.964` (pre-1.0 development)
++- Android `versionCode`: `37`
+ - Frontend source: `webui/package.json`
+ - Backend/Android source: `app/build.gradle.kts`
+ 
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index ade19f4..86825c3 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -11,8 +11,8 @@ android {
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 36
+-        versionName = "0.963"
++        versionCode = 37
++        versionName = "0.964"
+     }
+ 
+     buildTypes {
+diff --git a/app/src/main/java/com/potensic/proxy/MapBackend.kt b/app/src/main/java/com/potensic/proxy/MapBackend.kt
+index 2065878..414b6d0 100644
+--- a/app/src/main/java/com/potensic/proxy/MapBackend.kt
++++ b/app/src/main/java/com/potensic/proxy/MapBackend.kt
+@@ -29,6 +29,8 @@ class MapBackend(private val rootDir: File) {
+ 
+     @Volatile private var config: JSONObject = loadConfig()
+ 
++    init { recoverInterruptedRegions() }
++
+     private data class HttpResult(
+         val status: Int,
+         val contentType: String?,
+@@ -40,6 +42,7 @@ class MapBackend(private val rootDir: File) {
+         put("provider", "osm")
+         put("style", "street")
+         put("tileUrlTemplate", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
++        put("customTileUrlTemplate", "")
+         put("accessToken", "")
+         put("mapboxStyle", "mapbox://styles/mapbox/streets-v12")
+         put("attribution", "© OpenStreetMap contributors")
+@@ -53,6 +56,9 @@ class MapBackend(private val rootDir: File) {
+         val loaded = if (configFile.exists()) JSONObject(configFile.readText()) else defaultConfig()
+         // Add fields introduced after the first map integration without invalidating an existing config.
+         if (!loaded.has("mapboxStyle")) loaded.put("mapboxStyle", "mapbox://styles/mapbox/streets-v12")
++        if (!loaded.has("customTileUrlTemplate")) {
++            loaded.put("customTileUrlTemplate", if (loaded.optString("provider") == "custom") loaded.optString("tileUrlTemplate") else "")
++        }
+         loaded
+     } catch (_: Exception) { defaultConfig() }
+ 
+@@ -77,7 +83,7 @@ class MapBackend(private val rootDir: File) {
+ 
+     private fun mergeConfig(base: JSONObject, input: JSONObject): JSONObject {
+         val next = JSONObject(base.toString())
+-        listOf("provider", "style", "tileUrlTemplate", "mapboxStyle", "attribution", "orientation", "dataMode").forEach {
++        listOf("provider", "style", "tileUrlTemplate", "customTileUrlTemplate", "mapboxStyle", "attribution", "orientation", "dataMode").forEach {
+             if (input.has(it)) next.put(it, input.getString(it))
+         }
+         if (input.has("defaultZoom")) next.put("defaultZoom", input.getInt("defaultZoom").coerceIn(1, 19))
+@@ -96,10 +102,10 @@ class MapBackend(private val rootDir: File) {
+         require(candidate.optString("orientation", "north") in setOf("north", "heading")) { "Invalid map orientation" }
+         require(candidate.optString("dataMode", "auto") in setOf("auto", "offline", "online")) { "Invalid map data mode" }
+ 
+-        if (provider == "osm" || provider == "custom") {
+-            val template = candidate.optString("tileUrlTemplate")
++        if (provider == "custom") {
++            val template = candidate.optString("customTileUrlTemplate").ifBlank { candidate.optString("tileUrlTemplate") }
+             require(template.startsWith("https://") && template.contains("{z}") && template.contains("{x}") && template.contains("{y}")) {
+-                "Tile URL must be HTTPS and contain {z}, {x}, {y}"
++                "Custom tile URL must be HTTPS and contain {z}, {x}, {y}"
+             }
+         }
+ 
+@@ -117,7 +123,7 @@ class MapBackend(private val rootDir: File) {
+     @Synchronized fun updateConfig(input: JSONObject): JSONObject {
+         val next = mergeConfig(config, input)
+         config = next
+-        configFile.writeText(next.toString(2))
++        writeJsonAtomic(configFile, next.toString(2))
+         return publicConfig()
+     }
+ 
+@@ -163,18 +169,43 @@ class MapBackend(private val rootDir: File) {
+         if (z !in 0..19) return null
+         val n = 1 shl z
+         if (x !in 0 until n || y !in 0 until n) return null
+-        val current = config
++        val current = JSONObject(config.toString())
+         val file = tileFile(current, z, x, y)
+-        if (file.exists()) {
+-            val bytes = file.readBytes()
+-            val type = guessContentType(bytes)
+-            if (type != "application/octet-stream") return bytes to type
++        val cached = readCachedTile(file)
++        return when (current.optString("dataMode", "auto")) {
++            "offline" -> cached
++            "online" -> {
++                // Online mode deliberately refreshes from the provider first. If the
++                // provider is temporarily unavailable, keep the last valid local tile
++                // as a resilient fallback instead of blanking the map.
++                val fresh = downloadTile(current, z, x, y)
++                if (fresh != null) {
++                    file.parentFile?.mkdirs()
++                    file.writeBytes(fresh)
++                    fresh to guessContentType(fresh)
++                } else cached
++            }
++            else -> {
++                // Auto is cache-first: already downloaded/offline tiles are preferred,
++                // and only missing tiles are fetched and persisted.
++                cached ?: downloadTile(current, z, x, y)?.let { bytes ->
++                    file.parentFile?.mkdirs()
++                    file.writeBytes(bytes)
++                    bytes to guessContentType(bytes)
++                }
++            }
++        }
++    }
++
++    private fun readCachedTile(file: File): Pair<ByteArray, String>? {
++        if (!file.exists()) return null
++        val bytes = try { file.readBytes() } catch (_: Exception) { return null }
++        val type = guessContentType(bytes)
++        if (type == "application/octet-stream") {
+             file.delete()
++            return null
+         }
+-        if (current.optString("dataMode", "auto") == "offline") return null
+-        val bytes = downloadTile(current, z, x, y) ?: return null
+-        file.parentFile?.mkdirs(); file.writeBytes(bytes)
+-        return bytes to guessContentType(bytes)
++        return bytes to type
+     }
+ 
+     private fun downloadTile(candidate: JSONObject, z: Int, x: Int, y: Int): ByteArray? {
+@@ -277,7 +308,8 @@ class MapBackend(private val rootDir: File) {
+                 val (owner, styleId) = parseMapboxStyle(candidate.optString("mapboxStyle"))
+                 "https://api.mapbox.com/styles/v1/$owner/$styleId/tiles/256/$z/$x/$y?access_token=$token"
+             }
+-            else -> candidate.optString("tileUrlTemplate")
++            "osm" -> "https://tile.openstreetmap.org/$z/$x/$y.png"
++            else -> candidate.optString("customTileUrlTemplate").ifBlank { candidate.optString("tileUrlTemplate") }
+                 .replace("{z}", z.toString()).replace("{x}", x.toString()).replace("{y}", y.toString())
+                 .replace("{key}", token).replace("{token}", token)
+         }
+@@ -300,14 +332,18 @@ class MapBackend(private val rootDir: File) {
+         val identity = when (candidate.optString("provider", "osm")) {
+             "mapbox-satellite" -> "mapbox-satellite|mapbox.satellite"
+             "mapbox-style" -> "mapbox-style|${candidate.optString("mapboxStyle")}"
+-            else -> "${candidate.optString("provider")}|${candidate.optString("tileUrlTemplate")}"
++            "osm" -> "osm|https://tile.openstreetmap.org/{z}/{x}/{y}.png"
++            else -> "custom|${candidate.optString("customTileUrlTemplate").ifBlank { candidate.optString("tileUrlTemplate") }}"
+         }
+         val digest = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
+         return digest.take(10).joinToString("") { "%02x".format(it) }
+     }
+ 
+     private fun tileFile(candidate: JSONObject, z: Int, x: Int, y: Int): File =
+-        File(cacheDir, "${cacheNamespace(candidate)}/$z/$x/$y.tile")
++        tileFile(cacheNamespace(candidate), z, x, y)
++
++    private fun tileFile(namespace: String, z: Int, x: Int, y: Int): File =
++        File(cacheDir, "$namespace/$z/$x/$y.tile")
+ 
+     private fun guessContentType(bytes: ByteArray): String = when {
+         bytes.size >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() -> "image/png"
+@@ -320,10 +356,29 @@ class MapBackend(private val rootDir: File) {
+         if (regionsFile.exists()) JSONArray(regionsFile.readText()) else JSONArray()
+     } catch (_: Exception) { JSONArray() }
+ 
++    private fun recoverInterruptedRegions() {
++        try {
++            if (!regionsFile.exists()) return
++            val all = JSONArray(regionsFile.readText())
++            var changed = false
++            for (i in 0 until all.length()) {
++                val region = all.getJSONObject(i)
++                if (region.optString("status") in setOf("downloading", "updating", "reloading", "clearing")) {
++                    region.put("status", "interrupted")
++                    changed = true
++                }
++            }
++            if (changed) writeJsonAtomic(regionsFile, all.toString(2))
++        } catch (e: Exception) {
++            Log.w("[Map] could not recover interrupted offline region state: ${e.message}")
++        }
++    }
++
+     @Synchronized private fun saveRegion(region: JSONObject) {
+         val all = regions(); val next = JSONArray()
+         for (i in 0 until all.length()) if (all.getJSONObject(i).optString("id") != region.optString("id")) next.put(all.getJSONObject(i))
+-        next.put(region); regionsFile.writeText(next.toString(2))
++        next.put(region)
++        writeJsonAtomic(regionsFile, next.toString(2))
+     }
+ 
+     fun startRegionDownload(input: JSONObject): JSONObject {
+@@ -339,41 +394,254 @@ class MapBackend(private val rootDir: File) {
+         val minZoom = input.optInt("minZoom", 11).coerceIn(1, 19)
+         val maxZoom = input.optInt("maxZoom", 16).coerceIn(minZoom, 19)
+         val id = input.optString("id").ifBlank { "region_${System.currentTimeMillis()}" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
++        require(!isRegionBusy(id)) { "Offline region '$id' is already being processed" }
++
+         val region = JSONObject().apply {
+             put("id", id); put("latitude", lat); put("longitude", lon); put("radiusM", radiusM)
+             put("minZoom", minZoom); put("maxZoom", maxZoom); put("status", "downloading")
+             put("provider", current.optString("provider")); put("resource", resourceLabel(current)); put("cacheNamespace", cacheNamespace(current))
+-            put("downloaded", 0); put("total", countTiles(lat, lon, radiusM, minZoom, maxZoom)); put("downloadedAt", JSONObject.NULL)
++            put("style", current.optString("style")); put("mapboxStyle", current.optString("mapboxStyle"))
++            put("tileUrlTemplate", current.optString("tileUrlTemplate")); put("customTileUrlTemplate", current.optString("customTileUrlTemplate"))
++            put("attribution", current.optString("attribution"))
++            put("downloaded", 0); put("cachedTiles", 0); put("sizeBytes", 0L)
++            put("total", countTiles(lat, lon, radiusM, minZoom, maxZoom)); put("errors", 0); put("downloadedAt", JSONObject.NULL)
++        }
++        saveRegion(region)
++        launchRegionDownload(region, current, forceRefresh = false, activityStatus = "downloading")
++        return JSONObject(region.toString())
++    }
++
++    fun updateRegion(id: String): JSONObject {
++        val region = findRegion(id) ?: throw IllegalArgumentException("Offline region '$id' was not found")
++        check(!isRegionBusy(id)) { "Offline region '$id' is already being processed" }
++        val source = sourceConfigForRegion(region)
++        require(source.optString("provider") != "osm") { "Offline update is not permitted for the public OpenStreetMap tile service" }
++        launchRegionDownload(region, source, forceRefresh = false, activityStatus = "updating")
++        return JSONObject(region.toString())
++    }
++
++    fun reloadRegion(id: String): JSONObject {
++        val region = findRegion(id) ?: throw IllegalArgumentException("Offline region '$id' was not found")
++        check(!isRegionBusy(id)) { "Offline region '$id' is already being processed" }
++        val source = sourceConfigForRegion(region)
++        require(source.optString("provider") != "osm") { "Offline reload is not permitted for the public OpenStreetMap tile service" }
++        // Force-refresh every tile. Existing tiles are replaced only after a successful
++        // provider response, so an interrupted reload does not destroy the previous cache.
++        launchRegionDownload(region, source, forceRefresh = true, activityStatus = "reloading")
++        return JSONObject(region.toString())
++    }
++
++    fun clearRegionTiles(id: String): JSONObject {
++        val region = findRegion(id) ?: throw IllegalArgumentException("Offline region '$id' was not found")
++        check(!isRegionBusy(id)) { "Offline region '$id' is already being processed" }
++        region.put("status", "clearing")
++        region.put("downloaded", 0)
++        region.put("errors", 0)
++        saveRegion(region)
++        jobs[id] = JSONObject(region.toString())
++        scope.launch {
++            try {
++                val others = regionList().filter { it.optString("id") != id }
++                val deleted = deleteRegionTilesInternal(region, others)
++                val cache = scanRegionCache(region)
++                region.put("status", "tiles_cleared")
++                region.put("cachedTiles", cache.first)
++                region.put("sizeBytes", cache.second)
++                region.put("lastDeletedTiles", deleted)
++                region.put("downloadedAt", JSONObject.NULL)
++                Log.i("[Map] cleared $deleted exclusive cached tiles for offline region $id; ${cache.first} shared tiles retained")
++            } catch (e: Exception) {
++                region.put("status", "error")
++                region.put("lastError", e.message ?: e.javaClass.simpleName)
++                Log.e("[Map] clearing tiles for offline region $id failed", e)
++            } finally {
++                saveRegion(region)
++                jobs[id] = JSONObject(region.toString())
++            }
+         }
+-        saveRegion(region); jobs[id] = region
++        return JSONObject(region.toString())
++    }
++
++    private fun launchRegionDownload(region: JSONObject, source: JSONObject, forceRefresh: Boolean, activityStatus: String) {
++        val id = region.getString("id")
++        region.put("status", activityStatus)
++        region.put("downloaded", 0)
++        region.put("errors", 0)
++        saveRegion(region)
++        jobs[id] = JSONObject(region.toString())
+         scope.launch {
+-            var done = 0; var errors = 0
+-            for (z in minZoom..maxZoom) {
+-                forEachRegionTile(lat, lon, radiusM, z) { x, y ->
+-                    val f = tileFile(current, z, x, y)
+-                    if (!f.exists()) {
+-                        val b = downloadTile(current, z, x, y)
+-                        if (b != null) { f.parentFile?.mkdirs(); f.writeBytes(b) } else errors++
++            var done = 0
++            var errors = 0
++            val lat = region.getDouble("latitude")
++            val lon = region.getDouble("longitude")
++            val radiusM = region.getDouble("radiusM")
++            val minZoom = region.getInt("minZoom")
++            val maxZoom = region.getInt("maxZoom")
++            try {
++                for (z in minZoom..maxZoom) {
++                    forEachRegionTile(lat, lon, radiusM, z) { x, y ->
++                        val f = tileFile(source, z, x, y)
++                        if (forceRefresh || !isValidCachedTile(f)) {
++                            val b = downloadTile(source, z, x, y)
++                            if (b != null) {
++                                f.parentFile?.mkdirs()
++                                f.writeBytes(b)
++                            } else errors++
++                        }
++                        done++
++                        region.put("downloaded", done)
++                        region.put("errors", errors)
++                        jobs[id] = JSONObject(region.toString())
++                        if (done % 25 == 0) saveRegion(region)
+                     }
+-                    done++
+-                    region.put("downloaded", done); region.put("errors", errors); jobs[id] = JSONObject(region.toString())
+-                    if (done % 25 == 0) saveRegion(region)
+                 }
++                val cache = scanRegionCache(region)
++                region.put("cachedTiles", cache.first)
++                region.put("sizeBytes", cache.second)
++                region.put("status", if (errors == 0) "ready" else "ready_with_errors")
++                region.put("downloadedAt", System.currentTimeMillis())
++            } catch (e: Exception) {
++                region.put("status", "error")
++                region.put("lastError", e.message ?: e.javaClass.simpleName)
++                Log.e("[Map] offline region $activityStatus failed for $id", e)
++            } finally {
++                saveRegion(region)
++                jobs[id] = JSONObject(region.toString())
+             }
+-            region.put("status", if (errors == 0) "ready" else "ready_with_errors")
+-            region.put("downloadedAt", System.currentTimeMillis()); saveRegion(region); jobs[id] = JSONObject(region.toString())
+         }
+-        return region
+     }
+ 
+-    fun job(id: String): JSONObject? = jobs[id] ?: run {
+-        val a = regions(); for (i in 0 until a.length()) if (a.getJSONObject(i).optString("id") == id) return@run a.getJSONObject(i); null
+-    }
++    fun job(id: String): JSONObject? = jobs[id] ?: findRegion(id)
+ 
+     @Synchronized fun deleteRegion(id: String): Boolean {
+-        val all = regions(); val next = JSONArray(); var found = false
+-        for (i in 0 until all.length()) { val r = all.getJSONObject(i); if (r.optString("id") == id) found = true else next.put(r) }
+-        if (found) regionsFile.writeText(next.toString(2)); jobs.remove(id); return found
++        check(!isRegionBusy(id)) { "Offline region '$id' is already being processed" }
++        val all = regions()
++        var removed: JSONObject? = null
++        val next = JSONArray()
++        for (i in 0 until all.length()) {
++            val r = all.getJSONObject(i)
++            if (r.optString("id") == id) removed = JSONObject(r.toString()) else next.put(r)
++        }
++        if (removed == null) return false
++        writeJsonAtomic(regionsFile, next.toString(2))
++        jobs.remove(id)
++        val removedRegion = removed
++        val remaining = (0 until next.length()).map { JSONObject(next.getJSONObject(it).toString()) }
++        scope.launch {
++            try {
++                val deleted = deleteRegionTilesInternal(removedRegion, remaining)
++                Log.i("[Map] removed offline region $id and deleted $deleted unshared cached tiles")
++            } catch (e: Exception) {
++                Log.e("[Map] cleanup after deleting offline region $id failed", e)
++            }
++        }
++        return true
++    }
++
++    private fun findRegion(id: String): JSONObject? {
++        val all = regions()
++        for (i in 0 until all.length()) {
++            val r = all.getJSONObject(i)
++            if (r.optString("id") == id) return JSONObject(r.toString())
++        }
++        return null
++    }
++
++    private fun regionList(): List<JSONObject> {
++        val all = regions()
++        return (0 until all.length()).map { JSONObject(all.getJSONObject(it).toString()) }
++    }
++
++    private fun isRegionBusy(id: String): Boolean {
++        // Only in-memory jobs are active. A persisted "downloading" state may be
++        // left behind after an app/process restart and must not lock the region forever.
++        val status = jobs[id]?.optString("status") ?: return false
++        return status in setOf("downloading", "updating", "reloading", "clearing")
++    }
++
++    private fun sourceConfigForRegion(region: JSONObject): JSONObject {
++        val source = JSONObject(config.toString())
++        source.put("provider", region.optString("provider", source.optString("provider")))
++        listOf("style", "mapboxStyle", "tileUrlTemplate", "customTileUrlTemplate", "attribution").forEach { key ->
++            if (region.has(key)) source.put(key, region.optString(key))
++        }
++        validateConfig(source)
++        val expectedNamespace = region.optString("cacheNamespace")
++        require(expectedNamespace.isBlank() || cacheNamespace(source) == expectedNamespace) {
++            "The stored offline region source no longer matches its cache namespace. Create the region again."
++        }
++        return source
++    }
++
++    private fun scanRegionCache(region: JSONObject): Pair<Int, Long> {
++        val namespace = region.optString("cacheNamespace")
++        if (namespace.isBlank()) return 0 to 0L
++        var count = 0
++        var bytes = 0L
++        val lat = region.getDouble("latitude")
++        val lon = region.getDouble("longitude")
++        val radiusM = region.getDouble("radiusM")
++        for (z in region.getInt("minZoom")..region.getInt("maxZoom")) {
++            forEachRegionTile(lat, lon, radiusM, z) { x, y ->
++                val file = tileFile(namespace, z, x, y)
++                if (isValidCachedTile(file)) {
++                    count++
++                    bytes += file.length()
++                }
++            }
++        }
++        return count to bytes
++    }
++
++    private fun isValidCachedTile(file: File): Boolean {
++        if (!file.exists()) return false
++        return try {
++            val bytes = file.readBytes()
++            if (guessContentType(bytes) == "application/octet-stream") {
++                file.delete()
++                false
++            } else true
++        } catch (_: Exception) { false }
++    }
++
++    private fun deleteRegionTilesInternal(region: JSONObject, otherRegions: List<JSONObject>): Int {
++        val namespace = region.optString("cacheNamespace")
++        if (namespace.isBlank()) return 0
++        var deleted = 0
++        val lat = region.getDouble("latitude")
++        val lon = region.getDouble("longitude")
++        val radiusM = region.getDouble("radiusM")
++        for (z in region.getInt("minZoom")..region.getInt("maxZoom")) {
++            forEachRegionTile(lat, lon, radiusM, z) { x, y ->
++                val shared = otherRegions.any { other ->
++                    other.optString("cacheNamespace") == namespace &&
++                        z in other.optInt("minZoom", 1)..other.optInt("maxZoom", 19) &&
++                        tileIntersectsCircle(x, y, z, other.optDouble("latitude"), other.optDouble("longitude"), other.optDouble("radiusM"))
++                }
++                if (!shared) {
++                    val file = tileFile(namespace, z, x, y)
++                    if (file.exists() && file.delete()) deleted++
++                }
++            }
++        }
++        pruneEmptyDirectories(File(cacheDir, namespace))
++        return deleted
++    }
++
++    private fun pruneEmptyDirectories(dir: File) {
++        if (!dir.exists() || !dir.isDirectory) return
++        dir.listFiles()?.filter { it.isDirectory }?.forEach { pruneEmptyDirectories(it) }
++        if (dir.listFiles()?.isEmpty() == true) dir.delete()
++    }
++
++    private fun writeJsonAtomic(file: File, content: String) {
++        file.parentFile?.mkdirs()
++        val tmp = File(file.parentFile, "${file.name}.tmp")
++        tmp.writeText(content)
++        if (!tmp.renameTo(file)) {
++            file.writeText(content)
++            tmp.delete()
++        }
+     }
+ 
+     private fun countTiles(lat: Double, lon: Double, radiusM: Double, minZ: Int, maxZ: Int): Int {
+diff --git a/app/src/main/java/com/potensic/proxy/VersionInfo.kt b/app/src/main/java/com/potensic/proxy/VersionInfo.kt
+index 547d8f9..edd9d73 100644
+--- a/app/src/main/java/com/potensic/proxy/VersionInfo.kt
++++ b/app/src/main/java/com/potensic/proxy/VersionInfo.kt
+@@ -15,7 +15,7 @@ object VersionInfo {
+     val PROJECT_VERSION: String
+         get() = "v$BACKEND_VERSION"
+ 
+-    const val MAP_API_VERSION = 2
++    const val MAP_API_VERSION = 3
+     const val BUILD_DATE = "2026-10-04"
+ 
+     fun toJson(): JSONObject = JSONObject().apply {
+diff --git a/app/src/main/java/com/potensic/proxy/WebServer.kt b/app/src/main/java/com/potensic/proxy/WebServer.kt
+index 8fcf23b..008a58f 100644
+--- a/app/src/main/java/com/potensic/proxy/WebServer.kt
++++ b/app/src/main/java/com/potensic/proxy/WebServer.kt
+@@ -118,6 +118,9 @@ class WebServer(
+                 get("/api/map/tiles/{z}/{x}/{y}") {
+                     val z = call.parameters["z"]?.toIntOrNull(); val x = call.parameters["x"]?.toIntOrNull(); val y = call.parameters["y"]?.toIntOrNull()
+                     if (z == null || x == null || y == null) { call.respond(HttpStatusCode.BadRequest); return@get }
++                    // The backend owns cache policy (Auto / Offline / Online). Prevent the
++                    // browser image cache from bypassing a later mode/provider switch.
++                    call.response.headers.append(HttpHeaders.CacheControl, "no-store, max-age=0")
+                     val tile = withContext(Dispatchers.IO) { mapBackend.tile(z, x, y) }
+                     if (tile == null) call.respond(HttpStatusCode.NotFound)
+                     else call.respondBytes(tile.first, ContentType.parse(tile.second))
+@@ -131,12 +134,49 @@ class WebServer(
+                         call.respondText(JSONObject().put("error", e.message ?: "invalid region").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                     }
+                 }
++                post("/api/map/regions/{id}/update") {
++                    val id = call.parameters["id"] ?: ""
++                    try {
++                        val region = mapBackend.updateRegion(id)
++                        call.respondText(region.toString(), ContentType.Application.Json, HttpStatusCode.Accepted)
++                    } catch (e: IllegalStateException) {
++                        call.respondText(JSONObject().put("error", e.message ?: "region is busy").toString(), ContentType.Application.Json, HttpStatusCode.Conflict)
++                    } catch (e: Exception) {
++                        call.respondText(JSONObject().put("error", e.message ?: "could not update region").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
++                    }
++                }
++                post("/api/map/regions/{id}/reload") {
++                    val id = call.parameters["id"] ?: ""
++                    try {
++                        val region = mapBackend.reloadRegion(id)
++                        call.respondText(region.toString(), ContentType.Application.Json, HttpStatusCode.Accepted)
++                    } catch (e: IllegalStateException) {
++                        call.respondText(JSONObject().put("error", e.message ?: "region is busy").toString(), ContentType.Application.Json, HttpStatusCode.Conflict)
++                    } catch (e: Exception) {
++                        call.respondText(JSONObject().put("error", e.message ?: "could not reload region").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
++                    }
++                }
++                delete("/api/map/regions/{id}/tiles") {
++                    val id = call.parameters["id"] ?: ""
++                    try {
++                        val region = mapBackend.clearRegionTiles(id)
++                        call.respondText(region.toString(), ContentType.Application.Json, HttpStatusCode.Accepted)
++                    } catch (e: IllegalStateException) {
++                        call.respondText(JSONObject().put("error", e.message ?: "region is busy").toString(), ContentType.Application.Json, HttpStatusCode.Conflict)
++                    } catch (e: Exception) {
++                        call.respondText(JSONObject().put("error", e.message ?: "could not clear region tiles").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
++                    }
++                }
+                 get("/api/map/regions/{id}") {
+                     val r = mapBackend.job(call.parameters["id"] ?: "")
+                     if (r == null) call.respond(HttpStatusCode.NotFound) else call.respondText(r.toString(), ContentType.Application.Json)
+                 }
+                 delete("/api/map/regions/{id}") {
+-                    if (mapBackend.deleteRegion(call.parameters["id"] ?: "")) call.respond(HttpStatusCode.NoContent) else call.respond(HttpStatusCode.NotFound)
++                    try {
++                        if (mapBackend.deleteRegion(call.parameters["id"] ?: "")) call.respond(HttpStatusCode.NoContent) else call.respond(HttpStatusCode.NotFound)
++                    } catch (e: IllegalStateException) {
++                        call.respondText(JSONObject().put("error", e.message ?: "region is busy").toString(), ContentType.Application.Json, HttpStatusCode.Conflict)
++                    }
+                 }
+ 
+                 // Mission planning storage and Potensic ATOM 1 export.
+diff --git a/webui/package-lock.json b/webui/package-lock.json
+index 9b30257..a72a10f 100644
+--- a/webui/package-lock.json
++++ b/webui/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.963",
++  "version": "0.964",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.963",
++      "version": "0.964",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",
+diff --git a/webui/package.json b/webui/package.json
+index a3374fc..43442c2 100644
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.963",
++  "version": "0.964",
+   "private": true,
+   "type": "module",
+   "scripts": {
+diff --git a/webui/src/components/cockpit/MapView.vue b/webui/src/components/cockpit/MapView.vue
+index 8c06aaa..6454623 100644
+--- a/webui/src/components/cockpit/MapView.vue
++++ b/webui/src/components/cockpit/MapView.vue
+@@ -8,10 +8,39 @@
+     </svg>
+     <div v-if="homePoint" class="home-marker" :style="{ left: homePoint.x+'px', top: homePoint.y+'px' }" title="Home point">H</div>
+     <div class="drone-marker" :style="{ transform: `translate(-50%,-50%) rotate(${store.telemetry.heading || 0}deg)` }">▲</div>
++
+     <div class="map-osd">
+       <span>{{ validGps ? `${store.telemetry.latitude.toFixed(6)}, ${store.telemetry.longitude.toFixed(6)}` : 'Waiting for GPS' }}</span>
+       <span>Z{{ zoom }}</span>
++      <span>{{ dataModeLabel }}</span>
++    </div>
++
++    <div v-if="config" class="map-quick-controls" @wheel.stop>
++      <label>
++        <span>Map</span>
++        <select :value="sourcePreset" :disabled="savingQuick" @change="changeSource">
++          <option value="osm">OpenStreetMap</option>
++          <option value="mapbox-satellite">Mapbox Satellite</option>
++          <option value="mapbox-streets">Mapbox Streets</option>
++          <option value="mapbox-outdoors">Mapbox Outdoors</option>
++          <option value="mapbox-style">Mapbox custom style</option>
++          <option value="custom">Custom XYZ</option>
++        </select>
++      </label>
++      <label>
++        <span>Data</span>
++        <select :value="config.dataMode" :disabled="savingQuick" @change="changeDataMode">
++          <option value="auto">Auto · offline first</option>
++          <option value="offline">Offline only</option>
++          <option value="online">Online first</option>
++        </select>
++      </label>
++      <div class="quick-status">
++        <span v-if="isMapbox">Token {{ config.hasAccessToken ? 'saved' : 'missing' }}</span>
++        <span v-if="quickError" class="quick-error">{{ quickError }}</span>
++      </div>
+     </div>
++
+     <div class="map-controls">
+       <button @click.stop="setZoom(zoom + 1)">+</button>
+       <input class="map-zoom-input" type="number" min="1" max="19" step="1" :value="zoom" aria-label="Map zoom" @click.stop @change="onZoomInput" />
+@@ -24,11 +53,19 @@
+ <script setup lang="ts">
+ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+ import { useDroneStore } from '../../stores/useDroneStore'
+-import { MapService } from '../../services/MapService'
+-import type { MapConfig } from '../../types/map'
++import { MAP_CONFIG_CHANGED_EVENT, MapService } from '../../services/MapService'
++import type { MapConfig, MapDataMode } from '../../types/map'
++
++const store = useDroneStore()
++const root = ref<HTMLElement|null>(null)
++const config = ref<MapConfig|null>(null)
++const zoom = ref(15)
++const size = ref({w:800,h:500})
++const tileRevision = ref(0)
++const savingQuick = ref(false)
++const quickError = ref('')
++let observer: ResizeObserver | null = null
+ 
+-const store = useDroneStore(); const root = ref<HTMLElement|null>(null); const config = ref<MapConfig|null>(null)
+-const zoom = ref(15); const size = ref({w:800,h:500}); let observer: ResizeObserver | null = null
+ const validGps = computed(() => {
+   const lat = store.telemetry.latitude
+   const lon = store.telemetry.longitude
+@@ -36,6 +73,18 @@ const validGps = computed(() => {
+ })
+ const centerLat = computed(() => validGps.value ? store.telemetry.latitude : 52.52)
+ const centerLon = computed(() => validGps.value ? store.telemetry.longitude : 13.405)
++const isMapbox = computed(() => config.value?.provider === 'mapbox-satellite' || config.value?.provider === 'mapbox-style')
++const dataModeLabel = computed(() => ({ auto: 'AUTO · offline first', offline: 'OFFLINE ONLY', online: 'ONLINE FIRST' }[config.value?.dataMode || 'auto']))
++const sourcePreset = computed(() => {
++  const c = config.value
++  if (!c) return 'osm'
++  if (c.provider !== 'mapbox-style') return c.provider
++  const style = c.mapboxStyle.replace(/^mapbox:\/\/styles\//, '')
++  if (style === 'mapbox/streets-v12') return 'mapbox-streets'
++  if (style === 'mapbox/outdoors-v12') return 'mapbox-outdoors'
++  return 'mapbox-style'
++})
++
+ const homePoint = computed(() => {
+   const lat = store.telemetry.homeLatitude
+   const lon = store.telemetry.homeLongitude
+@@ -45,27 +94,117 @@ const homePoint = computed(() => {
+   const h = world(lon, lat, zoom.value)
+   return { x: h.x - c.x + size.value.w / 2, y: h.y - c.y + size.value.h / 2 }
+ })
+-function world(lon:number,lat:number,z:number){ const n=256*Math.pow(2,z); const safeLat=Math.max(-85.05112878,Math.min(85.05112878,lat)); const x=(lon+180)/360*n; const s=Math.sin(safeLat*Math.PI/180); const y=(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*n; return {x,y} }
++
++function world(lon:number,lat:number,z:number){
++  const n=256*Math.pow(2,z)
++  const safeLat=Math.max(-85.05112878,Math.min(85.05112878,lat))
++  const x=(lon+180)/360*n
++  const s=Math.sin(safeLat*Math.PI/180)
++  const y=(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*n
++  return {x,y}
++}
++
+ const tiles = computed(() => {
+-  const c=world(centerLon.value,centerLat.value,zoom.value), z=zoom.value, n=1<<z, x0=Math.floor((c.x-size.value.w/2)/256)-1, x1=Math.floor((c.x+size.value.w/2)/256)+1, y0=Math.floor((c.y-size.value.h/2)/256)-1, y1=Math.floor((c.y+size.value.h/2)/256)+1, out:any[]=[]
+-  for(let tx=x0;tx<=x1;tx++) for(let ty=y0;ty<=y1;ty++){ if(ty<0||ty>=n) continue; const x=((tx%n)+n)%n; out.push({key:`${z}/${x}/${ty}`,url:MapService.tileUrl(z,x,ty),left:tx*256-c.x+size.value.w/2,top:ty*256-c.y+size.value.h/2}) }
++  const c=world(centerLon.value,centerLat.value,zoom.value), z=zoom.value, n=1<<z
++  const x0=Math.floor((c.x-size.value.w/2)/256)-1, x1=Math.floor((c.x+size.value.w/2)/256)+1
++  const y0=Math.floor((c.y-size.value.h/2)/256)-1, y1=Math.floor((c.y+size.value.h/2)/256)+1, out:any[]=[]
++  for(let tx=x0;tx<=x1;tx++) for(let ty=y0;ty<=y1;ty++){
++    if(ty<0||ty>=n) continue
++    const x=((tx%n)+n)%n
++    out.push({
++      key:`${z}/${x}/${ty}/${tileRevision.value}`,
++      url:MapService.tileUrl(z,x,ty,tileRevision.value),
++      left:tx*256-c.x+size.value.w/2,
++      top:ty*256-c.y+size.value.h/2
++    })
++  }
+   return out
+ })
++
+ function setZoom(value:number){ zoom.value=Math.max(1,Math.min(19,Math.round(value))) }
+ function onZoomInput(e:Event){ setZoom(Number((e.target as HTMLInputElement).value)) }
+ function onWheel(e:WheelEvent){ setZoom(zoom.value+(e.deltaY<0?1:-1)) }
++
++async function changeSource(e: Event) {
++  if (!config.value) return
++  const value = (e.target as HTMLSelectElement).value
++  quickError.value = ''
++  savingQuick.value = true
++  try {
++    const patch: Partial<MapConfig> = value === 'mapbox-streets'
++      ? { provider: 'mapbox-style', style: 'street', mapboxStyle: 'mapbox://styles/mapbox/streets-v12', attribution: '© Mapbox © OpenStreetMap' }
++      : value === 'mapbox-outdoors'
++        ? { provider: 'mapbox-style', style: 'outdoors', mapboxStyle: 'mapbox://styles/mapbox/outdoors-v12', attribution: '© Mapbox © OpenStreetMap' }
++        : value === 'mapbox-satellite'
++          ? { provider: 'mapbox-satellite', style: 'satellite', attribution: '© Mapbox © OpenStreetMap' }
++          : value === 'mapbox-style'
++            ? { provider: 'mapbox-style', style: 'mapbox-style', attribution: '© Mapbox © OpenStreetMap' }
++            : value === 'custom'
++              ? { provider: 'custom', style: 'custom' }
++              : { provider: 'osm', style: 'street', attribution: '© OpenStreetMap contributors' }
++    config.value = await MapService.saveConfig(patch)
++  } catch (e: any) {
++    quickError.value = e?.message || 'Could not switch map source'
++  } finally {
++    savingQuick.value = false
++  }
++}
++
++async function changeDataMode(e: Event) {
++  if (!config.value) return
++  quickError.value = ''
++  savingQuick.value = true
++  try {
++    const dataMode = (e.target as HTMLSelectElement).value as MapDataMode
++    config.value = await MapService.saveConfig({ dataMode })
++  } catch (e: any) {
++    quickError.value = e?.message || 'Could not change map data mode'
++  } finally {
++    savingQuick.value = false
++  }
++}
++
++function onMapConfigChanged(event: Event) {
++  const detail = (event as CustomEvent<MapConfig>).detail
++  if (!detail) return
++  config.value = detail
++  tileRevision.value++
++}
++
+ async function refreshSize(){
+   await nextTick()
+-  const measure=()=>{ if(!root.value)return; const r=root.value.getBoundingClientRect(); if(r.width>0&&r.height>0) size.value={w:r.width,h:r.height} }
++  const measure=()=>{
++    if(!root.value)return
++    const r=root.value.getBoundingClientRect()
++    if(r.width>0&&r.height>0) size.value={w:r.width,h:r.height}
++  }
+   requestAnimationFrame(()=>{ measure(); requestAnimationFrame(measure) })
+   window.setTimeout(measure,80)
+   window.setTimeout(measure,180)
+ }
+-onMounted(async()=>{ try{config.value=await MapService.getConfig();zoom.value=config.value.defaultZoom||15}catch{}; if(root.value){observer=new ResizeObserver(([e])=>{if(e.contentRect.width>0&&e.contentRect.height>0)size.value={w:e.contentRect.width,h:e.contentRect.height}});observer.observe(root.value)}; window.addEventListener('cockpit-view-resized',refreshSize); await refreshSize() })
+-onUnmounted(()=>{observer?.disconnect();window.removeEventListener('cockpit-view-resized',refreshSize)})
++
++onMounted(async()=>{
++  try{
++    config.value=await MapService.getConfig()
++    zoom.value=config.value.defaultZoom||15
++  }catch{}
++  if(root.value){
++    observer=new ResizeObserver(([e])=>{if(e.contentRect.width>0&&e.contentRect.height>0)size.value={w:e.contentRect.width,h:e.contentRect.height}})
++    observer.observe(root.value)
++  }
++  window.addEventListener('cockpit-view-resized',refreshSize)
++  window.addEventListener(MAP_CONFIG_CHANGED_EVENT,onMapConfigChanged)
++  await refreshSize()
++})
++
++onUnmounted(()=>{
++  observer?.disconnect()
++  window.removeEventListener('cockpit-view-resized',refreshSize)
++  window.removeEventListener(MAP_CONFIG_CHANGED_EVENT,onMapConfigChanged)
++})
+ watch(()=>config.value?.defaultZoom,z=>{if(z)zoom.value=z})
+ </script>
+ 
+ <style scoped>
+-.map-view{position:relative;width:100%;height:100%;overflow:hidden;background:#18202b;user-select:none}.tiles{position:absolute;inset:0}.tile{position:absolute;width:256px;height:256px}.home-line{position:absolute;inset:0;z-index:4;pointer-events:none}.home-line line{stroke:var(--ui-warning);stroke-width:1.5;stroke-dasharray:5 4;opacity:.8}.home-marker{position:absolute;z-index:5;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--ui-warning);color:#111;font-size:11px;font-weight:800;border:2px solid var(--ui-text-strong);box-shadow:0 1px 5px var(--ui-bg-stage)}.drone-marker{position:absolute;left:50%;top:50%;z-index:5;color:var(--ui-success);font-size:30px;line-height:1;text-shadow:0 1px 5px var(--ui-bg-stage)}.map-osd{position:absolute;top:10px;left:10px;z-index:6;display:flex;gap:8px}.map-osd span,.attribution{background:rgba(13, 16, 26, 0.80);color:#e6edf7;border:1px solid var(--ui-border-control);border-radius:4px;padding:4px 7px;font-size:10px}.map-controls{position:absolute;right:10px;top:10px;z-index:6;display:flex;flex-direction:column}.map-controls button{width:38px;height:30px;background:var(--ui-bg-control);color:var(--ui-text-strong);border:1px solid var(--ui-border-strong);font-size:18px}.map-zoom-input{width:38px;height:30px;border:1px solid var(--ui-border-strong);border-top:0;border-bottom:0;background:var(--ui-bg-control);color:var(--ui-text-strong);font:10px var(--mono);text-align:center;padding:0 2px}.map-zoom-input::-webkit-inner-spin-button{display:none}.attribution{position:absolute;right:8px;bottom:7px;z-index:6;padding:2px 5px;font-size:9px}
++.map-view{position:relative;width:100%;height:100%;overflow:hidden;background:#18202b;user-select:none}.tiles{position:absolute;inset:0}.tile{position:absolute;width:256px;height:256px}.home-line{position:absolute;inset:0;z-index:4;pointer-events:none}.home-line line{stroke:var(--ui-warning);stroke-width:1.5;stroke-dasharray:5 4;opacity:.8}.home-marker{position:absolute;z-index:5;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--ui-warning);color:#111;font-size:11px;font-weight:800;border:2px solid var(--ui-text-strong);box-shadow:0 1px 5px var(--ui-bg-stage)}.drone-marker{position:absolute;left:50%;top:50%;z-index:5;color:var(--ui-success);font-size:30px;line-height:1;text-shadow:0 1px 5px var(--ui-bg-stage)}.map-osd{position:absolute;top:10px;left:10px;z-index:6;display:flex;gap:8px;flex-wrap:wrap}.map-osd span,.attribution{background:rgba(13,16,26,.80);color:#e6edf7;border:1px solid var(--ui-border-control);border-radius:4px;padding:4px 7px;font-size:10px}.map-controls{position:absolute;right:10px;top:10px;z-index:7;display:flex;flex-direction:column}.map-controls button{width:38px;height:30px;background:var(--ui-bg-control);color:var(--ui-text-strong);border:1px solid var(--ui-border-strong);font-size:18px}.map-zoom-input{width:38px;height:30px;border:1px solid var(--ui-border-strong);border-top:0;border-bottom:0;background:var(--ui-bg-control);color:var(--ui-text-strong);font:10px var(--mono);text-align:center;padding:0 2px}.map-zoom-input::-webkit-inner-spin-button{display:none}.map-quick-controls{position:absolute;z-index:7;right:56px;top:10px;display:flex;align-items:flex-end;gap:6px;padding:6px;background:rgba(13,16,26,.88);border:1px solid var(--ui-border-control);border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.22)}.map-quick-controls label{display:flex;flex-direction:column;gap:2px;color:var(--ui-text-muted);font-size:9px;text-transform:uppercase;letter-spacing:.04em}.map-quick-controls select{height:27px;max-width:170px;background:var(--ui-bg-control);color:var(--ui-text-strong);border:1px solid var(--ui-border-strong);border-radius:4px;padding:0 6px;font-size:11px}.quick-status{display:flex;flex-direction:column;align-self:center;max-width:190px;color:var(--ui-text-muted);font-size:9px;line-height:1.25}.quick-error{color:var(--ui-danger,#ff6b6b)}.attribution{position:absolute;right:8px;bottom:7px;z-index:6;padding:2px 5px;font-size:9px}@media(max-width:760px){.map-quick-controls{left:10px;right:auto;top:42px;flex-wrap:wrap;max-width:calc(100% - 70px)}.map-quick-controls select{max-width:145px}}
+ </style>
+diff --git a/webui/src/components/settings/MapSettingsView.vue b/webui/src/components/settings/MapSettingsView.vue
+index b043a35..93da745 100644
+--- a/webui/src/components/settings/MapSettingsView.vue
++++ b/webui/src/components/settings/MapSettingsView.vue
+@@ -46,7 +46,7 @@
+       <el-form v-if="config" label-width="190px">
+         <el-form-item label="Provider">
+           <el-select v-model="config.provider" @change="applyPreset">
+-            <el-option label="OpenStreetMap (online only)" value="osm" />
++            <el-option label="OpenStreetMap" value="osm" />
+             <el-option label="Mapbox Satellite (Raster Tiles)" value="mapbox-satellite" />
+             <el-option label="Mapbox Studio Style (Static Tiles)" value="mapbox-style" />
+             <el-option label="Custom XYZ" value="custom" />
+@@ -66,8 +66,11 @@
+           title="This mode rasterizes a compatible Mapbox Studio style through the Static Tiles API. Mapbox Standard and Standard Satellite are currently not supported by that API; use Mapbox Satellite raster or a compatible Studio style instead."
+         />
+ 
+-        <el-form-item v-if="config.provider === 'osm' || config.provider === 'custom'" label="Tile URL">
+-          <el-input v-model="config.tileUrlTemplate" />
++        <el-form-item v-if="config.provider === 'osm'" label="Tile source">
++          <span class="muted">https://tile.openstreetmap.org/{z}/{x}/{y}.png</span>
++        </el-form-item>
++        <el-form-item v-if="config.provider === 'custom'" label="Custom tile URL">
++          <el-input v-model="config.customTileUrlTemplate" placeholder="https://example/{z}/{x}/{y}.png?key={token}" />
+         </el-form-item>
+ 
+         <el-form-item v-if="config.provider !== 'osm'" label="API key / token">
+@@ -75,14 +78,21 @@
+             v-model="config.accessToken"
+             type="password"
+             show-password
+-            placeholder="stored in the local backend; returned only as ********"
++            placeholder="stored persistently in the Android backend"
+           />
+         </el-form-item>
+ 
++        <el-form-item v-if="config.provider !== 'osm'" label="Token storage">
++          <div class="token-help">
++            <el-tag :type="config.hasAccessToken ? 'success' : 'info'">{{ config.hasAccessToken ? 'Stored' : 'Not stored' }}</el-tag>
++            <span>The token is persisted in the app-internal backend configuration and survives app/device restarts. It is returned to the WebUI only as ********. Clearing app data or uninstalling the app removes it.</span>
++          </div>
++        </el-form-item>
++
+         <el-form-item v-if="isMapbox" label="Token handling">
+           <div class="token-help">
+             <el-tag v-if="effectiveTokenType !== 'none'" :type="tokenTagType">{{ tokenTypeLabel }}</el-tag>
+-            <span>pk., sk. and tk. Mapbox tokens are accepted when the selected resource is permitted by their scopes/restrictions. Secret tokens are used only by the backend and are never returned to the WebUI.</span>
++            <span>pk., sk. and tk. Mapbox tokens are accepted when the selected resource is permitted by their scopes/restrictions. Secret tokens are used only by the backend and are never returned in clear text to the WebUI.</span>
+           </div>
+         </el-form-item>
+ 
+@@ -92,9 +102,12 @@
+           <el-radio-group v-model="config.dataMode">
+             <el-radio-button value="auto">Auto</el-radio-button>
+             <el-radio-button value="offline">Offline only</el-radio-button>
+-            <el-radio-button value="online">Online</el-radio-button>
++            <el-radio-button value="online">Online first</el-radio-button>
+           </el-radio-group>
+         </el-form-item>
++        <el-form-item label="Mode behavior">
++          <span class="muted">{{ dataModeDescription }}</span>
++        </el-form-item>
+ 
+         <el-form-item>
+           <el-button :loading="testing" @click="testConnection">Test connection</el-button>
+@@ -143,19 +156,39 @@
+     </el-card>
+ 
+     <el-card class="card">
+-      <template #header>Stored areas</template>
++      <template #header>Stored offline areas</template>
++      <el-alert class="source-info" type="info" :closable="false" show-icon>
++        Update downloads only missing/invalid tiles. Reload refreshes every tile from the stored source. Delete tiles keeps the region definition and preserves tiles shared with another stored region.
++      </el-alert>
+       <el-table :data="regions" empty-text="No offline areas">
+-        <el-table-column prop="id" label="Region" min-width="160" />
+-        <el-table-column prop="provider" label="Provider" min-width="130" />
+-        <el-table-column label="Radius" width="90"><template #default="s">{{ (s.row.radiusM / 1000).toFixed(1) }} km</template></el-table-column>
+-        <el-table-column label="Zoom" width="90"><template #default="s">{{ s.row.minZoom }}-{{ s.row.maxZoom }}</template></el-table-column>
+-        <el-table-column label="Status" min-width="180">
++        <el-table-column prop="id" label="Region" min-width="150" />
++        <el-table-column label="Source" min-width="140">
+           <template #default="s">
+-            <el-progress v-if="s.row.status === 'downloading'" :percentage="pct(s.row)" />
+-            <el-tag v-else :type="s.row.status === 'ready' ? 'success' : 'warning'">{{ s.row.status }}</el-tag>
++            <div>{{ providerLabel(s.row) }}</div>
++            <small class="muted">Z{{ s.row.minZoom }}-{{ s.row.maxZoom }} · {{ (s.row.radiusM / 1000).toFixed(1) }} km</small>
++          </template>
++        </el-table-column>
++        <el-table-column label="Status" min-width="160">
++          <template #default="s">
++            <el-progress v-if="isProgressStatus(s.row.status)" :percentage="pct(s.row)" :status="s.row.errors ? 'warning' : undefined" />
++            <el-tag v-else :type="statusTagType(s.row.status)">{{ statusLabel(s.row.status) }}</el-tag>
++            <div v-if="s.row.errors" class="muted">{{ s.row.errors }} errors</div>
++          </template>
++        </el-table-column>
++        <el-table-column label="Cache" min-width="110">
++          <template #default="s">
++            <div>{{ formatBytes(s.row.sizeBytes || 0) }}</div>
++            <small class="muted">{{ s.row.cachedTiles ?? '—' }} / {{ s.row.total }} tiles</small>
++          </template>
++        </el-table-column>
++        <el-table-column label="Actions" min-width="290" fixed="right">
++          <template #default="s">
++            <el-button link type="primary" :disabled="isBusy(s.row)" @click="updateTiles(s.row)">Update</el-button>
++            <el-button link type="warning" :disabled="isBusy(s.row)" @click="reloadTiles(s.row)">Reload</el-button>
++            <el-button link type="danger" :disabled="isBusy(s.row)" @click="clearTiles(s.row)">Delete tiles</el-button>
++            <el-button link :disabled="isBusy(s.row)" @click="removeRegion(s.row)">Remove</el-button>
+           </template>
+         </el-table-column>
+-        <el-table-column width="100"><template #default="s"><el-button type="danger" link @click="remove(s.row.id)">Delete</el-button></template></el-table-column>
+       </el-table>
+     </el-card>
+   </div>
+@@ -163,8 +196,8 @@
+ 
+ <script setup lang="ts">
+ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+-import { ElMessage } from 'element-plus'
+-import { MapService } from '../../services/MapService'
++import { ElMessage, ElMessageBox } from 'element-plus'
++import { MAP_CONFIG_CHANGED_EVENT, MapService } from '../../services/MapService'
+ import { useDroneStore } from '../../stores/useDroneStore'
+ import type { MapConfig, MapConnectionTest, MapboxTokenType, OfflineRegion, VersionInfo } from '../../types/map'
+ import { useCockpitViewSettings } from '../../composables/useCockpitViewSettings'
+@@ -182,6 +215,11 @@ const draft = reactive({ latitude: 52.52, longitude: 13.405, radiusKm: 5, minZoo
+ let timer: ReturnType<typeof setInterval> | undefined
+ 
+ const isMapbox = computed(() => config.value?.provider === 'mapbox-satellite' || config.value?.provider === 'mapbox-style')
++const dataModeDescription = computed(() => {
++  if (config.value?.dataMode === 'offline') return 'Uses only locally cached tiles. Missing areas stay unavailable and no provider request is made.'
++  if (config.value?.dataMode === 'online') return 'Requests the provider first and refreshes the local cache; a valid cached tile is used as fallback if the provider is temporarily unavailable.'
++  return 'Prefers locally cached/offline tiles and downloads only missing tiles. Newly downloaded tiles are cached locally.'
++})
+ const hasGps = computed(() => {
+   const lat = store.telemetry.latitude
+   const lon = store.telemetry.longitude
+@@ -214,6 +252,8 @@ function applyPreset() {
+     config.value.style = 'mapbox-style'
+     if (!config.value.mapboxStyle) config.value.mapboxStyle = 'mapbox://styles/mapbox/streets-v12'
+     config.value.attribution = '© Mapbox © OpenStreetMap'
++  } else if (config.value.provider === 'custom') {
++    config.value.style = 'custom'
+   }
+ }
+ 
+@@ -252,8 +292,8 @@ async function saveConfig() {
+   try {
+     config.value = await MapService.saveConfig(config.value)
+     const ok = await testConnection(false)
+-    if (ok) ElMessage.success('Map settings saved and provider test passed')
+-    else ElMessage.warning(`Map settings saved, but provider test failed: ${connectionTest.value?.message || 'unknown error'}`)
++    if (ok) ElMessage.success('Map settings saved persistently and provider test passed')
++    else ElMessage.warning(`Map settings saved persistently, but provider test failed: ${connectionTest.value?.message || 'unknown error'}`)
+   } catch (e: any) {
+     ElMessage.error(e?.message || 'Could not save map settings')
+   } finally {
+@@ -298,16 +338,85 @@ async function download() {
+ function pct(r: OfflineRegion) {
+   return r.total ? Math.min(100, Math.round((r.downloaded / r.total) * 100)) : 0
+ }
++function isProgressStatus(status: string) { return ['downloading', 'updating', 'reloading'].includes(status) }
++function isBusy(r: OfflineRegion) { return isProgressStatus(r.status) || r.status === 'clearing' }
++function statusLabel(status: string) { return ({ ready: 'Ready', ready_with_errors: 'Ready with errors', tiles_cleared: 'Tiles deleted', clearing: 'Deleting tiles', error: 'Error' } as Record<string,string>)[status] || status }
++function statusTagType(status: string) { return status === 'ready' ? 'success' : status === 'error' ? 'danger' : status === 'tiles_cleared' ? 'info' : 'warning' }
++function providerLabel(r: OfflineRegion) {
++  if (r.provider === 'mapbox-satellite') return 'Mapbox Satellite'
++  if (r.provider === 'mapbox-style') return r.style === 'outdoors' ? 'Mapbox Outdoors' : 'Mapbox Style'
++  if (r.provider === 'osm') return 'OpenStreetMap'
++  return 'Custom XYZ'
++}
++function formatBytes(bytes: number) {
++  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
++  const units = ['B', 'KB', 'MB', 'GB']
++  let value = bytes
++  let unit = 0
++  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++ }
++  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
++}
+ 
+-async function remove(id: string) {
++async function updateTiles(region: OfflineRegion) {
+   try {
+-    await MapService.deleteRegion(id)
++    await MapService.updateRegion(region.id)
+     await refresh()
++    ElMessage.success('Offline region update started; only missing/invalid tiles will be downloaded')
++  } catch (e: any) { ElMessage.error(e?.message || 'Could not update offline region') }
++}
++
++async function reloadTiles(region: OfflineRegion) {
++  try {
++    await ElMessageBox.confirm(
++      `Reload all ${region.total} tiles for ${region.id} from its stored provider? Existing tiles are replaced only after a successful download.`,
++      'Reload offline tiles',
++      { confirmButtonText: 'Reload', cancelButtonText: 'Cancel', type: 'warning' }
++    )
++    await MapService.reloadRegion(region.id)
++    await refresh()
++    ElMessage.success('Full offline tile reload started')
++  } catch (e: any) {
++    if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.message || 'Could not reload offline region')
++  }
++}
++
++async function clearTiles(region: OfflineRegion) {
++  try {
++    await ElMessageBox.confirm(
++      `Delete locally stored tiles for ${region.id}? The region definition is kept. Tiles shared with another stored region are preserved.`,
++      'Delete offline tiles',
++      { confirmButtonText: 'Delete tiles', cancelButtonText: 'Cancel', type: 'warning' }
++    )
++    await MapService.clearRegionTiles(region.id)
++    await refresh()
++    ElMessage.success('Offline tile deletion started')
+   } catch (e: any) {
+-    ElMessage.error(e?.message || 'Could not delete offline region')
++    if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.message || 'Could not delete offline tiles')
+   }
+ }
+ 
++async function removeRegion(region: OfflineRegion) {
++  try {
++    await ElMessageBox.confirm(
++      `Remove offline region ${region.id}? Its unshared cached tiles will also be deleted.`,
++      'Remove offline region',
++      { confirmButtonText: 'Remove', cancelButtonText: 'Cancel', type: 'warning' }
++    )
++    await MapService.deleteRegion(region.id)
++    await refresh()
++    ElMessage.success('Offline region removed')
++  } catch (e: any) {
++    if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.message || 'Could not remove offline region')
++  }
++}
++
++function onMapConfigChanged(event: Event) {
++  const detail = (event as CustomEvent<MapConfig>).detail
++  if (!detail) return
++  config.value = detail
++  connectionTest.value = null
++}
++
+ onMounted(async () => {
+   try {
+     version.value = await MapService.getVersion()
+@@ -319,15 +428,17 @@ onMounted(async () => {
+   } catch (e: any) {
+     ElMessage.error(e?.message || 'Could not load map settings')
+   }
++  window.addEventListener(MAP_CONFIG_CHANGED_EVENT, onMapConfigChanged)
+   await refresh()
+   timer = setInterval(refresh, 1500)
+ })
+ 
+ onUnmounted(() => {
+   if (timer) clearInterval(timer)
++  window.removeEventListener(MAP_CONFIG_CHANGED_EVENT, onMapConfigChanged)
+ })
+ </script>
+ 
+ <style scoped>
+-.settings-page{height:100%;overflow:auto;padding:18px;max-width:1050px;margin:auto}.settings-page h2{margin:0 0 14px;color:var(--cyan)}.card{margin-bottom:14px;background:var(--panel-bg);border-color:var(--border)}.sep{padding:0 10px;color:var(--text-muted)}.offline-warning,.source-info{margin-bottom:14px}.version-card :deep(.el-descriptions__label){width:150px}.token-help{display:flex;gap:10px;align-items:flex-start;line-height:1.45;color:var(--text-muted)}.token-help .el-tag{flex:none;margin-top:1px}
++.settings-page{height:100%;overflow:auto;padding:18px;max-width:1050px;margin:auto}.settings-page h2{margin:0 0 14px;color:var(--cyan)}.card{margin-bottom:14px;background:var(--panel-bg);border-color:var(--border)}.sep{padding:0 10px;color:var(--text-muted)}.offline-warning,.source-info{margin-bottom:14px}.version-card :deep(.el-descriptions__label){width:150px}.token-help{display:flex;gap:10px;align-items:flex-start;line-height:1.45;color:var(--text-muted)}.token-help .el-tag{flex:none;margin-top:1px}.muted{color:var(--text-muted);line-height:1.4}.el-table small{display:block;margin-top:2px}
+ </style>
+diff --git a/webui/src/services/MapService.ts b/webui/src/services/MapService.ts
+index c791d92..5cca1f1 100644
+--- a/webui/src/services/MapService.ts
++++ b/webui/src/services/MapService.ts
+@@ -2,6 +2,8 @@ import type { MapConfig, MapConnectionTest, OfflineRegion, VersionInfo } from '.
+ import { useDroneStore } from '../stores/useDroneStore'
+ import { FRONTEND_VERSION } from '../version'
+ 
++export const MAP_CONFIG_CHANGED_EVENT = 'potensic-map-config-changed'
++
+ function baseUrl() {
+   // Map APIs belong to the same Android/Ktor backend that served the WebUI.
+   // Do not follow the configurable drone/relay target here: that setting may
+@@ -26,6 +28,16 @@ async function errorText(r: Response): Promise<string> {
+   }
+ }
+ 
++function broadcastConfig(config: MapConfig) {
++  window.dispatchEvent(new CustomEvent<MapConfig>(MAP_CONFIG_CHANGED_EVENT, { detail: config }))
++}
++
++async function regionAction(id: string, action: 'update' | 'reload'): Promise<OfflineRegion> {
++  const r = await fetch(`${baseUrl()}/api/map/regions/${encodeURIComponent(id)}/${action}`, { method: 'POST' })
++  if (!r.ok) throw new Error(await errorText(r))
++  return r.json()
++}
++
+ export const MapService = {
+   async getVersion(): Promise<VersionInfo> {
+     const r = await fetch(`${baseUrl()}/api/version`)
+@@ -46,7 +58,9 @@ export const MapService = {
+       body: JSON.stringify(config)
+     })
+     if (!r.ok) throw new Error(await errorText(r))
+-    return r.json()
++    const saved = await r.json() as MapConfig
++    broadcastConfig(saved)
++    return saved
+   },
+   async testConfig(config: Partial<MapConfig>): Promise<MapConnectionTest> {
+     const r = await fetch(`${baseUrl()}/api/map/test`, {
+@@ -57,8 +71,9 @@ export const MapService = {
+     if (!r.ok) throw new Error(await errorText(r))
+     return r.json()
+   },
+-  tileUrl(z: number, x: number, y: number) {
+-    return `${baseUrl()}/api/map/tiles/${z}/${x}/${y}`
++  tileUrl(z: number, x: number, y: number, revision?: number | string) {
++    const suffix = revision === undefined ? '' : `?rev=${encodeURIComponent(String(revision))}`
++    return `${baseUrl()}/api/map/tiles/${z}/${x}/${y}${suffix}`
+   },
+   async regions(): Promise<OfflineRegion[]> {
+     const r = await fetch(`${baseUrl()}/api/map/regions`)
+@@ -74,6 +89,17 @@ export const MapService = {
+     if (!r.ok) throw new Error(await errorText(r))
+     return r.json()
+   },
++  async updateRegion(id: string): Promise<OfflineRegion> {
++    return regionAction(id, 'update')
++  },
++  async reloadRegion(id: string): Promise<OfflineRegion> {
++    return regionAction(id, 'reload')
++  },
++  async clearRegionTiles(id: string): Promise<OfflineRegion> {
++    const r = await fetch(`${baseUrl()}/api/map/regions/${encodeURIComponent(id)}/tiles`, { method: 'DELETE' })
++    if (!r.ok) throw new Error(await errorText(r))
++    return r.json()
++  },
+   async region(id: string): Promise<OfflineRegion> {
+     const r = await fetch(`${baseUrl()}/api/map/regions/${encodeURIComponent(id)}`)
+     if (!r.ok) throw new Error(await errorText(r))
+diff --git a/webui/src/types/map.ts b/webui/src/types/map.ts
+index a669f30..67228ab 100644
+--- a/webui/src/types/map.ts
++++ b/webui/src/types/map.ts
+@@ -1,10 +1,12 @@
+ export type MapProvider = 'osm' | 'mapbox-satellite' | 'mapbox-style' | 'custom'
+ export type MapboxTokenType = 'public' | 'secret' | 'temporary' | 'none' | 'unknown'
++export type MapDataMode = 'auto' | 'offline' | 'online'
+ 
+ export interface MapConfig {
+   provider: MapProvider
+   style: string
+   tileUrlTemplate: string
++  customTileUrlTemplate?: string
+   accessToken: string
+   hasAccessToken?: boolean
+   tokenType?: MapboxTokenType
+@@ -13,7 +15,7 @@ export interface MapConfig {
+   defaultZoom: number
+   autoCenter: boolean
+   orientation: 'north' | 'heading'
+-  dataMode: 'auto' | 'offline' | 'online'
++  dataMode: MapDataMode
+ }
+ 
+ export interface MapConnectionTest {
+@@ -37,9 +39,19 @@ export interface OfflineRegion {
+   downloaded: number
+   total: number
+   errors?: number
++  cachedTiles?: number
++  sizeBytes?: number
++  lastDeletedTiles?: number
++  lastError?: string
+   downloadedAt?: number | null
+   provider?: string
+   resource?: string
++  cacheNamespace?: string
++  style?: string
++  mapboxStyle?: string
++  tileUrlTemplate?: string
++  customTileUrlTemplate?: string
++  attribution?: string
+ }
+ 
+ export interface VersionInfo {

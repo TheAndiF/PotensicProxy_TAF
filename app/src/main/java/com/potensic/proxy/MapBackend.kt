@@ -29,6 +29,8 @@ class MapBackend(private val rootDir: File) {
 
     @Volatile private var config: JSONObject = loadConfig()
 
+    init { recoverInterruptedRegions() }
+
     private data class HttpResult(
         val status: Int,
         val contentType: String?,
@@ -40,6 +42,7 @@ class MapBackend(private val rootDir: File) {
         put("provider", "osm")
         put("style", "street")
         put("tileUrlTemplate", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
+        put("customTileUrlTemplate", "")
         put("accessToken", "")
         put("mapboxStyle", "mapbox://styles/mapbox/streets-v12")
         put("attribution", "© OpenStreetMap contributors")
@@ -53,6 +56,9 @@ class MapBackend(private val rootDir: File) {
         val loaded = if (configFile.exists()) JSONObject(configFile.readText()) else defaultConfig()
         // Add fields introduced after the first map integration without invalidating an existing config.
         if (!loaded.has("mapboxStyle")) loaded.put("mapboxStyle", "mapbox://styles/mapbox/streets-v12")
+        if (!loaded.has("customTileUrlTemplate")) {
+            loaded.put("customTileUrlTemplate", if (loaded.optString("provider") == "custom") loaded.optString("tileUrlTemplate") else "")
+        }
         loaded
     } catch (_: Exception) { defaultConfig() }
 
@@ -77,7 +83,7 @@ class MapBackend(private val rootDir: File) {
 
     private fun mergeConfig(base: JSONObject, input: JSONObject): JSONObject {
         val next = JSONObject(base.toString())
-        listOf("provider", "style", "tileUrlTemplate", "mapboxStyle", "attribution", "orientation", "dataMode").forEach {
+        listOf("provider", "style", "tileUrlTemplate", "customTileUrlTemplate", "mapboxStyle", "attribution", "orientation", "dataMode").forEach {
             if (input.has(it)) next.put(it, input.getString(it))
         }
         if (input.has("defaultZoom")) next.put("defaultZoom", input.getInt("defaultZoom").coerceIn(1, 19))
@@ -96,10 +102,10 @@ class MapBackend(private val rootDir: File) {
         require(candidate.optString("orientation", "north") in setOf("north", "heading")) { "Invalid map orientation" }
         require(candidate.optString("dataMode", "auto") in setOf("auto", "offline", "online")) { "Invalid map data mode" }
 
-        if (provider == "osm" || provider == "custom") {
-            val template = candidate.optString("tileUrlTemplate")
+        if (provider == "custom") {
+            val template = candidate.optString("customTileUrlTemplate").ifBlank { candidate.optString("tileUrlTemplate") }
             require(template.startsWith("https://") && template.contains("{z}") && template.contains("{x}") && template.contains("{y}")) {
-                "Tile URL must be HTTPS and contain {z}, {x}, {y}"
+                "Custom tile URL must be HTTPS and contain {z}, {x}, {y}"
             }
         }
 
@@ -117,7 +123,7 @@ class MapBackend(private val rootDir: File) {
     @Synchronized fun updateConfig(input: JSONObject): JSONObject {
         val next = mergeConfig(config, input)
         config = next
-        configFile.writeText(next.toString(2))
+        writeJsonAtomic(configFile, next.toString(2))
         return publicConfig()
     }
 
@@ -163,18 +169,43 @@ class MapBackend(private val rootDir: File) {
         if (z !in 0..19) return null
         val n = 1 shl z
         if (x !in 0 until n || y !in 0 until n) return null
-        val current = config
+        val current = JSONObject(config.toString())
         val file = tileFile(current, z, x, y)
-        if (file.exists()) {
-            val bytes = file.readBytes()
-            val type = guessContentType(bytes)
-            if (type != "application/octet-stream") return bytes to type
-            file.delete()
+        val cached = readCachedTile(file)
+        return when (current.optString("dataMode", "auto")) {
+            "offline" -> cached
+            "online" -> {
+                // Online mode deliberately refreshes from the provider first. If the
+                // provider is temporarily unavailable, keep the last valid local tile
+                // as a resilient fallback instead of blanking the map.
+                val fresh = downloadTile(current, z, x, y)
+                if (fresh != null) {
+                    file.parentFile?.mkdirs()
+                    file.writeBytes(fresh)
+                    fresh to guessContentType(fresh)
+                } else cached
+            }
+            else -> {
+                // Auto is cache-first: already downloaded/offline tiles are preferred,
+                // and only missing tiles are fetched and persisted.
+                cached ?: downloadTile(current, z, x, y)?.let { bytes ->
+                    file.parentFile?.mkdirs()
+                    file.writeBytes(bytes)
+                    bytes to guessContentType(bytes)
+                }
+            }
         }
-        if (current.optString("dataMode", "auto") == "offline") return null
-        val bytes = downloadTile(current, z, x, y) ?: return null
-        file.parentFile?.mkdirs(); file.writeBytes(bytes)
-        return bytes to guessContentType(bytes)
+    }
+
+    private fun readCachedTile(file: File): Pair<ByteArray, String>? {
+        if (!file.exists()) return null
+        val bytes = try { file.readBytes() } catch (_: Exception) { return null }
+        val type = guessContentType(bytes)
+        if (type == "application/octet-stream") {
+            file.delete()
+            return null
+        }
+        return bytes to type
     }
 
     private fun downloadTile(candidate: JSONObject, z: Int, x: Int, y: Int): ByteArray? {
@@ -277,7 +308,8 @@ class MapBackend(private val rootDir: File) {
                 val (owner, styleId) = parseMapboxStyle(candidate.optString("mapboxStyle"))
                 "https://api.mapbox.com/styles/v1/$owner/$styleId/tiles/256/$z/$x/$y?access_token=$token"
             }
-            else -> candidate.optString("tileUrlTemplate")
+            "osm" -> "https://tile.openstreetmap.org/$z/$x/$y.png"
+            else -> candidate.optString("customTileUrlTemplate").ifBlank { candidate.optString("tileUrlTemplate") }
                 .replace("{z}", z.toString()).replace("{x}", x.toString()).replace("{y}", y.toString())
                 .replace("{key}", token).replace("{token}", token)
         }
@@ -300,14 +332,18 @@ class MapBackend(private val rootDir: File) {
         val identity = when (candidate.optString("provider", "osm")) {
             "mapbox-satellite" -> "mapbox-satellite|mapbox.satellite"
             "mapbox-style" -> "mapbox-style|${candidate.optString("mapboxStyle")}"
-            else -> "${candidate.optString("provider")}|${candidate.optString("tileUrlTemplate")}"
+            "osm" -> "osm|https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+            else -> "custom|${candidate.optString("customTileUrlTemplate").ifBlank { candidate.optString("tileUrlTemplate") }}"
         }
         val digest = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
         return digest.take(10).joinToString("") { "%02x".format(it) }
     }
 
     private fun tileFile(candidate: JSONObject, z: Int, x: Int, y: Int): File =
-        File(cacheDir, "${cacheNamespace(candidate)}/$z/$x/$y.tile")
+        tileFile(cacheNamespace(candidate), z, x, y)
+
+    private fun tileFile(namespace: String, z: Int, x: Int, y: Int): File =
+        File(cacheDir, "$namespace/$z/$x/$y.tile")
 
     private fun guessContentType(bytes: ByteArray): String = when {
         bytes.size >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() -> "image/png"
@@ -320,10 +356,29 @@ class MapBackend(private val rootDir: File) {
         if (regionsFile.exists()) JSONArray(regionsFile.readText()) else JSONArray()
     } catch (_: Exception) { JSONArray() }
 
+    private fun recoverInterruptedRegions() {
+        try {
+            if (!regionsFile.exists()) return
+            val all = JSONArray(regionsFile.readText())
+            var changed = false
+            for (i in 0 until all.length()) {
+                val region = all.getJSONObject(i)
+                if (region.optString("status") in setOf("downloading", "updating", "reloading", "clearing")) {
+                    region.put("status", "interrupted")
+                    changed = true
+                }
+            }
+            if (changed) writeJsonAtomic(regionsFile, all.toString(2))
+        } catch (e: Exception) {
+            Log.w("[Map] could not recover interrupted offline region state: ${e.message}")
+        }
+    }
+
     @Synchronized private fun saveRegion(region: JSONObject) {
         val all = regions(); val next = JSONArray()
         for (i in 0 until all.length()) if (all.getJSONObject(i).optString("id") != region.optString("id")) next.put(all.getJSONObject(i))
-        next.put(region); regionsFile.writeText(next.toString(2))
+        next.put(region)
+        writeJsonAtomic(regionsFile, next.toString(2))
     }
 
     fun startRegionDownload(input: JSONObject): JSONObject {
@@ -339,41 +394,254 @@ class MapBackend(private val rootDir: File) {
         val minZoom = input.optInt("minZoom", 11).coerceIn(1, 19)
         val maxZoom = input.optInt("maxZoom", 16).coerceIn(minZoom, 19)
         val id = input.optString("id").ifBlank { "region_${System.currentTimeMillis()}" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        require(!isRegionBusy(id)) { "Offline region '$id' is already being processed" }
+
         val region = JSONObject().apply {
             put("id", id); put("latitude", lat); put("longitude", lon); put("radiusM", radiusM)
             put("minZoom", minZoom); put("maxZoom", maxZoom); put("status", "downloading")
             put("provider", current.optString("provider")); put("resource", resourceLabel(current)); put("cacheNamespace", cacheNamespace(current))
-            put("downloaded", 0); put("total", countTiles(lat, lon, radiusM, minZoom, maxZoom)); put("downloadedAt", JSONObject.NULL)
+            put("style", current.optString("style")); put("mapboxStyle", current.optString("mapboxStyle"))
+            put("tileUrlTemplate", current.optString("tileUrlTemplate")); put("customTileUrlTemplate", current.optString("customTileUrlTemplate"))
+            put("attribution", current.optString("attribution"))
+            put("downloaded", 0); put("cachedTiles", 0); put("sizeBytes", 0L)
+            put("total", countTiles(lat, lon, radiusM, minZoom, maxZoom)); put("errors", 0); put("downloadedAt", JSONObject.NULL)
         }
-        saveRegion(region); jobs[id] = region
-        scope.launch {
-            var done = 0; var errors = 0
-            for (z in minZoom..maxZoom) {
-                forEachRegionTile(lat, lon, radiusM, z) { x, y ->
-                    val f = tileFile(current, z, x, y)
-                    if (!f.exists()) {
-                        val b = downloadTile(current, z, x, y)
-                        if (b != null) { f.parentFile?.mkdirs(); f.writeBytes(b) } else errors++
-                    }
-                    done++
-                    region.put("downloaded", done); region.put("errors", errors); jobs[id] = JSONObject(region.toString())
-                    if (done % 25 == 0) saveRegion(region)
-                }
-            }
-            region.put("status", if (errors == 0) "ready" else "ready_with_errors")
-            region.put("downloadedAt", System.currentTimeMillis()); saveRegion(region); jobs[id] = JSONObject(region.toString())
-        }
-        return region
+        saveRegion(region)
+        launchRegionDownload(region, current, forceRefresh = false, activityStatus = "downloading")
+        return JSONObject(region.toString())
     }
 
-    fun job(id: String): JSONObject? = jobs[id] ?: run {
-        val a = regions(); for (i in 0 until a.length()) if (a.getJSONObject(i).optString("id") == id) return@run a.getJSONObject(i); null
+    fun updateRegion(id: String): JSONObject {
+        val region = findRegion(id) ?: throw IllegalArgumentException("Offline region '$id' was not found")
+        check(!isRegionBusy(id)) { "Offline region '$id' is already being processed" }
+        val source = sourceConfigForRegion(region)
+        require(source.optString("provider") != "osm") { "Offline update is not permitted for the public OpenStreetMap tile service" }
+        launchRegionDownload(region, source, forceRefresh = false, activityStatus = "updating")
+        return JSONObject(region.toString())
     }
+
+    fun reloadRegion(id: String): JSONObject {
+        val region = findRegion(id) ?: throw IllegalArgumentException("Offline region '$id' was not found")
+        check(!isRegionBusy(id)) { "Offline region '$id' is already being processed" }
+        val source = sourceConfigForRegion(region)
+        require(source.optString("provider") != "osm") { "Offline reload is not permitted for the public OpenStreetMap tile service" }
+        // Force-refresh every tile. Existing tiles are replaced only after a successful
+        // provider response, so an interrupted reload does not destroy the previous cache.
+        launchRegionDownload(region, source, forceRefresh = true, activityStatus = "reloading")
+        return JSONObject(region.toString())
+    }
+
+    fun clearRegionTiles(id: String): JSONObject {
+        val region = findRegion(id) ?: throw IllegalArgumentException("Offline region '$id' was not found")
+        check(!isRegionBusy(id)) { "Offline region '$id' is already being processed" }
+        region.put("status", "clearing")
+        region.put("downloaded", 0)
+        region.put("errors", 0)
+        saveRegion(region)
+        jobs[id] = JSONObject(region.toString())
+        scope.launch {
+            try {
+                val others = regionList().filter { it.optString("id") != id }
+                val deleted = deleteRegionTilesInternal(region, others)
+                val cache = scanRegionCache(region)
+                region.put("status", "tiles_cleared")
+                region.put("cachedTiles", cache.first)
+                region.put("sizeBytes", cache.second)
+                region.put("lastDeletedTiles", deleted)
+                region.put("downloadedAt", JSONObject.NULL)
+                Log.i("[Map] cleared $deleted exclusive cached tiles for offline region $id; ${cache.first} shared tiles retained")
+            } catch (e: Exception) {
+                region.put("status", "error")
+                region.put("lastError", e.message ?: e.javaClass.simpleName)
+                Log.e("[Map] clearing tiles for offline region $id failed", e)
+            } finally {
+                saveRegion(region)
+                jobs[id] = JSONObject(region.toString())
+            }
+        }
+        return JSONObject(region.toString())
+    }
+
+    private fun launchRegionDownload(region: JSONObject, source: JSONObject, forceRefresh: Boolean, activityStatus: String) {
+        val id = region.getString("id")
+        region.put("status", activityStatus)
+        region.put("downloaded", 0)
+        region.put("errors", 0)
+        saveRegion(region)
+        jobs[id] = JSONObject(region.toString())
+        scope.launch {
+            var done = 0
+            var errors = 0
+            val lat = region.getDouble("latitude")
+            val lon = region.getDouble("longitude")
+            val radiusM = region.getDouble("radiusM")
+            val minZoom = region.getInt("minZoom")
+            val maxZoom = region.getInt("maxZoom")
+            try {
+                for (z in minZoom..maxZoom) {
+                    forEachRegionTile(lat, lon, radiusM, z) { x, y ->
+                        val f = tileFile(source, z, x, y)
+                        if (forceRefresh || !isValidCachedTile(f)) {
+                            val b = downloadTile(source, z, x, y)
+                            if (b != null) {
+                                f.parentFile?.mkdirs()
+                                f.writeBytes(b)
+                            } else errors++
+                        }
+                        done++
+                        region.put("downloaded", done)
+                        region.put("errors", errors)
+                        jobs[id] = JSONObject(region.toString())
+                        if (done % 25 == 0) saveRegion(region)
+                    }
+                }
+                val cache = scanRegionCache(region)
+                region.put("cachedTiles", cache.first)
+                region.put("sizeBytes", cache.second)
+                region.put("status", if (errors == 0) "ready" else "ready_with_errors")
+                region.put("downloadedAt", System.currentTimeMillis())
+            } catch (e: Exception) {
+                region.put("status", "error")
+                region.put("lastError", e.message ?: e.javaClass.simpleName)
+                Log.e("[Map] offline region $activityStatus failed for $id", e)
+            } finally {
+                saveRegion(region)
+                jobs[id] = JSONObject(region.toString())
+            }
+        }
+    }
+
+    fun job(id: String): JSONObject? = jobs[id] ?: findRegion(id)
 
     @Synchronized fun deleteRegion(id: String): Boolean {
-        val all = regions(); val next = JSONArray(); var found = false
-        for (i in 0 until all.length()) { val r = all.getJSONObject(i); if (r.optString("id") == id) found = true else next.put(r) }
-        if (found) regionsFile.writeText(next.toString(2)); jobs.remove(id); return found
+        check(!isRegionBusy(id)) { "Offline region '$id' is already being processed" }
+        val all = regions()
+        var removed: JSONObject? = null
+        val next = JSONArray()
+        for (i in 0 until all.length()) {
+            val r = all.getJSONObject(i)
+            if (r.optString("id") == id) removed = JSONObject(r.toString()) else next.put(r)
+        }
+        if (removed == null) return false
+        writeJsonAtomic(regionsFile, next.toString(2))
+        jobs.remove(id)
+        val removedRegion = removed
+        val remaining = (0 until next.length()).map { JSONObject(next.getJSONObject(it).toString()) }
+        scope.launch {
+            try {
+                val deleted = deleteRegionTilesInternal(removedRegion, remaining)
+                Log.i("[Map] removed offline region $id and deleted $deleted unshared cached tiles")
+            } catch (e: Exception) {
+                Log.e("[Map] cleanup after deleting offline region $id failed", e)
+            }
+        }
+        return true
+    }
+
+    private fun findRegion(id: String): JSONObject? {
+        val all = regions()
+        for (i in 0 until all.length()) {
+            val r = all.getJSONObject(i)
+            if (r.optString("id") == id) return JSONObject(r.toString())
+        }
+        return null
+    }
+
+    private fun regionList(): List<JSONObject> {
+        val all = regions()
+        return (0 until all.length()).map { JSONObject(all.getJSONObject(it).toString()) }
+    }
+
+    private fun isRegionBusy(id: String): Boolean {
+        // Only in-memory jobs are active. A persisted "downloading" state may be
+        // left behind after an app/process restart and must not lock the region forever.
+        val status = jobs[id]?.optString("status") ?: return false
+        return status in setOf("downloading", "updating", "reloading", "clearing")
+    }
+
+    private fun sourceConfigForRegion(region: JSONObject): JSONObject {
+        val source = JSONObject(config.toString())
+        source.put("provider", region.optString("provider", source.optString("provider")))
+        listOf("style", "mapboxStyle", "tileUrlTemplate", "customTileUrlTemplate", "attribution").forEach { key ->
+            if (region.has(key)) source.put(key, region.optString(key))
+        }
+        validateConfig(source)
+        val expectedNamespace = region.optString("cacheNamespace")
+        require(expectedNamespace.isBlank() || cacheNamespace(source) == expectedNamespace) {
+            "The stored offline region source no longer matches its cache namespace. Create the region again."
+        }
+        return source
+    }
+
+    private fun scanRegionCache(region: JSONObject): Pair<Int, Long> {
+        val namespace = region.optString("cacheNamespace")
+        if (namespace.isBlank()) return 0 to 0L
+        var count = 0
+        var bytes = 0L
+        val lat = region.getDouble("latitude")
+        val lon = region.getDouble("longitude")
+        val radiusM = region.getDouble("radiusM")
+        for (z in region.getInt("minZoom")..region.getInt("maxZoom")) {
+            forEachRegionTile(lat, lon, radiusM, z) { x, y ->
+                val file = tileFile(namespace, z, x, y)
+                if (isValidCachedTile(file)) {
+                    count++
+                    bytes += file.length()
+                }
+            }
+        }
+        return count to bytes
+    }
+
+    private fun isValidCachedTile(file: File): Boolean {
+        if (!file.exists()) return false
+        return try {
+            val bytes = file.readBytes()
+            if (guessContentType(bytes) == "application/octet-stream") {
+                file.delete()
+                false
+            } else true
+        } catch (_: Exception) { false }
+    }
+
+    private fun deleteRegionTilesInternal(region: JSONObject, otherRegions: List<JSONObject>): Int {
+        val namespace = region.optString("cacheNamespace")
+        if (namespace.isBlank()) return 0
+        var deleted = 0
+        val lat = region.getDouble("latitude")
+        val lon = region.getDouble("longitude")
+        val radiusM = region.getDouble("radiusM")
+        for (z in region.getInt("minZoom")..region.getInt("maxZoom")) {
+            forEachRegionTile(lat, lon, radiusM, z) { x, y ->
+                val shared = otherRegions.any { other ->
+                    other.optString("cacheNamespace") == namespace &&
+                        z in other.optInt("minZoom", 1)..other.optInt("maxZoom", 19) &&
+                        tileIntersectsCircle(x, y, z, other.optDouble("latitude"), other.optDouble("longitude"), other.optDouble("radiusM"))
+                }
+                if (!shared) {
+                    val file = tileFile(namespace, z, x, y)
+                    if (file.exists() && file.delete()) deleted++
+                }
+            }
+        }
+        pruneEmptyDirectories(File(cacheDir, namespace))
+        return deleted
+    }
+
+    private fun pruneEmptyDirectories(dir: File) {
+        if (!dir.exists() || !dir.isDirectory) return
+        dir.listFiles()?.filter { it.isDirectory }?.forEach { pruneEmptyDirectories(it) }
+        if (dir.listFiles()?.isEmpty() == true) dir.delete()
+    }
+
+    private fun writeJsonAtomic(file: File, content: String) {
+        file.parentFile?.mkdirs()
+        val tmp = File(file.parentFile, "${file.name}.tmp")
+        tmp.writeText(content)
+        if (!tmp.renameTo(file)) {
+            file.writeText(content)
+            tmp.delete()
+        }
     }
 
     private fun countTiles(lat: Double, lon: Double, radiusM: Double, minZ: Int, maxZ: Int): Int {

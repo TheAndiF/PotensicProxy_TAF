@@ -1,10 +1,12 @@
 export type MapProvider = 'osm' | 'mapbox-satellite' | 'mapbox-style' | 'custom'
 export type MapboxTokenType = 'public' | 'secret' | 'temporary' | 'none' | 'unknown'
+export type MapDataMode = 'auto' | 'offline' | 'online'
 
 export interface MapConfig {
   provider: MapProvider
   style: string
   tileUrlTemplate: string
+  customTileUrlTemplate?: string
   accessToken: string
   hasAccessToken?: boolean
   tokenType?: MapboxTokenType
@@ -13,7 +15,7 @@ export interface MapConfig {
   defaultZoom: number
   autoCenter: boolean
   orientation: 'north' | 'heading'
-  dataMode: 'auto' | 'offline' | 'online'
+  dataMode: MapDataMode
 }
 
 export interface MapConnectionTest {
@@ -37,9 +39,19 @@ export interface OfflineRegion {
   downloaded: number
   total: number
   errors?: number
+  cachedTiles?: number
+  sizeBytes?: number
+  lastDeletedTiles?: number
+  lastError?: string
   downloadedAt?: number | null
   provider?: string
   resource?: string
+  cacheNamespace?: string
+  style?: string
+  mapboxStyle?: string
+  tileUrlTemplate?: string
+  customTileUrlTemplate?: string
+  attribution?: string
 }
 
 export interface VersionInfo {

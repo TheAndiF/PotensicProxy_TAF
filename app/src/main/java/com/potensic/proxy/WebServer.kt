@@ -118,6 +118,9 @@ class WebServer(
                 get("/api/map/tiles/{z}/{x}/{y}") {
                     val z = call.parameters["z"]?.toIntOrNull(); val x = call.parameters["x"]?.toIntOrNull(); val y = call.parameters["y"]?.toIntOrNull()
                     if (z == null || x == null || y == null) { call.respond(HttpStatusCode.BadRequest); return@get }
+                    // The backend owns cache policy (Auto / Offline / Online). Prevent the
+                    // browser image cache from bypassing a later mode/provider switch.
+                    call.response.headers.append(HttpHeaders.CacheControl, "no-store, max-age=0")
                     val tile = withContext(Dispatchers.IO) { mapBackend.tile(z, x, y) }
                     if (tile == null) call.respond(HttpStatusCode.NotFound)
                     else call.respondBytes(tile.first, ContentType.parse(tile.second))
@@ -131,12 +134,49 @@ class WebServer(
                         call.respondText(JSONObject().put("error", e.message ?: "invalid region").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
                     }
                 }
+                post("/api/map/regions/{id}/update") {
+                    val id = call.parameters["id"] ?: ""
+                    try {
+                        val region = mapBackend.updateRegion(id)
+                        call.respondText(region.toString(), ContentType.Application.Json, HttpStatusCode.Accepted)
+                    } catch (e: IllegalStateException) {
+                        call.respondText(JSONObject().put("error", e.message ?: "region is busy").toString(), ContentType.Application.Json, HttpStatusCode.Conflict)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", e.message ?: "could not update region").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
+                }
+                post("/api/map/regions/{id}/reload") {
+                    val id = call.parameters["id"] ?: ""
+                    try {
+                        val region = mapBackend.reloadRegion(id)
+                        call.respondText(region.toString(), ContentType.Application.Json, HttpStatusCode.Accepted)
+                    } catch (e: IllegalStateException) {
+                        call.respondText(JSONObject().put("error", e.message ?: "region is busy").toString(), ContentType.Application.Json, HttpStatusCode.Conflict)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", e.message ?: "could not reload region").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
+                }
+                delete("/api/map/regions/{id}/tiles") {
+                    val id = call.parameters["id"] ?: ""
+                    try {
+                        val region = mapBackend.clearRegionTiles(id)
+                        call.respondText(region.toString(), ContentType.Application.Json, HttpStatusCode.Accepted)
+                    } catch (e: IllegalStateException) {
+                        call.respondText(JSONObject().put("error", e.message ?: "region is busy").toString(), ContentType.Application.Json, HttpStatusCode.Conflict)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", e.message ?: "could not clear region tiles").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
+                }
                 get("/api/map/regions/{id}") {
                     val r = mapBackend.job(call.parameters["id"] ?: "")
                     if (r == null) call.respond(HttpStatusCode.NotFound) else call.respondText(r.toString(), ContentType.Application.Json)
                 }
                 delete("/api/map/regions/{id}") {
-                    if (mapBackend.deleteRegion(call.parameters["id"] ?: "")) call.respond(HttpStatusCode.NoContent) else call.respond(HttpStatusCode.NotFound)
+                    try {
+                        if (mapBackend.deleteRegion(call.parameters["id"] ?: "")) call.respond(HttpStatusCode.NoContent) else call.respond(HttpStatusCode.NotFound)
+                    } catch (e: IllegalStateException) {
+                        call.respondText(JSONObject().put("error", e.message ?: "region is busy").toString(), ContentType.Application.Json, HttpStatusCode.Conflict)
+                    }
                 }
 
                 // Mission planning storage and Potensic ATOM 1 export.

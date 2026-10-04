@@ -1,0 +1,32 @@
+BL_Add persistent map switching and offline tile lifecycle v0.964
+
+Date: 2026-10-04
+
+Summary:
+- Kept map provider/token configuration persistent in the Android backend and made map/region JSON writes safer.
+- Added direct in-map switching between OSM, Mapbox presets/custom style and Custom XYZ sources.
+- Defined Auto as offline/cache-first, Offline as cache-only and Online as provider-first with cache fallback.
+- Added offline region update, full reload, tile-only deletion and region removal with shared-tile protection.
+- Added cache size/tile status to offline region management and synchronized map settings across views.
+- Added Map API v3 region-maintenance endpoints and disabled browser tile caching so backend data-mode policy remains authoritative.
+- Bumped Android/WebUI version to 0.964 and Android versionCode to 37.
+
+Changed files:
+- MAP_INTEGRATION_NOTES.md
+- README.md
+- VERSIONING.md
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-04_MAP_OFFLINE_TILE_VERWALTUNG_v0.964.md
+- COMMIT_MESSAGE_MAP_OFFLINE_TILE_MANAGEMENT_2026-10-04_v0.964.txt
+- PATCH_MAP_OFFLINE_TILE_MANAGEMENT_2026-10-04_v0.964.patch
+- DOCUMENTATION/2026-10-04 - PotensicProxy_TAF - Aenderungsdokumentation - Kartenquellen-und-Offline-Tile-Verwaltung - v0.1.docx
+- DOCUMENTATION/2026-10-04 - PotensicProxy_TAF - Aenderungsdokumentation - Kartenquellen-und-Offline-Tile-Verwaltung - v0.1.pdf
+- app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/MapBackend.kt
+- app/src/main/java/com/potensic/proxy/VersionInfo.kt
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- webui/package-lock.json
+- webui/package.json
+- webui/src/components/cockpit/MapView.vue
+- webui/src/components/settings/MapSettingsView.vue
+- webui/src/services/MapService.ts
+- webui/src/types/map.ts

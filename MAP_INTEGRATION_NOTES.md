@@ -167,3 +167,49 @@ v0.963 changes the provider path as follows:
 The map provider contract is otherwise unchanged: successful or provider-level failed tests are returned by `MapBackend.testConnection()` as the existing `MapConnectionTest` structure with `ok`, `httpStatus`, `resource`, `tokenType`, `contentType` and `message` fields. Map API remains v2.
 
 No USB/BX3, camera, telemetry, live-view or flight-control protocol was changed.
+
+## v0.964 - Persistent map configuration, in-map source switching and offline tile lifecycle
+
+Version v0.964 extends the existing backend-owned map integration without moving provider credentials or tile-provider requests into the browser.
+
+### Persistent provider/token configuration
+
+- The backend configuration in `filesDir/map/config.json` remains the persistent source for provider settings and the access token. It survives WebUI reloads, app restarts and device restarts; Android app-data reset or uninstall removes it.
+- `GET /api/map/config` still returns a stored token only as `********` plus `hasAccessToken` and `tokenType`; the clear token is not echoed back to the WebUI.
+- Config and offline-region JSON files are now written through a temporary file/replace step to reduce the risk of a partially written file after interruption.
+- Custom XYZ configuration now has its own `customTileUrlTemplate` field so switching to OpenStreetMap does not overwrite a previously configured custom source.
+
+### Source and data-mode switching inside the map
+
+The map overlay now provides direct source and data-mode selectors. The user can switch the visible map without leaving the map itself. Presets include OpenStreetMap, Mapbox Satellite, Mapbox Streets, Mapbox Outdoors, the configured Mapbox custom style and a configured custom XYZ source.
+
+The backend remains authoritative for tile access. Browser tile responses use `Cache-Control: no-store` so browser image caching cannot hide a provider/data-mode change. A frontend tile revision also forces currently visible tiles to be requested again after a saved configuration change.
+
+Data modes are now explicit:
+
+- `auto`: cache/offline first. A valid local tile is returned immediately; only missing/invalid tiles are downloaded and then cached.
+- `offline`: cache only. No provider request is performed; a missing tile returns unavailable.
+- `online`: provider first. The provider is queried and a successful response replaces the local cached tile. If the provider is temporarily unavailable, an already valid local tile is used as a resilience fallback.
+
+### Offline-region lifecycle
+
+Stored offline regions now retain their source identity and expose cached tile count plus byte size after download/maintenance operations. Region maintenance actions are available from the Map settings panel:
+
+- `Update`: downloads only missing/invalid tiles for the region.
+- `Reload`: refreshes every tile from the region's stored provider/source. An existing tile is replaced only after a successful provider response so an interrupted reload does not intentionally destroy the previous valid copy.
+- `Delete tiles`: deletes locally cached tiles belonging only to that region while keeping the region definition. Tiles that are also referenced by another stored region with the same cache namespace are preserved.
+- `Remove`: removes the region definition and asynchronously deletes its unshared cached tiles.
+
+An interrupted `downloading`, `updating`, `reloading` or `clearing` state from a previous Android process is recovered as `interrupted` on the next backend start so the region is not permanently locked.
+
+The public OpenStreetMap tile service remains excluded from bulk/offline prefetching. Provider-specific caching/offline terms remain the user's/provider account responsibility.
+
+### Map API v3 additions
+
+Map API index is increased from 2 to 3. Existing endpoints remain compatible and the following maintenance endpoints are added:
+
+- `POST /api/map/regions/{id}/update`
+- `POST /api/map/regions/{id}/reload`
+- `DELETE /api/map/regions/{id}/tiles`
+
+No USB/BX3, camera, telemetry, LiveView or flight-control protocol is changed by v0.964.
