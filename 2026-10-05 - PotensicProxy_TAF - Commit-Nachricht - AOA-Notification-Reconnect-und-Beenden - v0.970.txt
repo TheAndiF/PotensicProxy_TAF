@@ -1,0 +1,30 @@
+BL_Add AOA notification reconnect and stop actions
+Date: 2026-10-05
+
+Summary:
+- Added foreground-notification actions to restart the app-side Android Open Accessory (AOA) USB connection and to stop the proxy service cleanly.
+- AOA reconnect closes only this app's current USB descriptor, waits briefly, then re-runs accessory discovery, permission handling, openAccessory(), and the existing Potensic handshake path.
+- Stop action removes the foreground notification and stops the service so onDestroy() releases USB, web server, transport, worker jobs, and wake lock resources.
+- Added localized notification action labels for German, English, Chinese, and the default resource set.
+- Bumped Android/backend and frontend release version to 0.970 and Android versionCode to 43.
+- Added project documentation, patch, and delivery notes for the change.
+
+Validation:
+- Android resource XML files parsed successfully.
+- Full Gradle build could not be completed in the isolated build environment because Gradle 8.11.1 was not locally cached and network download is unavailable.
+- WebUI build could not be completed because the archived node_modules lacks the platform-specific optional Rollup binary @rollup/rollup-linux-x64-gnu; source version files were updated consistently.
+
+Changed files:
+- VERSIONING.md
+- app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/ProxyService.kt
+- app/src/main/res/values/strings.xml
+- app/src/main/res/values-de/strings.xml
+- app/src/main/res/values-en/strings.xml
+- app/src/main/res/values-zh/strings.xml
+- webui/package.json
+- webui/package-lock.json
+- 2026-10-05 - PotensicProxy_TAF - Patch - AOA-Notification-Reconnect-und-Beenden - v0.970.patch
+- 2026-10-05 - PotensicProxy_TAF - Auslieferungshinweis - AOA-Notification-Reconnect-und-Beenden - v0.970.md
+- DOCUMENTATION/2026-10-05 - PotensicProxy_TAF - Projektdokumentation - AOA-Notification-Reconnect-und-Beenden - v0.970.docx
+- DOCUMENTATION/2026-10-05 - PotensicProxy_TAF - Projektdokumentation - AOA-Notification-Reconnect-und-Beenden - v0.970.pdf

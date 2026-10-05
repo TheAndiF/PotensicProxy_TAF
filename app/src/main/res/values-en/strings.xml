@@ -6,6 +6,8 @@
     <string name="notification_service_running">Potensic Proxy service is running</string>
     <string name="notification_proxy_title">Potensic Proxy</string>
     <string name="notification_proxy_text">Drone control relay active - :9090</string>
+    <string name="notification_action_reconnect_aoa">Reconnect AOA</string>
+    <string name="notification_action_stop">Stop</string>
     <string name="notification_channel_name">Drone Proxy</string>
     <string name="notification_channel_description">Potensic drone control relay</string>
     <string name="toast_web_ui">Potensic Proxy: http://%1$s:9090</string>

@@ -1,6 +1,7 @@
 package com.potensic.proxy
 
 import android.app.Notification
+import android.app.PendingIntent
 import com.potensic.proxy.protocol.PotensicProtocol
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -35,6 +36,8 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         const val CHANNEL_ID = "potensic_proxy"
         const val NOTIFICATION_ID = 4242
         const val CONTROL_LOOP_MS = 20L // 50Hz
+        const val ACTION_RECONNECT_AOA = "com.potensic.proxy.action.RECONNECT_AOA"
+        const val ACTION_STOP_PROXY = "com.potensic.proxy.action.STOP_PROXY"
 
         var instance: ProxyService? = null; private set
     }
@@ -94,7 +97,20 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     private var serverStarted = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.i("[Service] onStartCommand (serverStarted=$serverStarted)")
+        val action = intent?.action
+        Log.i("[Service] onStartCommand (serverStarted=$serverStarted, action=$action)")
+
+        if (action == ACTION_STOP_PROXY) {
+            Log.i("[Service] Notification action: stop requested")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         val notification = buildNotification()
         try {
@@ -121,7 +137,11 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
             Log.i("[Service] Web server already running, skipping")
         }
 
-        ensureUsbConnection()
+        if (action == ACTION_RECONNECT_AOA) {
+            reconnectAoaFromNotification()
+        } else {
+            ensureUsbConnection()
+        }
         startConnectionSupervisor()
 
         return START_STICKY
@@ -171,6 +191,32 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         val connectedNow = usbManager.connect()
         Log.i("[Service] ensureUsbConnection: connected=$connectedNow attached=${usbManager.hasAttachedAccessory} permissionPending=${usbManager.isPermissionPending}")
         return connectedNow
+    }
+
+
+    /**
+     * User-triggered AOA reconnect from the foreground notification.
+     * Releases only this app's USB descriptor, then performs a complete new
+     * accessory discovery/permission/open cycle. Android still decides whether
+     * the permission dialog is shown and whether another app currently owns the
+     * accessory.
+     */
+    private fun reconnectAoaFromNotification() {
+        scope.launch {
+            Log.i("[Service] Notification action: AOA reconnect requested")
+            try {
+                usbManager.disconnect()
+                delay(350)
+                val connectedNow = ensureUsbConnection()
+                Log.i(
+                    "[Service] AOA reconnect result: connected=$connectedNow " +
+                        "attached=${usbManager.hasAttachedAccessory} " +
+                        "permissionPending=${usbManager.isPermissionPending}"
+                )
+            } catch (e: Exception) {
+                Log.e("[Service] AOA reconnect failed: ${e.message}", e)
+            }
+        }
     }
 
     /**
@@ -701,11 +747,45 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
     // === Notification & WakeLock ===
 
     private fun buildNotification(): Notification {
+        val reconnectIntent = Intent(this, ProxyService::class.java).apply {
+            action = ACTION_RECONNECT_AOA
+        }
+        val reconnectPendingIntent = PendingIntent.getService(
+            this,
+            1001,
+            reconnectIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val stopIntent = Intent(this, ProxyService::class.java).apply {
+            action = ACTION_STOP_PROXY
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            1002,
+            stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.notification_proxy_title))
             .setContentText(getString(R.string.notification_proxy_text))
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setOngoing(true)
+            .addAction(
+                Notification.Action.Builder(
+                    android.R.drawable.ic_popup_sync,
+                    getString(R.string.notification_action_reconnect_aoa),
+                    reconnectPendingIntent
+                ).build()
+            )
+            .addAction(
+                Notification.Action.Builder(
+                    android.R.drawable.ic_menu_close_clear_cancel,
+                    getString(R.string.notification_action_stop),
+                    stopPendingIntent
+                ).build()
+            )
             .build()
     }
 

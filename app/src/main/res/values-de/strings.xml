@@ -6,6 +6,8 @@
     <string name="notification_service_running">Potensic-Proxy-Dienst läuft</string>
     <string name="notification_proxy_title">Potensic Proxy</string>
     <string name="notification_proxy_text">Drohnen-Steuerrelais aktiv - :9090</string>
+    <string name="notification_action_reconnect_aoa">AOA neu verbinden</string>
+    <string name="notification_action_stop">Beenden</string>
     <string name="notification_channel_name">Drohnen-Proxy</string>
     <string name="notification_channel_description">Potensic-Drohnen-Steuerrelais</string>
     <string name="toast_web_ui">Potensic Proxy: http://%1$s:9090</string>
