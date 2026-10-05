@@ -134,13 +134,13 @@ export const useDroneStore = defineStore('drone', () => {
     rcRoll: 0
   })
 
-  // Continuous gimbal target control. The actual pitch remains telemetry-owned;
-  // this state only contains the requested target and the Send4Axis actuator value.
+  // Direct gimbal stick control. The actual pitch remains telemetry-owned;
+  // command is the directly transmitted Send4Axis gimbal axis value (-1000..1000).
   const gimbalControl = reactive({
     targetAngle: 0,
     active: false,
     command: 0,
-    mode: 'preset' as 'preset' | 'continuous',
+    mode: 'preset' as 'preset' | 'direct',
     telemetryUpdatedAt: 0
   })
 

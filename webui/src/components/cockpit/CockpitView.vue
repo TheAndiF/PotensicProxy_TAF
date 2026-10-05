@@ -152,7 +152,7 @@ watch(() => store.gimbalControl.active, active => {
   else maybeStopAxisLoop()
 })
 onBeforeUnmount(() => {
-  DroneControlService.stopContinuousGimbal('cockpit left')
+  DroneControlService.stopDirectGimbal('cockpit left')
   if (axisTimer) {
     sendAxesNow()
     clearInterval(axisTimer)

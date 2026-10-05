@@ -1,0 +1,27 @@
+BL_Direct gimbal stick control
+Date: 2026-10-05
+
+Summary:
+- Replaced the manual gimbal target-angle controller with a direct self-centering Send4Axis gimbal stick.
+- Mapped vertical stick deflection linearly to the gimbal axis range -1000..1000.
+- Neutralized the gimbal axis immediately when the pointer is released, cancelled, or the cockpit is left.
+- Kept the existing 0°, -45° and -90° presets on the synchronized gimbal settings path unchanged.
+- Kept actual gimbal pitch telemetry as read-only feedback and removed telemetry dependency from manual stick movement.
+- Updated the UI from target-angle feedback to direct speed/deflection feedback.
+- Bumped the project version to 0.971 and Android versionCode to 44.
+- Added matching PDF and editable DOCX project documentation.
+
+Changed files:
+- VERSIONING.md
+- app/build.gradle.kts
+- webui/package.json
+- webui/package-lock.json
+- webui/src/components/cockpit/CockpitView.vue
+- webui/src/components/cockpit/GimbalControl.vue
+- webui/src/services/DroneControlService.ts
+- webui/src/stores/useDroneStore.ts
+- DOCUMENTATION/2026-10-05 - PotensicProxy_TAF - Projektdokumentation - Direkte-Gimbal-Sticksteuerung - v0.971.docx
+- DOCUMENTATION/2026-10-05 - PotensicProxy_TAF - Projektdokumentation - Direkte-Gimbal-Sticksteuerung - v0.971.pdf
+- 2026-10-05 - PotensicProxy_TAF - Commit-Nachricht - Direkte-Gimbal-Sticksteuerung - v0.971.txt
+- 2026-10-05 - PotensicProxy_TAF - Auslieferungshinweis - Direkte-Gimbal-Sticksteuerung - v0.971.md
+- 2026-10-05 - PotensicProxy_TAF - Patch - Direkte-Gimbal-Sticksteuerung - v0.971.patch

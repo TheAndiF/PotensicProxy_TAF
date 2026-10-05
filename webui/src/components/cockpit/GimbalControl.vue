@@ -17,8 +17,9 @@
             @pointercancel="onPointerUp"
           >
             <div class="axis-line"></div>
-            <div class="limit-mark top">{{ MAX_ANGLE }}°</div>
-            <div class="limit-mark bottom">{{ MIN_ANGLE }}°</div>
+            <div class="limit-mark top">+100%</div>
+            <div class="center-mark">0</div>
+            <div class="limit-mark bottom">-100%</div>
             <div class="control-knob" :style="gimbalKnobStyle"><span class="knob-dot"></span></div>
           </div>
           <div class="presets">
@@ -29,7 +30,7 @@
           </div>
         </div>
         <div class="value-grid">
-          <div><span class="value-label">Soll</span><strong>{{ targetAngle }}°</strong></div>
+          <div><span class="value-label">Tempo</span><strong>{{ gimbalCommandText }}</strong></div>
           <div><span class="value-label">Ist</span><strong>{{ actualGimbalText }}</strong></div>
         </div>
         <div class="feedback-state">{{ gimbalStatus }}</div>
@@ -75,13 +76,10 @@ import { CameraMediaService } from '../../services/CameraMediaService'
 import { DroneControlService } from '../../services/DroneControlService'
 import { useDroneStore } from '../../stores/useDroneStore'
 
-const MIN_ANGLE = -90
-const MAX_ANGLE = 30
 const MIN_ZOOM = 1
 const camera = useCameraStore()
 const store = useDroneStore()
 const MAX_ZOOM = computed(() => Math.max(MIN_ZOOM, camera.zoomMax || 4))
-const targetAngle = computed(() => store.gimbalControl.targetAngle)
 const pendingGimbalAngle = ref<0 | -45 | -90 | null>(null)
 const targetZoom = computed(() => camera.zoomTarget)
 
@@ -94,9 +92,9 @@ let dragging = false
 let zoomDragging = false
 
 const gimbalKnobStyle = computed(() => {
-  const normalized = (MAX_ANGLE - targetAngle.value) / (MAX_ANGLE - MIN_ANGLE)
   const travel = 70
-  const y = -travel / 2 + normalized * travel
+  const command = Math.max(-1000, Math.min(1000, store.gimbalControl.command))
+  const y = -(command / 1000) * (travel / 2)
   return { transform: `translate(-50%, calc(-50% + ${y}px))` }
 })
 
@@ -108,8 +106,9 @@ const zoomKnobStyle = computed(() => {
 })
 
 const actualGimbalText = computed(() => actualGimbal.value == null ? '--' : `${actualGimbal.value.toFixed(0)}°`)
+const gimbalCommandText = computed(() => `${store.gimbalControl.command >= 0 ? '+' : ''}${Math.round(store.gimbalControl.command / 10)}%`)
 const actualZoomText = computed(() => actualZoom.value == null ? '--' : `${actualZoom.value.toFixed(2)}x`)
-const gimbalStatus = computed(() => pendingGimbalAngle.value != null ? 'Warte auf Gimbal-Einstellungen …' : actualGimbal.value == null ? 'Keine Rückmeldung' : store.gimbalControl.active ? 'Fährt stufenlos' : Math.abs(actualGimbal.value - targetAngle.value) <= 1 ? 'Erreicht' : 'Bereit')
+const gimbalStatus = computed(() => pendingGimbalAngle.value != null ? 'Warte auf Gimbal-Einstellungen …' : store.gimbalControl.active ? (store.gimbalControl.command > 0 ? 'Fährt aufwärts' : store.gimbalControl.command < 0 ? 'Fährt abwärts' : 'Neutral') : actualGimbal.value == null ? 'Keine Rückmeldung' : 'Bereit')
 const zoomStatus = computed(() => camera.zoomPending ? 'Warte auf Kamera …' : actualZoom.value == null ? 'Keine Rückmeldung' : Math.abs(actualZoom.value - targetZoom.value) <= 0.02 ? 'Erreicht' : 'Abweichung')
 
 function setPresetAngle(value: 0 | -45 | -90) {
@@ -118,13 +117,6 @@ function setPresetAngle(value: 0 | -45 | -90) {
   pendingGimbalAngle.value = sent ? null : value
 }
 
-function setContinuousAngle(value: number) {
-  if (!Number.isFinite(value)) return
-  const clamped = Math.max(MIN_ANGLE, Math.min(MAX_ANGLE, Math.round(value * 10) / 10))
-  store.gimbalControl.targetAngle = clamped
-  pendingGimbalAngle.value = null
-  DroneControlService.setContinuousGimbalTarget(clamped)
-}
 
 let lastZoomSend = 0
 let queuedZoomTimer: ReturnType<typeof setTimeout> | null = null
@@ -150,6 +142,7 @@ function onZoomNumberChange(e: Event) { setZoom(Number((e.target as HTMLInputEle
 
 function onPointerDown(e: PointerEvent) {
   dragging = true
+  pendingGimbalAngle.value = null
   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   updateFromPointer(e)
 }
@@ -158,14 +151,16 @@ function onPointerUp(e: PointerEvent) {
   if (!dragging) return
   dragging = false
   try { ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch (_) {}
+  DroneControlService.stopDirectGimbal('stick released')
 }
 function updateFromPointer(e: PointerEvent) {
   if (!dialRef.value) return
   const rect = dialRef.value.getBoundingClientRect()
-  const usable = Math.max(1, rect.height - 30)
-  const y = Math.max(15, Math.min(rect.height - 15, e.clientY - rect.top))
-  const ratio = (y - 15) / usable
-  setContinuousAngle(MAX_ANGLE - ratio * (MAX_ANGLE - MIN_ANGLE))
+  const centerY = rect.top + rect.height / 2
+  const maxTravel = Math.max(1, rect.height / 2 - 15)
+  const dy = Math.max(-maxTravel, Math.min(maxTravel, e.clientY - centerY))
+  const command = Math.round((-dy / maxTravel) * 1000)
+  DroneControlService.setDirectGimbalCommand(command)
 }
 function onZoomPointerDown(e: PointerEvent) {
   zoomDragging = true
@@ -194,7 +189,7 @@ watch(() => store.telemetry.gimbalSettingsValid, valid => {
     if (DroneControlService.setGimbalPitchPreset(angle)) pendingGimbalAngle.value = null
     return
   }
-  if (store.gimbalControl.mode === 'continuous') return
+  if (store.gimbalControl.mode === 'direct') return
   const ctrl = store.telemetry.gimbalPitchControl
   if (ctrl === 1) store.gimbalControl.targetAngle = 0
   else if (ctrl === 3) store.gimbalControl.targetAngle = -45
@@ -218,7 +213,7 @@ onMounted(() => {
 .axis-line{position:absolute;top:18px;bottom:18px;left:50%;width:1px;background:linear-gradient(to bottom,rgba(0,217,255,.2),rgba(0,217,255,.8),rgba(0,217,255,.2))}
 .control-knob{width:34px;height:34px;border-radius:50%;background:radial-gradient(circle,var(--ui-danger),#b31238);border:2px solid #ff5c84;position:absolute;top:50%;left:50%;box-shadow:0 0 10px rgba(255,42,95,.6);transition:transform .05s linear;display:flex;align-items:center;justify-content:center;pointer-events:none}
 .knob-dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
-.limit-mark{position:absolute;left:50%;transform:translateX(-50%);font-size:7px;color:var(--text-muted);font-family:var(--mono);white-space:nowrap}.limit-mark.top{top:3px}.limit-mark.bottom{bottom:3px}
+.limit-mark{position:absolute;left:50%;transform:translateX(-50%);font-size:7px;color:var(--text-muted);font-family:var(--mono);white-space:nowrap}.limit-mark.top{top:3px}.limit-mark.bottom{bottom:3px}.center-mark{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:7px;color:var(--text-muted);font-family:var(--mono);pointer-events:none}
 .presets{display:flex;flex-direction:column;gap:5px}.preset-label{color:var(--text-muted);font-size:8px;text-transform:uppercase;letter-spacing:.4px}
 .value-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:8px}.value-grid>div{min-height:31px;border:1px solid var(--ui-border-control);border-radius:5px;background:var(--ui-bg-control-strong);display:flex;align-items:center;justify-content:space-between;padding:0 6px;font-family:var(--mono);font-size:9px}.value-grid strong{color:var(--cyan);font-size:10px}.value-label{color:var(--text-muted)}
 .feedback-state{margin-top:5px;text-align:center;color:var(--text-muted);font-size:8px;font-family:var(--mono)}

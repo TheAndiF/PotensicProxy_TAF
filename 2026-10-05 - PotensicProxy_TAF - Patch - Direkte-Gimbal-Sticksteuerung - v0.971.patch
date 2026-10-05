@@ -1,0 +1,331 @@
+--- a/VERSIONING.md
++++ b/VERSIONING.md
+@@ -23,8 +23,8 @@
+ 
+ ## Current development release
+ 
+-- Software version: `0.970` (pre-1.0 development)
+-- Android `versionCode`: `43`
++- Software version: `0.971` (pre-1.0 development)
++- Android `versionCode`: `44`
+ - Frontend source: `webui/package.json`
+ - Backend/Android source: `app/build.gradle.kts`
+ 
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 43
+-        versionName = "0.970"
++        versionCode = 44
++        versionName = "0.971"
+     }
+ 
+     signingConfigs {
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.970",
++  "version": "0.971",
+   "private": true,
+   "type": "module",
+   "scripts": {
+--- a/webui/package-lock.json
++++ b/webui/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.970",
++  "version": "0.971",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.970",
++      "version": "0.971",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",
+--- a/webui/src/components/cockpit/CockpitView.vue
++++ b/webui/src/components/cockpit/CockpitView.vue
+@@ -152,7 +152,7 @@
+   else maybeStopAxisLoop()
+ })
+ onBeforeUnmount(() => {
+-  DroneControlService.stopContinuousGimbal('cockpit left')
++  DroneControlService.stopDirectGimbal('cockpit left')
+   if (axisTimer) {
+     sendAxesNow()
+     clearInterval(axisTimer)
+--- a/webui/src/components/cockpit/GimbalControl.vue
++++ b/webui/src/components/cockpit/GimbalControl.vue
+@@ -17,8 +17,9 @@
+             @pointercancel="onPointerUp"
+           >
+             <div class="axis-line"></div>
+-            <div class="limit-mark top">{{ MAX_ANGLE }}°</div>
+-            <div class="limit-mark bottom">{{ MIN_ANGLE }}°</div>
++            <div class="limit-mark top">+100%</div>
++            <div class="center-mark">0</div>
++            <div class="limit-mark bottom">-100%</div>
+             <div class="control-knob" :style="gimbalKnobStyle"><span class="knob-dot"></span></div>
+           </div>
+           <div class="presets">
+@@ -29,7 +30,7 @@
+           </div>
+         </div>
+         <div class="value-grid">
+-          <div><span class="value-label">Soll</span><strong>{{ targetAngle }}°</strong></div>
++          <div><span class="value-label">Tempo</span><strong>{{ gimbalCommandText }}</strong></div>
+           <div><span class="value-label">Ist</span><strong>{{ actualGimbalText }}</strong></div>
+         </div>
+         <div class="feedback-state">{{ gimbalStatus }}</div>
+@@ -75,13 +76,10 @@
+ import { DroneControlService } from '../../services/DroneControlService'
+ import { useDroneStore } from '../../stores/useDroneStore'
+ 
+-const MIN_ANGLE = -90
+-const MAX_ANGLE = 30
+ const MIN_ZOOM = 1
+ const camera = useCameraStore()
+ const store = useDroneStore()
+ const MAX_ZOOM = computed(() => Math.max(MIN_ZOOM, camera.zoomMax || 4))
+-const targetAngle = computed(() => store.gimbalControl.targetAngle)
+ const pendingGimbalAngle = ref<0 | -45 | -90 | null>(null)
+ const targetZoom = computed(() => camera.zoomTarget)
+ 
+@@ -94,9 +92,9 @@
+ let zoomDragging = false
+ 
+ const gimbalKnobStyle = computed(() => {
+-  const normalized = (MAX_ANGLE - targetAngle.value) / (MAX_ANGLE - MIN_ANGLE)
+   const travel = 70
+-  const y = -travel / 2 + normalized * travel
++  const command = Math.max(-1000, Math.min(1000, store.gimbalControl.command))
++  const y = -(command / 1000) * (travel / 2)
+   return { transform: `translate(-50%, calc(-50% + ${y}px))` }
+ })
+ 
+@@ -108,8 +106,9 @@
+ })
+ 
+ const actualGimbalText = computed(() => actualGimbal.value == null ? '--' : `${actualGimbal.value.toFixed(0)}°`)
++const gimbalCommandText = computed(() => `${store.gimbalControl.command >= 0 ? '+' : ''}${Math.round(store.gimbalControl.command / 10)}%`)
+ const actualZoomText = computed(() => actualZoom.value == null ? '--' : `${actualZoom.value.toFixed(2)}x`)
+-const gimbalStatus = computed(() => pendingGimbalAngle.value != null ? 'Warte auf Gimbal-Einstellungen …' : actualGimbal.value == null ? 'Keine Rückmeldung' : store.gimbalControl.active ? 'Fährt stufenlos' : Math.abs(actualGimbal.value - targetAngle.value) <= 1 ? 'Erreicht' : 'Bereit')
++const gimbalStatus = computed(() => pendingGimbalAngle.value != null ? 'Warte auf Gimbal-Einstellungen …' : store.gimbalControl.active ? (store.gimbalControl.command > 0 ? 'Fährt aufwärts' : store.gimbalControl.command < 0 ? 'Fährt abwärts' : 'Neutral') : actualGimbal.value == null ? 'Keine Rückmeldung' : 'Bereit')
+ const zoomStatus = computed(() => camera.zoomPending ? 'Warte auf Kamera …' : actualZoom.value == null ? 'Keine Rückmeldung' : Math.abs(actualZoom.value - targetZoom.value) <= 0.02 ? 'Erreicht' : 'Abweichung')
+ 
+ function setPresetAngle(value: 0 | -45 | -90) {
+@@ -118,13 +117,6 @@
+   pendingGimbalAngle.value = sent ? null : value
+ }
+ 
+-function setContinuousAngle(value: number) {
+-  if (!Number.isFinite(value)) return
+-  const clamped = Math.max(MIN_ANGLE, Math.min(MAX_ANGLE, Math.round(value * 10) / 10))
+-  store.gimbalControl.targetAngle = clamped
+-  pendingGimbalAngle.value = null
+-  DroneControlService.setContinuousGimbalTarget(clamped)
+-}
+ 
+ let lastZoomSend = 0
+ let queuedZoomTimer: ReturnType<typeof setTimeout> | null = null
+@@ -150,6 +142,7 @@
+ 
+ function onPointerDown(e: PointerEvent) {
+   dragging = true
++  pendingGimbalAngle.value = null
+   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+   updateFromPointer(e)
+ }
+@@ -158,14 +151,16 @@
+   if (!dragging) return
+   dragging = false
+   try { ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch (_) {}
++  DroneControlService.stopDirectGimbal('stick released')
+ }
+ function updateFromPointer(e: PointerEvent) {
+   if (!dialRef.value) return
+   const rect = dialRef.value.getBoundingClientRect()
+-  const usable = Math.max(1, rect.height - 30)
+-  const y = Math.max(15, Math.min(rect.height - 15, e.clientY - rect.top))
+-  const ratio = (y - 15) / usable
+-  setContinuousAngle(MAX_ANGLE - ratio * (MAX_ANGLE - MIN_ANGLE))
++  const centerY = rect.top + rect.height / 2
++  const maxTravel = Math.max(1, rect.height / 2 - 15)
++  const dy = Math.max(-maxTravel, Math.min(maxTravel, e.clientY - centerY))
++  const command = Math.round((-dy / maxTravel) * 1000)
++  DroneControlService.setDirectGimbalCommand(command)
+ }
+ function onZoomPointerDown(e: PointerEvent) {
+   zoomDragging = true
+@@ -194,7 +189,7 @@
+     if (DroneControlService.setGimbalPitchPreset(angle)) pendingGimbalAngle.value = null
+     return
+   }
+-  if (store.gimbalControl.mode === 'continuous') return
++  if (store.gimbalControl.mode === 'direct') return
+   const ctrl = store.telemetry.gimbalPitchControl
+   if (ctrl === 1) store.gimbalControl.targetAngle = 0
+   else if (ctrl === 3) store.gimbalControl.targetAngle = -45
+@@ -218,7 +213,7 @@
+ .axis-line{position:absolute;top:18px;bottom:18px;left:50%;width:1px;background:linear-gradient(to bottom,rgba(0,217,255,.2),rgba(0,217,255,.8),rgba(0,217,255,.2))}
+ .control-knob{width:34px;height:34px;border-radius:50%;background:radial-gradient(circle,var(--ui-danger),#b31238);border:2px solid #ff5c84;position:absolute;top:50%;left:50%;box-shadow:0 0 10px rgba(255,42,95,.6);transition:transform .05s linear;display:flex;align-items:center;justify-content:center;pointer-events:none}
+ .knob-dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+-.limit-mark{position:absolute;left:50%;transform:translateX(-50%);font-size:7px;color:var(--text-muted);font-family:var(--mono);white-space:nowrap}.limit-mark.top{top:3px}.limit-mark.bottom{bottom:3px}
++.limit-mark{position:absolute;left:50%;transform:translateX(-50%);font-size:7px;color:var(--text-muted);font-family:var(--mono);white-space:nowrap}.limit-mark.top{top:3px}.limit-mark.bottom{bottom:3px}.center-mark{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:7px;color:var(--text-muted);font-family:var(--mono);pointer-events:none}
+ .presets{display:flex;flex-direction:column;gap:5px}.preset-label{color:var(--text-muted);font-size:8px;text-transform:uppercase;letter-spacing:.4px}
+ .value-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:8px}.value-grid>div{min-height:31px;border:1px solid var(--ui-border-control);border-radius:5px;background:var(--ui-bg-control-strong);display:flex;align-items:center;justify-content:space-between;padding:0 6px;font-family:var(--mono);font-size:9px}.value-grid strong{color:var(--cyan);font-size:10px}.value-label{color:var(--text-muted)}
+ .feedback-state{margin-top:5px;text-align:center;color:var(--text-muted);font-size:8px;font-family:var(--mono)}
+--- a/webui/src/services/DroneControlService.ts
++++ b/webui/src/services/DroneControlService.ts
+@@ -14,16 +14,7 @@
+ export class DroneControlService {
+   private static transport = UsbTransportService.getInstance()
+ 
+-  // TAF tuning parameters for continuous gimbal target tracking. These values
+-  // deliberately describe controller behavior, not new protocol constants.
+-  private static readonly GIMBAL_TARGET_TOLERANCE_DEG = 1.0
+-  private static readonly GIMBAL_TELEMETRY_MAX_AGE_MS = 3500
+-  private static readonly GIMBAL_MIN_COMMAND = 140
+-  private static readonly GIMBAL_MAX_COMMAND = 650
+-  private static readonly GIMBAL_SLOW_ZONE_DEG = 18
+-  private static readonly GIMBAL_DIRECTION = 1
+   private static lastGimbalLogAt = 0
+-  private static lastGimbalLoggedCommand = Number.NaN
+ 
+   static sendPacketWithRepeats(bytes: Uint8Array, repeats = 1, intervalMs = 50) {
+     let sent = 0
+@@ -137,7 +128,7 @@
+   static setGimbalPitchPreset(angle: 0 | -45 | -90): boolean {
+     const store = useDroneStore()
+     // Presets remain on the existing Function 0x1A path and explicitly leave
+-    // continuous Send4Axis target tracking.
++    // direct Send4Axis gimbal-stick control.
+     store.gimbalControl.mode = 'preset'
+     store.gimbalControl.targetAngle = angle
+     store.gimbalControl.active = false
+@@ -164,74 +155,29 @@
+     return true
+   }
+ 
+-  static setContinuousGimbalTarget(angle: number): boolean {
+-    const store = useDroneStore()
+-    if (!Number.isFinite(angle)) return false
+-    const target = Math.max(-90, Math.min(30, Math.round(angle * 10) / 10))
+-    store.gimbalControl.targetAngle = target
+-    store.gimbalControl.mode = 'continuous'
+-
+-    const actual = store.telemetry.gimbalPitch
+-    const age = Date.now() - store.gimbalControl.telemetryUpdatedAt
+-    if (!store.connection.usbConnected || !store.telemetry.gimbalStateValid || !Number.isFinite(actual) || age > this.GIMBAL_TELEMETRY_MAX_AGE_MS) {
+-      store.gimbalControl.active = false
+-      store.gimbalControl.command = 0
+-      store.addLog('WARN', `[Gimbal control] target=${target.toFixed(1)}° not activated: valid/fresh gimbal telemetry required`)
+-      return false
+-    }
+-
+-    if (!store.gimbalControl.active) {
+-      store.addLog('INFO', `[Gimbal control] continuous target activated: target=${target.toFixed(1)}° actual=${Number(actual).toFixed(1)}°`)
+-    }
++  static setDirectGimbalCommand(value: number): boolean {
++    const store = useDroneStore()
++    if (!Number.isFinite(value)) return false
++
++    const command = Math.max(-1000, Math.min(1000, Math.round(value)))
++    store.gimbalControl.mode = 'direct'
+     store.gimbalControl.active = true
++    store.gimbalControl.command = command
++
++    const now = Date.now()
++    if (now - this.lastGimbalLogAt >= 400) {
++      store.addLog('INFO', `[Gimbal stick] direct axis=${command}`)
++      this.lastGimbalLogAt = now
++    }
+     return true
+   }
+ 
+-  static stopContinuousGimbal(reason = 'stopped', level: 'INFO' | 'WARN' = 'INFO') {
++  static stopDirectGimbal(reason = 'stopped', level: 'INFO' | 'WARN' = 'INFO') {
+     const store = useDroneStore()
+     const wasActive = store.gimbalControl.active || store.gimbalControl.command !== 0
+     store.gimbalControl.active = false
+     store.gimbalControl.command = 0
+-    if (wasActive) store.addLog(level, `[Gimbal control] neutral: ${reason}`)
+-  }
+-
+-  private static updateContinuousGimbalControl(): number {
+-    const store = useDroneStore()
+-    if (!store.gimbalControl.active) {
+-      store.gimbalControl.command = 0
+-      return 0
+-    }
+-
+-    if (!store.connection.usbTransportOpen || !store.connection.usbConnected) {
+-      this.stopContinuousGimbal('connection lost', 'WARN')
+-      return 0
+-    }
+-
+-    const actual = store.telemetry.gimbalPitch
+-    const age = Date.now() - store.gimbalControl.telemetryUpdatedAt
+-    if (!store.telemetry.gimbalStateValid || !Number.isFinite(actual) || age > this.GIMBAL_TELEMETRY_MAX_AGE_MS) {
+-      this.stopContinuousGimbal(`gimbal telemetry invalid/stale (${Math.max(0, age)} ms)`, 'WARN')
+-      return 0
+-    }
+-
+-    const error = store.gimbalControl.targetAngle - Number(actual)
+-    if (Math.abs(error) <= this.GIMBAL_TARGET_TOLERANCE_DEG) {
+-      this.stopContinuousGimbal(`target reached: target=${store.gimbalControl.targetAngle.toFixed(1)}° actual=${Number(actual).toFixed(1)}° error=${error.toFixed(1)}°`)
+-      return 0
+-    }
+-
+-    const proportional = Math.min(1, Math.abs(error) / this.GIMBAL_SLOW_ZONE_DEG)
+-    const magnitude = Math.round(this.GIMBAL_MIN_COMMAND + proportional * (this.GIMBAL_MAX_COMMAND - this.GIMBAL_MIN_COMMAND))
+-    const command = Math.sign(error) * magnitude * this.GIMBAL_DIRECTION
+-    store.gimbalControl.command = command
+-
+-    const now = Date.now()
+-    if (now - this.lastGimbalLogAt >= 400 || command !== this.lastGimbalLoggedCommand) {
+-      store.addLog('INFO', `[Gimbal control] target=${store.gimbalControl.targetAngle.toFixed(1)}° actual=${Number(actual).toFixed(1)}° error=${error.toFixed(1)}° axis=${command}`)
+-      this.lastGimbalLogAt = now
+-      this.lastGimbalLoggedCommand = command
+-    }
+-    return command
++    if (wasActive) store.addLog(level, `[Gimbal stick] neutral: ${reason}`)
+   }
+ 
+   static calibrateGimbal() {
+@@ -379,7 +325,7 @@
+       store.userJoysticks.yaw,
+       store.userJoysticks.pitch,
+       store.userJoysticks.roll,
+-      this.updateContinuousGimbalControl()
++      store.gimbalControl.command
+     )
+     this.transport.send(packet)
+   }
+--- a/webui/src/stores/useDroneStore.ts
++++ b/webui/src/stores/useDroneStore.ts
+@@ -134,13 +134,13 @@
+     rcRoll: 0
+   })
+ 
+-  // Continuous gimbal target control. The actual pitch remains telemetry-owned;
+-  // this state only contains the requested target and the Send4Axis actuator value.
++  // Direct gimbal stick control. The actual pitch remains telemetry-owned;
++  // command is the directly transmitted Send4Axis gimbal axis value (-1000..1000).
+   const gimbalControl = reactive({
+     targetAngle: 0,
+     active: false,
+     command: 0,
+-    mode: 'preset' as 'preset' | 'continuous',
++    mode: 'preset' as 'preset' | 'direct',
+     telemetryUpdatedAt: 0
+   })
+ 

@@ -14,16 +14,7 @@ import { CameraMediaService } from './CameraMediaService'
 export class DroneControlService {
   private static transport = UsbTransportService.getInstance()
 
-  // TAF tuning parameters for continuous gimbal target tracking. These values
-  // deliberately describe controller behavior, not new protocol constants.
-  private static readonly GIMBAL_TARGET_TOLERANCE_DEG = 1.0
-  private static readonly GIMBAL_TELEMETRY_MAX_AGE_MS = 3500
-  private static readonly GIMBAL_MIN_COMMAND = 140
-  private static readonly GIMBAL_MAX_COMMAND = 650
-  private static readonly GIMBAL_SLOW_ZONE_DEG = 18
-  private static readonly GIMBAL_DIRECTION = 1
   private static lastGimbalLogAt = 0
-  private static lastGimbalLoggedCommand = Number.NaN
 
   static sendPacketWithRepeats(bytes: Uint8Array, repeats = 1, intervalMs = 50) {
     let sent = 0
@@ -137,7 +128,7 @@ export class DroneControlService {
   static setGimbalPitchPreset(angle: 0 | -45 | -90): boolean {
     const store = useDroneStore()
     // Presets remain on the existing Function 0x1A path and explicitly leave
-    // continuous Send4Axis target tracking.
+    // direct Send4Axis gimbal-stick control.
     store.gimbalControl.mode = 'preset'
     store.gimbalControl.targetAngle = angle
     store.gimbalControl.active = false
@@ -164,74 +155,29 @@ export class DroneControlService {
     return true
   }
 
-  static setContinuousGimbalTarget(angle: number): boolean {
+  static setDirectGimbalCommand(value: number): boolean {
     const store = useDroneStore()
-    if (!Number.isFinite(angle)) return false
-    const target = Math.max(-90, Math.min(30, Math.round(angle * 10) / 10))
-    store.gimbalControl.targetAngle = target
-    store.gimbalControl.mode = 'continuous'
+    if (!Number.isFinite(value)) return false
 
-    const actual = store.telemetry.gimbalPitch
-    const age = Date.now() - store.gimbalControl.telemetryUpdatedAt
-    if (!store.connection.usbConnected || !store.telemetry.gimbalStateValid || !Number.isFinite(actual) || age > this.GIMBAL_TELEMETRY_MAX_AGE_MS) {
-      store.gimbalControl.active = false
-      store.gimbalControl.command = 0
-      store.addLog('WARN', `[Gimbal control] target=${target.toFixed(1)}° not activated: valid/fresh gimbal telemetry required`)
-      return false
-    }
-
-    if (!store.gimbalControl.active) {
-      store.addLog('INFO', `[Gimbal control] continuous target activated: target=${target.toFixed(1)}° actual=${Number(actual).toFixed(1)}°`)
-    }
+    const command = Math.max(-1000, Math.min(1000, Math.round(value)))
+    store.gimbalControl.mode = 'direct'
     store.gimbalControl.active = true
+    store.gimbalControl.command = command
+
+    const now = Date.now()
+    if (now - this.lastGimbalLogAt >= 400) {
+      store.addLog('INFO', `[Gimbal stick] direct axis=${command}`)
+      this.lastGimbalLogAt = now
+    }
     return true
   }
 
-  static stopContinuousGimbal(reason = 'stopped', level: 'INFO' | 'WARN' = 'INFO') {
+  static stopDirectGimbal(reason = 'stopped', level: 'INFO' | 'WARN' = 'INFO') {
     const store = useDroneStore()
     const wasActive = store.gimbalControl.active || store.gimbalControl.command !== 0
     store.gimbalControl.active = false
     store.gimbalControl.command = 0
-    if (wasActive) store.addLog(level, `[Gimbal control] neutral: ${reason}`)
-  }
-
-  private static updateContinuousGimbalControl(): number {
-    const store = useDroneStore()
-    if (!store.gimbalControl.active) {
-      store.gimbalControl.command = 0
-      return 0
-    }
-
-    if (!store.connection.usbTransportOpen || !store.connection.usbConnected) {
-      this.stopContinuousGimbal('connection lost', 'WARN')
-      return 0
-    }
-
-    const actual = store.telemetry.gimbalPitch
-    const age = Date.now() - store.gimbalControl.telemetryUpdatedAt
-    if (!store.telemetry.gimbalStateValid || !Number.isFinite(actual) || age > this.GIMBAL_TELEMETRY_MAX_AGE_MS) {
-      this.stopContinuousGimbal(`gimbal telemetry invalid/stale (${Math.max(0, age)} ms)`, 'WARN')
-      return 0
-    }
-
-    const error = store.gimbalControl.targetAngle - Number(actual)
-    if (Math.abs(error) <= this.GIMBAL_TARGET_TOLERANCE_DEG) {
-      this.stopContinuousGimbal(`target reached: target=${store.gimbalControl.targetAngle.toFixed(1)}° actual=${Number(actual).toFixed(1)}° error=${error.toFixed(1)}°`)
-      return 0
-    }
-
-    const proportional = Math.min(1, Math.abs(error) / this.GIMBAL_SLOW_ZONE_DEG)
-    const magnitude = Math.round(this.GIMBAL_MIN_COMMAND + proportional * (this.GIMBAL_MAX_COMMAND - this.GIMBAL_MIN_COMMAND))
-    const command = Math.sign(error) * magnitude * this.GIMBAL_DIRECTION
-    store.gimbalControl.command = command
-
-    const now = Date.now()
-    if (now - this.lastGimbalLogAt >= 400 || command !== this.lastGimbalLoggedCommand) {
-      store.addLog('INFO', `[Gimbal control] target=${store.gimbalControl.targetAngle.toFixed(1)}° actual=${Number(actual).toFixed(1)}° error=${error.toFixed(1)}° axis=${command}`)
-      this.lastGimbalLogAt = now
-      this.lastGimbalLoggedCommand = command
-    }
-    return command
+    if (wasActive) store.addLog(level, `[Gimbal stick] neutral: ${reason}`)
   }
 
   static calibrateGimbal() {
@@ -379,7 +325,7 @@ export class DroneControlService {
       store.userJoysticks.yaw,
       store.userJoysticks.pitch,
       store.userJoysticks.roll,
-      this.updateContinuousGimbalControl()
+      store.gimbalControl.command
     )
     this.transport.send(packet)
   }
