@@ -29,6 +29,7 @@
 
     <DroneProfilePanel />
     <LanguagePanel />
+    <DisplaySettingsPanel />
 
     <!-- Main Content Area -->
     <div class="debug-body">
@@ -675,6 +676,7 @@ import RemoteRelayPanel from './RemoteRelayPanel.vue'
 import LogConsole from '../logs/LogConsole.vue'
 import DroneProfilePanel from './DroneProfilePanel.vue'
 import LanguagePanel from './LanguagePanel.vue'
+import DisplaySettingsPanel from './DisplaySettingsPanel.vue'
 import { useI18n } from '../../i18n'
 import { MapService } from '../../services/MapService'
 import { FRONTEND_VERSION } from '../../version'

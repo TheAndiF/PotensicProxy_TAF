@@ -1,5 +1,5 @@
 <template>
-  <div class="hud-bar" aria-label="Flight status overlay">
+  <div class="hud-bar" aria-label="Flight status overlay" :style="{ '--telemetry-font-size': `${sanitizedFontSizePx}px` }">
     <div class="hud-item power"><span class="lbl">{{ t('telemetry.phoneBattery') }}</span><span class="val" :class="batteryClass(store.telemetry.phoneBatteryPercent)">{{ percent(store.telemetry.phoneBatteryPercent) }}</span></div>
     <div class="hud-item power"><span class="lbl">{{ t('telemetry.controllerBattery') }}</span><span class="val" :class="controllerBatteryClass">{{ controllerBattery }}</span></div>
     <div class="hud-item power"><span class="lbl">{{ t('telemetry.droneBattery') }}</span><span class="val" :class="batteryClass(store.telemetry.battery)">{{ percent(store.telemetry.battery) }}</span></div>
@@ -18,9 +18,11 @@
 import { computed } from 'vue'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { useI18n } from '../../i18n'
+import { useTelemetryDisplaySettings } from '../../composables/useTelemetryDisplaySettings'
 
 const store = useDroneStore()
 const { t } = useI18n()
+const { sanitizedFontSizePx } = useTelemetryDisplaySettings()
 
 function isBatteryPercent(value: number | undefined) {
   return value != null && Number.isFinite(value) && value >= 0 && value <= 100
@@ -62,12 +64,12 @@ const controllerBatteryClass = computed(() => {
   border-radius: 7px;
   backdrop-filter: blur(3px);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--telemetry-font-size, 10px);
   pointer-events: none;
   color: #eef3f8;
   text-shadow: 0 1px 3px rgba(0,0,0,.95);
 }
 .hud-item{display:flex;gap:5px;align-items:center;white-space:nowrap}
 .lbl{color:#c3ccd8}.val{color:#fff;font-weight:700}.battery-ok{color:var(--ui-success,#52d273)}.battery-low{color:var(--ui-danger,#ff496d)}.battery-unknown{color:#c3ccd8}.power{padding-right:3px}
-@media (max-width:760px){.hud-bar{font-size:9px;gap:5px 9px;padding:5px 8px}.hud-item:nth-child(n+9){display:none}}
+@media (max-width:760px){.hud-bar{gap:5px 9px;padding:5px 8px}.hud-item:nth-child(n+9){display:none}}
 </style>

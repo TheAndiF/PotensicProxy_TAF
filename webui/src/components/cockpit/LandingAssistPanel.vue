@@ -46,21 +46,26 @@
         <div class="fine-controls-title">Feinsteuerung</div>
         <div class="assist-note">Throttle, Yaw, Pitch und Roll zentrieren beim Loslassen automatisch auf 0.</div>
         <div class="slider-grid">
-        <label v-for="axis in axes" :key="axis.key" class="axis-row">
-          <span class="axis-label">{{ axis.label }}</span>
-          <input
-            type="range"
-            :min="-assistLimit"
-            :max="assistLimit"
-            step="1"
-            :value="store.userJoysticks[axis.key]"
-            @pointerdown="beginControl"
-            @pointerup="endControl(axis.key)"
-            @pointercancel="endControl(axis.key)"
-            @input="setAxis(axis.key, $event)"
-          />
-          <span class="axis-value">{{ store.userJoysticks[axis.key] }}</span>
-        </label>
+          <div v-for="axis in axes" :key="axis.key" class="axis-row">
+            <span class="axis-label">{{ axis.label }}</span>
+            <button class="step-button" type="button" :aria-label="`${axis.label} Einzelschritt negativ`" @click="pulseStep(axis.key, -1)">−</button>
+            <input
+              type="range"
+              :min="-assistLimit"
+              :max="assistLimit"
+              step="1"
+              :value="store.userJoysticks[axis.key]"
+              @pointerdown="beginControl(axis.key, $event)"
+              @pointerup="endControl(axis.key)"
+              @pointercancel="endControl(axis.key)"
+              @lostpointercapture="endControl(axis.key)"
+              @keyup="endControl(axis.key)"
+              @blur="endControl(axis.key)"
+              @input="setAxis(axis.key, $event)"
+            />
+            <button class="step-button" type="button" :aria-label="`${axis.label} Einzelschritt positiv`" @click="pulseStep(axis.key, 1)">+</button>
+            <span class="axis-value">{{ store.userJoysticks[axis.key] }}</span>
+          </div>
         </div>
       </div>
 
@@ -86,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { DroneControlService } from '../../services/DroneControlService'
 import { AndroidMediaService } from '../../services/AndroidMediaService'
@@ -108,7 +113,10 @@ const telemetry = store.telemetry
 const { crosshairVisible, panelOpen, returnHeight, fineControlPercent } = useLandingAssistSettings()
 const snapshotBusy = ref(false)
 const status = ref('')
-let activePointers = 0
+const activeAxes = new Set<FlightAxis>()
+const stepTimers = new Map<FlightAxis, number>()
+const SINGLE_STEP_VALUE = 10
+const SINGLE_STEP_DURATION_MS = 160
 
 const axes: Array<{ key: FlightAxis; label: string }> = [
   { key: 'throttle', label: 'Throttle' },
@@ -136,9 +144,18 @@ watch(assistLimit, limit => {
   }
 })
 
-function beginControl() {
-  activePointers += 1
-  if (activePointers === 1) emit('control-start')
+function beginControl(axis: FlightAxis, event: PointerEvent) {
+  const pendingStep = stepTimers.get(axis)
+  if (pendingStep != null) {
+    window.clearTimeout(pendingStep)
+    stepTimers.delete(axis)
+  }
+  const target = event.currentTarget as HTMLInputElement | null
+  try { target?.setPointerCapture(event.pointerId) } catch (_) { /* browser may reject capture */ }
+  if (activeAxes.has(axis)) return
+  const wasIdle = activeAxes.size === 0
+  activeAxes.add(axis)
+  if (wasIdle) emit('control-start')
 }
 
 function setAxis(axis: FlightAxis, event: Event) {
@@ -149,11 +166,43 @@ function setAxis(axis: FlightAxis, event: Event) {
 }
 
 function endControl(axis: FlightAxis) {
-  store.userJoysticks[axis] = 0
-  emit('change')
-  activePointers = Math.max(0, activePointers - 1)
-  if (activePointers === 0) emit('control-end')
+  const wasActive = activeAxes.delete(axis)
+  if (store.userJoysticks[axis] !== 0) {
+    store.userJoysticks[axis] = 0
+    emit('change')
+  }
+  if (wasActive && activeAxes.size === 0) emit('control-end')
 }
+
+function pulseStep(axis: FlightAxis, direction: -1 | 1) {
+  const previousTimer = stepTimers.get(axis)
+  if (previousTimer != null) window.clearTimeout(previousTimer)
+
+  const wasIdle = activeAxes.size === 0
+  activeAxes.add(axis)
+  if (wasIdle) emit('control-start')
+
+  const pulse = Math.min(assistLimit.value, SINGLE_STEP_VALUE) * direction
+  store.userJoysticks[axis] = pulse
+  emit('change')
+
+  const timer = window.setTimeout(() => {
+    stepTimers.delete(axis)
+    endControl(axis)
+  }, SINGLE_STEP_DURATION_MS)
+  stepTimers.set(axis, timer)
+}
+
+onBeforeUnmount(() => {
+  for (const timer of stepTimers.values()) window.clearTimeout(timer)
+  stepTimers.clear()
+  for (const axis of axes) store.userJoysticks[axis.key] = 0
+  if (activeAxes.size) {
+    activeAxes.clear()
+    emit('change')
+    emit('control-end')
+  }
+})
 
 async function takeSnapshot() {
   if (snapshotBusy.value) return
@@ -216,5 +265,5 @@ async function handleRth() {
 </script>
 
 <style scoped>
-.landing-assist{padding:0;overflow:visible;flex:0 0 auto}.landing-assist-header{width:100%;height:36px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;border:0;background:var(--ui-bg-card);color:var(--ui-text);font-weight:700;cursor:pointer}.landing-assist-body{display:flex;flex-direction:column;gap:10px;padding:10px}.crosshair-toggle{display:flex;align-items:center;gap:8px;font-size:var(--ui-font-xs);font-weight:700}.assist-note,.assist-status{font-size:var(--ui-font-xs);color:var(--ui-text-muted);line-height:1.35}.fineness-box{display:flex;flex-direction:column;gap:7px;padding:10px;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control)}.fineness-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:var(--ui-font-xs);font-weight:800;color:var(--ui-text)}.fineness-value{display:flex;align-items:center;gap:4px;font-weight:700}.fineness-value input{width:48px;height:26px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-card);color:var(--ui-text);padding:0 4px;text-align:right;font-family:var(--ui-font-mono)}.fineness-slider{width:100%;accent-color:var(--cyan)}.fineness-scale{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--ui-text-muted);font-family:var(--ui-font-mono)}.fine-controls-group{display:flex;flex-direction:column;gap:7px;padding:9px;border:1px solid var(--ui-border);border-radius:var(--ui-radius-md)}.fine-controls-title{font-size:var(--ui-font-xs);font-weight:800;color:var(--ui-text)}.slider-grid{display:flex;flex-direction:column;gap:8px}.axis-row{display:grid;grid-template-columns:58px 1fr 42px;gap:8px;align-items:center;font-size:var(--ui-font-xs)}.axis-label{font-weight:700;color:var(--ui-text)}.axis-row input[type=range]{width:100%;accent-color:var(--cyan);touch-action:none}.axis-value{text-align:right;font-family:var(--ui-font-mono);color:var(--ui-text-muted)}.assist-actions{display:grid;grid-template-columns:1fr 1.4fr;gap:8px;align-items:stretch}.rth-box{display:flex;flex-direction:column;gap:6px}.rth-height-label{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:var(--ui-font-xs);color:var(--ui-text-muted)}.rth-input-wrap{white-space:nowrap}.rth-height-input{width:58px;height:28px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control);color:var(--ui-text);padding:0 6px;text-align:right}.assist-status{border-top:1px solid var(--ui-border);padding-top:7px}
+.landing-assist{padding:0;overflow:visible;flex:0 0 auto}.landing-assist-header{width:100%;height:36px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;border:0;background:var(--ui-bg-card);color:var(--ui-text);font-weight:700;cursor:pointer}.landing-assist-body{display:flex;flex-direction:column;gap:10px;padding:10px}.crosshair-toggle{display:flex;align-items:center;gap:8px;font-size:var(--ui-font-xs);font-weight:700}.assist-note,.assist-status{font-size:var(--ui-font-xs);color:var(--ui-text-muted);line-height:1.35}.fineness-box{display:flex;flex-direction:column;gap:7px;padding:10px;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control)}.fineness-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:var(--ui-font-xs);font-weight:800;color:var(--ui-text)}.fineness-value{display:flex;align-items:center;gap:4px;font-weight:700}.fineness-value input{width:48px;height:26px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-card);color:var(--ui-text);padding:0 4px;text-align:right;font-family:var(--ui-font-mono)}.fineness-slider{width:100%;accent-color:var(--cyan)}.fineness-scale{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--ui-text-muted);font-family:var(--ui-font-mono)}.fine-controls-group{display:flex;flex-direction:column;gap:7px;padding:9px;border:1px solid var(--ui-border);border-radius:var(--ui-radius-md)}.fine-controls-title{font-size:var(--ui-font-xs);font-weight:800;color:var(--ui-text)}.slider-grid{display:flex;flex-direction:column;gap:8px}.axis-row{display:grid;grid-template-columns:58px 28px minmax(90px,1fr) 28px 42px;gap:6px;align-items:center;font-size:var(--ui-font-xs)}.axis-label{font-weight:700;color:var(--ui-text)}.axis-row input[type=range]{width:100%;accent-color:var(--cyan);touch-action:none}.axis-value{text-align:right;font-family:var(--ui-font-mono);color:var(--ui-text-muted)}.step-button{width:28px;height:28px;padding:0;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control);color:var(--ui-text);font-size:16px;font-weight:800;line-height:1;cursor:pointer}.step-button:active{border-color:var(--cyan);color:var(--cyan);transform:translateY(1px)}.assist-actions{display:grid;grid-template-columns:1fr 1.4fr;gap:8px;align-items:stretch}.rth-box{display:flex;flex-direction:column;gap:6px}.rth-height-label{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:var(--ui-font-xs);color:var(--ui-text-muted)}.rth-input-wrap{white-space:nowrap}.rth-height-input{width:58px;height:28px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control);color:var(--ui-text);padding:0 6px;text-align:right}.assist-status{border-top:1px solid var(--ui-border);padding-top:7px}
 </style>

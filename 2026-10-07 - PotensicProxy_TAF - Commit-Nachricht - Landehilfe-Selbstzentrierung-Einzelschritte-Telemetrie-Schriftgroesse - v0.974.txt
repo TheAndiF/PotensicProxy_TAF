@@ -1,0 +1,28 @@
+BL_Improve landing controls and telemetry readability
+Date: 2026-10-07
+
+Summary:
+- Made all four landing-assist sliders reliably self-centering by using pointer capture and neutralizing each axis on pointer release, cancellation, lost capture, keyboard release, and focus loss.
+- Added minus and plus single-step buttons to Throttle, Yaw, Pitch, and Roll. Each press sends a short +/-10 RC-unit pulse for 160 ms and then automatically returns the axis to zero.
+- Added persistent telemetry-bar font-size settings for improved readability on large displays.
+- Added a System / Display settings panel with direct numeric input, slider control, and reset to the 10 px default.
+- Added a configurable telemetry font-size range from 9 px to 24 px and kept the setting in LocalStorage.
+- Updated the WebUI version to 0.974 and the Android application to versionName 0.974 / versionCode 47.
+- Added PDF and DOCX project documentation and release artifacts for this change.
+- Kept the existing project structure and the PotensicProxy_TAF root folder unchanged.
+
+Changed files:
+- app/build.gradle.kts
+- webui/package.json
+- webui/package-lock.json
+- webui/src/components/cockpit/LandingAssistPanel.vue
+- webui/src/components/cockpit/TelemetryBar.vue
+- webui/src/components/debug/DebugConsoleView.vue
+- webui/src/components/debug/DisplaySettingsPanel.vue
+- webui/src/composables/useTelemetryDisplaySettings.ts
+- DOCUMENTATION/2026-10-07 - PotensicProxy_TAF - Projektdokumentation - Landehilfe-Selbstzentrierung-Einzelschritte-Telemetrie-Schriftgroesse - v0.974.docx
+- DOCUMENTATION/2026-10-07 - PotensicProxy_TAF - Projektdokumentation - Landehilfe-Selbstzentrierung-Einzelschritte-Telemetrie-Schriftgroesse - v0.974.pdf
+- 2026-10-07 - PotensicProxy_TAF - Auslieferungshinweis - Landehilfe-Selbstzentrierung-Einzelschritte-Telemetrie-Schriftgroesse - v0.974.md
+- 2026-10-07 - PotensicProxy_TAF - Patch - Landehilfe-Selbstzentrierung-Einzelschritte-Telemetrie-Schriftgroesse - v0.974.patch
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-07_LANDEHILFE_SELBSTZENTRIERUNG_TELEMETRIE_v0.974.md
+- 2026-10-07 - PotensicProxy_TAF - Commit-Nachricht - Landehilfe-Selbstzentrierung-Einzelschritte-Telemetrie-Schriftgroesse - v0.974.txt

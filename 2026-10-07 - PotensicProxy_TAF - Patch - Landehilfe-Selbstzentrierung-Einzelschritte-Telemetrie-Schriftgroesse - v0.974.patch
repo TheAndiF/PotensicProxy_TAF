@@ -1,0 +1,313 @@
+diff --git a/PotensicProxy_TAF/app/build.gradle.kts b/PotensicProxy_TAF/app/build.gradle.kts
+index 8a8677f..fca5a36 100644
+--- a/PotensicProxy_TAF/app/build.gradle.kts
++++ b/PotensicProxy_TAF/app/build.gradle.kts
+@@ -23,8 +23,8 @@ android {
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 46
+-        versionName = "0.973"
++        versionCode = 47
++        versionName = "0.974"
+     }
+ 
+     signingConfigs {
+diff --git a/PotensicProxy_TAF/webui/package-lock.json b/PotensicProxy_TAF/webui/package-lock.json
+index ae4a4f8..a6ed030 100644
+--- a/PotensicProxy_TAF/webui/package-lock.json
++++ b/PotensicProxy_TAF/webui/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.973",
++  "version": "0.974",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.973",
++      "version": "0.974",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",
+diff --git a/PotensicProxy_TAF/webui/package.json b/PotensicProxy_TAF/webui/package.json
+index 208be58..c6b02f3 100644
+--- a/PotensicProxy_TAF/webui/package.json
++++ b/PotensicProxy_TAF/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.973",
++  "version": "0.974",
+   "private": true,
+   "type": "module",
+   "scripts": {
+diff --git a/PotensicProxy_TAF/webui/src/components/cockpit/LandingAssistPanel.vue b/PotensicProxy_TAF/webui/src/components/cockpit/LandingAssistPanel.vue
+index edff245..8b6d677 100644
+--- a/PotensicProxy_TAF/webui/src/components/cockpit/LandingAssistPanel.vue
++++ b/PotensicProxy_TAF/webui/src/components/cockpit/LandingAssistPanel.vue
+@@ -46,21 +46,26 @@
+         <div class="fine-controls-title">Feinsteuerung</div>
+         <div class="assist-note">Throttle, Yaw, Pitch und Roll zentrieren beim Loslassen automatisch auf 0.</div>
+         <div class="slider-grid">
+-        <label v-for="axis in axes" :key="axis.key" class="axis-row">
+-          <span class="axis-label">{{ axis.label }}</span>
+-          <input
+-            type="range"
+-            :min="-assistLimit"
+-            :max="assistLimit"
+-            step="1"
+-            :value="store.userJoysticks[axis.key]"
+-            @pointerdown="beginControl"
+-            @pointerup="endControl(axis.key)"
+-            @pointercancel="endControl(axis.key)"
+-            @input="setAxis(axis.key, $event)"
+-          />
+-          <span class="axis-value">{{ store.userJoysticks[axis.key] }}</span>
+-        </label>
++          <div v-for="axis in axes" :key="axis.key" class="axis-row">
++            <span class="axis-label">{{ axis.label }}</span>
++            <button class="step-button" type="button" :aria-label="`${axis.label} Einzelschritt negativ`" @click="pulseStep(axis.key, -1)">−</button>
++            <input
++              type="range"
++              :min="-assistLimit"
++              :max="assistLimit"
++              step="1"
++              :value="store.userJoysticks[axis.key]"
++              @pointerdown="beginControl(axis.key, $event)"
++              @pointerup="endControl(axis.key)"
++              @pointercancel="endControl(axis.key)"
++              @lostpointercapture="endControl(axis.key)"
++              @keyup="endControl(axis.key)"
++              @blur="endControl(axis.key)"
++              @input="setAxis(axis.key, $event)"
++            />
++            <button class="step-button" type="button" :aria-label="`${axis.label} Einzelschritt positiv`" @click="pulseStep(axis.key, 1)">+</button>
++            <span class="axis-value">{{ store.userJoysticks[axis.key] }}</span>
++          </div>
+         </div>
+       </div>
+ 
+@@ -86,7 +91,7 @@
+ </template>
+ 
+ <script setup lang="ts">
+-import { computed, ref, watch } from 'vue'
++import { computed, onBeforeUnmount, ref, watch } from 'vue'
+ import { useDroneStore } from '../../stores/useDroneStore'
+ import { DroneControlService } from '../../services/DroneControlService'
+ import { AndroidMediaService } from '../../services/AndroidMediaService'
+@@ -108,7 +113,10 @@ const telemetry = store.telemetry
+ const { crosshairVisible, panelOpen, returnHeight, fineControlPercent } = useLandingAssistSettings()
+ const snapshotBusy = ref(false)
+ const status = ref('')
+-let activePointers = 0
++const activeAxes = new Set<FlightAxis>()
++const stepTimers = new Map<FlightAxis, number>()
++const SINGLE_STEP_VALUE = 10
++const SINGLE_STEP_DURATION_MS = 160
+ 
+ const axes: Array<{ key: FlightAxis; label: string }> = [
+   { key: 'throttle', label: 'Throttle' },
+@@ -136,9 +144,18 @@ watch(assistLimit, limit => {
+   }
+ })
+ 
+-function beginControl() {
+-  activePointers += 1
+-  if (activePointers === 1) emit('control-start')
++function beginControl(axis: FlightAxis, event: PointerEvent) {
++  const pendingStep = stepTimers.get(axis)
++  if (pendingStep != null) {
++    window.clearTimeout(pendingStep)
++    stepTimers.delete(axis)
++  }
++  const target = event.currentTarget as HTMLInputElement | null
++  try { target?.setPointerCapture(event.pointerId) } catch (_) { /* browser may reject capture */ }
++  if (activeAxes.has(axis)) return
++  const wasIdle = activeAxes.size === 0
++  activeAxes.add(axis)
++  if (wasIdle) emit('control-start')
+ }
+ 
+ function setAxis(axis: FlightAxis, event: Event) {
+@@ -149,12 +166,44 @@ function setAxis(axis: FlightAxis, event: Event) {
+ }
+ 
+ function endControl(axis: FlightAxis) {
+-  store.userJoysticks[axis] = 0
++  const wasActive = activeAxes.delete(axis)
++  if (store.userJoysticks[axis] !== 0) {
++    store.userJoysticks[axis] = 0
++    emit('change')
++  }
++  if (wasActive && activeAxes.size === 0) emit('control-end')
++}
++
++function pulseStep(axis: FlightAxis, direction: -1 | 1) {
++  const previousTimer = stepTimers.get(axis)
++  if (previousTimer != null) window.clearTimeout(previousTimer)
++
++  const wasIdle = activeAxes.size === 0
++  activeAxes.add(axis)
++  if (wasIdle) emit('control-start')
++
++  const pulse = Math.min(assistLimit.value, SINGLE_STEP_VALUE) * direction
++  store.userJoysticks[axis] = pulse
+   emit('change')
+-  activePointers = Math.max(0, activePointers - 1)
+-  if (activePointers === 0) emit('control-end')
++
++  const timer = window.setTimeout(() => {
++    stepTimers.delete(axis)
++    endControl(axis)
++  }, SINGLE_STEP_DURATION_MS)
++  stepTimers.set(axis, timer)
+ }
+ 
++onBeforeUnmount(() => {
++  for (const timer of stepTimers.values()) window.clearTimeout(timer)
++  stepTimers.clear()
++  for (const axis of axes) store.userJoysticks[axis.key] = 0
++  if (activeAxes.size) {
++    activeAxes.clear()
++    emit('change')
++    emit('control-end')
++  }
++})
++
+ async function takeSnapshot() {
+   if (snapshotBusy.value) return
+   snapshotBusy.value = true
+@@ -216,5 +265,5 @@ async function handleRth() {
+ </script>
+ 
+ <style scoped>
+-.landing-assist{padding:0;overflow:visible;flex:0 0 auto}.landing-assist-header{width:100%;height:36px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;border:0;background:var(--ui-bg-card);color:var(--ui-text);font-weight:700;cursor:pointer}.landing-assist-body{display:flex;flex-direction:column;gap:10px;padding:10px}.crosshair-toggle{display:flex;align-items:center;gap:8px;font-size:var(--ui-font-xs);font-weight:700}.assist-note,.assist-status{font-size:var(--ui-font-xs);color:var(--ui-text-muted);line-height:1.35}.fineness-box{display:flex;flex-direction:column;gap:7px;padding:10px;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control)}.fineness-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:var(--ui-font-xs);font-weight:800;color:var(--ui-text)}.fineness-value{display:flex;align-items:center;gap:4px;font-weight:700}.fineness-value input{width:48px;height:26px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-card);color:var(--ui-text);padding:0 4px;text-align:right;font-family:var(--ui-font-mono)}.fineness-slider{width:100%;accent-color:var(--cyan)}.fineness-scale{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--ui-text-muted);font-family:var(--ui-font-mono)}.fine-controls-group{display:flex;flex-direction:column;gap:7px;padding:9px;border:1px solid var(--ui-border);border-radius:var(--ui-radius-md)}.fine-controls-title{font-size:var(--ui-font-xs);font-weight:800;color:var(--ui-text)}.slider-grid{display:flex;flex-direction:column;gap:8px}.axis-row{display:grid;grid-template-columns:58px 1fr 42px;gap:8px;align-items:center;font-size:var(--ui-font-xs)}.axis-label{font-weight:700;color:var(--ui-text)}.axis-row input[type=range]{width:100%;accent-color:var(--cyan);touch-action:none}.axis-value{text-align:right;font-family:var(--ui-font-mono);color:var(--ui-text-muted)}.assist-actions{display:grid;grid-template-columns:1fr 1.4fr;gap:8px;align-items:stretch}.rth-box{display:flex;flex-direction:column;gap:6px}.rth-height-label{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:var(--ui-font-xs);color:var(--ui-text-muted)}.rth-input-wrap{white-space:nowrap}.rth-height-input{width:58px;height:28px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control);color:var(--ui-text);padding:0 6px;text-align:right}.assist-status{border-top:1px solid var(--ui-border);padding-top:7px}
++.landing-assist{padding:0;overflow:visible;flex:0 0 auto}.landing-assist-header{width:100%;height:36px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;border:0;background:var(--ui-bg-card);color:var(--ui-text);font-weight:700;cursor:pointer}.landing-assist-body{display:flex;flex-direction:column;gap:10px;padding:10px}.crosshair-toggle{display:flex;align-items:center;gap:8px;font-size:var(--ui-font-xs);font-weight:700}.assist-note,.assist-status{font-size:var(--ui-font-xs);color:var(--ui-text-muted);line-height:1.35}.fineness-box{display:flex;flex-direction:column;gap:7px;padding:10px;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control)}.fineness-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:var(--ui-font-xs);font-weight:800;color:var(--ui-text)}.fineness-value{display:flex;align-items:center;gap:4px;font-weight:700}.fineness-value input{width:48px;height:26px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-card);color:var(--ui-text);padding:0 4px;text-align:right;font-family:var(--ui-font-mono)}.fineness-slider{width:100%;accent-color:var(--cyan)}.fineness-scale{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--ui-text-muted);font-family:var(--ui-font-mono)}.fine-controls-group{display:flex;flex-direction:column;gap:7px;padding:9px;border:1px solid var(--ui-border);border-radius:var(--ui-radius-md)}.fine-controls-title{font-size:var(--ui-font-xs);font-weight:800;color:var(--ui-text)}.slider-grid{display:flex;flex-direction:column;gap:8px}.axis-row{display:grid;grid-template-columns:58px 28px minmax(90px,1fr) 28px 42px;gap:6px;align-items:center;font-size:var(--ui-font-xs)}.axis-label{font-weight:700;color:var(--ui-text)}.axis-row input[type=range]{width:100%;accent-color:var(--cyan);touch-action:none}.axis-value{text-align:right;font-family:var(--ui-font-mono);color:var(--ui-text-muted)}.step-button{width:28px;height:28px;padding:0;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control);color:var(--ui-text);font-size:16px;font-weight:800;line-height:1;cursor:pointer}.step-button:active{border-color:var(--cyan);color:var(--cyan);transform:translateY(1px)}.assist-actions{display:grid;grid-template-columns:1fr 1.4fr;gap:8px;align-items:stretch}.rth-box{display:flex;flex-direction:column;gap:6px}.rth-height-label{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:var(--ui-font-xs);color:var(--ui-text-muted)}.rth-input-wrap{white-space:nowrap}.rth-height-input{width:58px;height:28px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control);color:var(--ui-text);padding:0 6px;text-align:right}.assist-status{border-top:1px solid var(--ui-border);padding-top:7px}
+ </style>
+diff --git a/PotensicProxy_TAF/webui/src/components/cockpit/TelemetryBar.vue b/PotensicProxy_TAF/webui/src/components/cockpit/TelemetryBar.vue
+index 60c845d..e9777b0 100644
+--- a/PotensicProxy_TAF/webui/src/components/cockpit/TelemetryBar.vue
++++ b/PotensicProxy_TAF/webui/src/components/cockpit/TelemetryBar.vue
+@@ -1,5 +1,5 @@
+ <template>
+-  <div class="hud-bar" aria-label="Flight status overlay">
++  <div class="hud-bar" aria-label="Flight status overlay" :style="{ '--telemetry-font-size': `${sanitizedFontSizePx}px` }">
+     <div class="hud-item power"><span class="lbl">{{ t('telemetry.phoneBattery') }}</span><span class="val" :class="batteryClass(store.telemetry.phoneBatteryPercent)">{{ percent(store.telemetry.phoneBatteryPercent) }}</span></div>
+     <div class="hud-item power"><span class="lbl">{{ t('telemetry.controllerBattery') }}</span><span class="val" :class="controllerBatteryClass">{{ controllerBattery }}</span></div>
+     <div class="hud-item power"><span class="lbl">{{ t('telemetry.droneBattery') }}</span><span class="val" :class="batteryClass(store.telemetry.battery)">{{ percent(store.telemetry.battery) }}</span></div>
+@@ -18,9 +18,11 @@
+ import { computed } from 'vue'
+ import { useDroneStore } from '../../stores/useDroneStore'
+ import { useI18n } from '../../i18n'
++import { useTelemetryDisplaySettings } from '../../composables/useTelemetryDisplaySettings'
+ 
+ const store = useDroneStore()
+ const { t } = useI18n()
++const { sanitizedFontSizePx } = useTelemetryDisplaySettings()
+ 
+ function isBatteryPercent(value: number | undefined) {
+   return value != null && Number.isFinite(value) && value >= 0 && value <= 100
+@@ -62,12 +64,12 @@ const controllerBatteryClass = computed(() => {
+   border-radius: 7px;
+   backdrop-filter: blur(3px);
+   font-family: var(--mono);
+-  font-size: 10px;
++  font-size: var(--telemetry-font-size, 10px);
+   pointer-events: none;
+   color: #eef3f8;
+   text-shadow: 0 1px 3px rgba(0,0,0,.95);
+ }
+ .hud-item{display:flex;gap:5px;align-items:center;white-space:nowrap}
+ .lbl{color:#c3ccd8}.val{color:#fff;font-weight:700}.battery-ok{color:var(--ui-success,#52d273)}.battery-low{color:var(--ui-danger,#ff496d)}.battery-unknown{color:#c3ccd8}.power{padding-right:3px}
+-@media (max-width:760px){.hud-bar{font-size:9px;gap:5px 9px;padding:5px 8px}.hud-item:nth-child(n+9){display:none}}
++@media (max-width:760px){.hud-bar{gap:5px 9px;padding:5px 8px}.hud-item:nth-child(n+9){display:none}}
+ </style>
+diff --git a/PotensicProxy_TAF/webui/src/components/debug/DebugConsoleView.vue b/PotensicProxy_TAF/webui/src/components/debug/DebugConsoleView.vue
+index 956ec0f..b72cbaf 100644
+--- a/PotensicProxy_TAF/webui/src/components/debug/DebugConsoleView.vue
++++ b/PotensicProxy_TAF/webui/src/components/debug/DebugConsoleView.vue
+@@ -29,6 +29,7 @@
+ 
+     <DroneProfilePanel />
+     <LanguagePanel />
++    <DisplaySettingsPanel />
+ 
+     <!-- Main Content Area -->
+     <div class="debug-body">
+@@ -675,6 +676,7 @@ import RemoteRelayPanel from './RemoteRelayPanel.vue'
+ import LogConsole from '../logs/LogConsole.vue'
+ import DroneProfilePanel from './DroneProfilePanel.vue'
+ import LanguagePanel from './LanguagePanel.vue'
++import DisplaySettingsPanel from './DisplaySettingsPanel.vue'
+ import { useI18n } from '../../i18n'
+ import { MapService } from '../../services/MapService'
+ import { FRONTEND_VERSION } from '../../version'
+diff --git a/PotensicProxy_TAF/webui/src/components/debug/DisplaySettingsPanel.vue b/PotensicProxy_TAF/webui/src/components/debug/DisplaySettingsPanel.vue
+new file mode 100644
+index 0000000..23e1f4f
+--- /dev/null
++++ b/PotensicProxy_TAF/webui/src/components/debug/DisplaySettingsPanel.vue
+@@ -0,0 +1,29 @@
++<template>
++  <section class="display-settings-panel">
++    <div class="display-copy">
++      <div class="display-title">Anzeige</div>
++      <div class="display-subtitle">Schriftgröße der Telemetrie-Leiste im Flight Cockpit für große Displays anpassen.</div>
++    </div>
++    <div class="display-controls">
++      <label class="font-size-value">
++        <span>Telemetrie</span>
++        <input v-model.number="fontSizePx" type="number" :min="minFontSize" :max="maxFontSize" step="1" />
++        <span>px</span>
++      </label>
++      <input v-model.number="fontSizePx" class="font-size-slider" type="range" :min="minFontSize" :max="maxFontSize" step="1" />
++      <button class="reset-button" type="button" @click="fontSizePx = defaultFontSize">Standard</button>
++    </div>
++  </section>
++</template>
++
++<script setup lang="ts">
++import { useTelemetryDisplaySettings } from '../../composables/useTelemetryDisplaySettings'
++const { fontSizePx, minFontSize, maxFontSize, defaultFontSize } = useTelemetryDisplaySettings()
++</script>
++
++<style scoped>
++.display-settings-panel{display:flex;align-items:center;gap:14px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--card-bg)}
++.display-copy{min-width:260px;flex:1}.display-title{font-weight:700;color:var(--cyan);font-size:12px;text-transform:uppercase;letter-spacing:.5px}.display-subtitle{font-size:10px;color:var(--text-muted);margin-top:3px}
++.display-controls{display:flex;align-items:center;gap:8px;min-width:390px}.font-size-value{display:flex;align-items:center;gap:5px;color:var(--text-muted);font-size:10px;white-space:nowrap}.font-size-value input{width:58px;height:28px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:6px;background:var(--ui-bg-control);color:var(--ui-text);padding:0 5px;text-align:right}.font-size-slider{width:150px;accent-color:var(--cyan)}.reset-button{height:28px;padding:0 9px;border:1px solid var(--ui-border-control);border-radius:6px;background:var(--ui-bg-control);color:var(--ui-text);cursor:pointer;font-size:10px}
++@media(max-width:850px){.display-settings-panel{align-items:flex-start;flex-direction:column}.display-controls{min-width:0;width:100%}.font-size-slider{flex:1}}
++</style>
+diff --git a/PotensicProxy_TAF/webui/src/composables/useTelemetryDisplaySettings.ts b/PotensicProxy_TAF/webui/src/composables/useTelemetryDisplaySettings.ts
+new file mode 100644
+index 0000000..2b31868
+--- /dev/null
++++ b/PotensicProxy_TAF/webui/src/composables/useTelemetryDisplaySettings.ts
+@@ -0,0 +1,24 @@
++import { computed, ref, watch } from 'vue'
++
++const STORAGE_KEY = 'potensic.telemetryBar.fontSizePx'
++const MIN_FONT_SIZE = 9
++const MAX_FONT_SIZE = 24
++const DEFAULT_FONT_SIZE = 10
++
++function sanitize(value: number) {
++  const numeric = Number(value)
++  if (!Number.isFinite(numeric)) return DEFAULT_FONT_SIZE
++  return Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, Math.round(numeric)))
++}
++
++const fontSizePx = ref(sanitize(Number(localStorage.getItem(STORAGE_KEY) || DEFAULT_FONT_SIZE)))
++watch(fontSizePx, value => {
++  const normalized = sanitize(value)
++  if (normalized !== value) fontSizePx.value = normalized
++  localStorage.setItem(STORAGE_KEY, String(normalized))
++})
++
++export function useTelemetryDisplaySettings() {
++  const sanitizedFontSizePx = computed(() => sanitize(fontSizePx.value))
++  return { fontSizePx, sanitizedFontSizePx, minFontSize: MIN_FONT_SIZE, maxFontSize: MAX_FONT_SIZE, defaultFontSize: DEFAULT_FONT_SIZE }
++}
