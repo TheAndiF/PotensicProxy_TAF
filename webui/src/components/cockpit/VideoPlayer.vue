@@ -98,6 +98,12 @@
         </div>
       </div>
 
+      <div v-if="!compact && crosshairVisible && hasFrame" class="landing-crosshair" aria-hidden="true">
+        <span class="crosshair-line crosshair-h"></span>
+        <span class="crosshair-line crosshair-v"></span>
+        <span class="crosshair-center"></span>
+      </div>
+
       <!-- Transparent status overlay; controls live in the collapsible side drawer. -->
       <div v-if="!compact" class="video-osd">
         <div class="osd-left">
@@ -131,12 +137,14 @@ import { DroneControlService } from '../../services/DroneControlService'
 import { VideoExtractor, ExtractedVideoFrame } from '../../protocol/VideoExtractor'
 import { WebCodecsPlayer, VideoPlayerStats } from '../../video/WebCodecsPlayer'
 import { useI18n } from '../../i18n'
+import { useLandingAssistSettings } from '../../composables/useLandingAssistSettings'
 
 const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 const compact = computed(() => props.compact)
 const controlsOpen = ref(false)
 const store = useDroneStore()
 const { t } = useI18n()
+const { crosshairVisible } = useLandingAssistSettings()
 const containerRef = ref<HTMLDivElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 
@@ -485,6 +493,12 @@ onUnmounted(() => {
   object-fit: contain;
   display: block;
 }
+
+.landing-crosshair { position:absolute; inset:0; z-index:12; pointer-events:none; display:grid; place-items:center; }
+.crosshair-line { position:absolute; display:block; background:rgba(255,255,255,.92); box-shadow:0 0 3px rgba(0,0,0,.9); }
+.crosshair-h { width:72px; height:1px; left:50%; top:50%; transform:translate(-50%,-50%); }
+.crosshair-v { width:1px; height:72px; left:50%; top:50%; transform:translate(-50%,-50%); }
+.crosshair-center { width:22px; height:22px; border:1px solid rgba(255,255,255,.95); border-radius:2px; box-shadow:0 0 3px rgba(0,0,0,.9), inset 0 0 2px rgba(0,0,0,.6); }
 
 /* Waiting / Placeholder State */
 .video-placeholder {

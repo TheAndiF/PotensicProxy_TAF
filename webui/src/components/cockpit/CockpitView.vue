@@ -33,6 +33,8 @@
       </div>
       <GimbalControl/>
 
+      <LandingAssistPanel @control-start="startLandingControl" @control-end="stopLandingControl" @change="onLandingControlChange"/>
+
       <FlightActions/>
 
       <section class="camera-section ui-card">
@@ -82,6 +84,7 @@ import MapView from './MapView.vue'
 import TelemetryBar from './TelemetryBar.vue'
 import VirtualJoystick from './VirtualJoystick.vue'
 import GimbalControl from './GimbalControl.vue'
+import LandingAssistPanel from './LandingAssistPanel.vue'
 import FlightActions from './FlightActions.vue'
 import CameraMediaPanel from './CameraMediaPanel.vue'
 import TelemetryDetails from './TelemetryDetails.vue'
@@ -118,6 +121,7 @@ const rightStickModel = computed({
 })
 let leftControlActive = false
 let rightControlActive = false
+let landingControlActive = false
 let axisTimer: ReturnType<typeof setInterval> | null = null
 let lastSend = 0
 
@@ -132,7 +136,7 @@ function ensureAxisLoop() {
   axisTimer = setInterval(sendAxesNow, 80)
 }
 function maybeStopAxisLoop() {
-  if (leftControlActive || rightControlActive || store.gimbalControl.active) return
+  if (leftControlActive || rightControlActive || landingControlActive || store.gimbalControl.active) return
   if (axisTimer) { clearInterval(axisTimer); axisTimer = null }
   // Send a neutral frame immediately after both sticks have been released.
   sendAxesNow()
@@ -141,6 +145,9 @@ function startLeftControl() { leftControlActive = true; ensureAxisLoop() }
 function stopLeftControl() { leftControlActive = false; maybeStopAxisLoop() }
 function startRightControl() { rightControlActive = true; ensureAxisLoop() }
 function stopRightControl() { rightControlActive = false; maybeStopAxisLoop() }
+function startLandingControl() { landingControlActive = true; ensureAxisLoop() }
+function stopLandingControl() { landingControlActive = false; maybeStopAxisLoop() }
+function onLandingControlChange() { if (Date.now() - lastSend >= 80) sendAxesNow() }
 function onJoystickChange() { if (Date.now() - lastSend >= 80) sendAxesNow() }
 function onRightStickChange(v: { x: number; y: number }) {
   store.userJoysticks.roll = v.x

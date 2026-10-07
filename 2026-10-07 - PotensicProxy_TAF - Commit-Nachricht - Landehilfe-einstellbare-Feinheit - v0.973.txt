@@ -1,0 +1,23 @@
+BL_Add adjustable landing-assist sensitivity
+Date: 2026-10-07
+
+Summary:
+- Added a persistent, non-centering landing-assist sensitivity slider with a 10-25 percent range and a 15 percent default.
+- Added direct percentage input and live display of the resulting fine-control axis limit.
+- Grouped Throttle, Yaw, Pitch and Roll into a visually separate fine-control section while keeping their self-centering behavior.
+- Clamp active fine-control axis values when the configured sensitivity is reduced.
+- Bumped the WebUI and Android application version to 0.973 / versionCode 46.
+- Added PDF and DOCX project documentation plus delivery notes for the change.
+
+Changed files:
+- app/build.gradle.kts
+- webui/package.json
+- webui/package-lock.json
+- webui/src/components/cockpit/LandingAssistPanel.vue
+- webui/src/composables/useLandingAssistSettings.ts
+- 2026-10-07 - PotensicProxy_TAF - Auslieferungshinweis - Landehilfe-einstellbare-Feinheit - v0.973.md
+- 2026-10-07 - PotensicProxy_TAF - Commit-Nachricht - Landehilfe-einstellbare-Feinheit - v0.973.txt
+- 2026-10-07 - PotensicProxy_TAF - Patch - Landehilfe-einstellbare-Feinheit - v0.973.patch
+- NUR_AENDERUNGEN_IN_ORIGINALSTRUKTUR_2026-10-07_LANDEHILFE_FEINHEIT_v0.973.md
+- DOCUMENTATION/2026-10-07 - PotensicProxy_TAF - Projektdokumentation - Landehilfe-einstellbare-Feinheit - v0.973.docx
+- DOCUMENTATION/2026-10-07 - PotensicProxy_TAF - Projektdokumentation - Landehilfe-einstellbare-Feinheit - v0.973.pdf

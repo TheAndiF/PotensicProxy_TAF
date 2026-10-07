@@ -61,6 +61,19 @@ export class AndroidMediaService {
     return saved
   }
 
+  static async saveCockpitSnapshot(): Promise<AndroidStoredImage> {
+    const response = await fetch(`${this.baseUrl()}/api/media/snapshot?library=camera&source=cockpit-snapshot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`)
+    const saved = body as AndroidStoredImage
+    window.dispatchEvent(new CustomEvent('taf-android-media-saved', { detail: saved }))
+    return saved
+  }
+
   static async saveImageBytes(
     blob: Blob,
     fileName: string,

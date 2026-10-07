@@ -1,0 +1,188 @@
+--- PotensicProxy_TAF/app/build.gradle.kts
++++ PotensicProxy_TAF/app/build.gradle.kts
+@@ -23,8 +23,8 @@
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 45
+-        versionName = "0.972"
++        versionCode = 46
++        versionName = "0.973"
+     }
+ 
+     signingConfigs {
+
+--- PotensicProxy_TAF/webui/package.json
++++ PotensicProxy_TAF/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.972",
++  "version": "0.973",
+   "private": true,
+   "type": "module",
+   "scripts": {
+
+--- PotensicProxy_TAF/webui/package-lock.json
++++ PotensicProxy_TAF/webui/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.972",
++  "version": "0.973",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.972",
++      "version": "0.973",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",
+
+--- PotensicProxy_TAF/webui/src/components/cockpit/LandingAssistPanel.vue
++++ PotensicProxy_TAF/webui/src/components/cockpit/LandingAssistPanel.vue
+@@ -10,15 +10,48 @@
+         <span>Zielkreuz im Livebild</span>
+       </label>
+ 
+-      <div class="assist-note">Feinsteuerung: ±{{ ASSIST_LIMIT }} (25 % des normalen Joystickbereichs). Alle Regler zentrieren beim Loslassen automatisch auf 0.</div>
++      <div class="fineness-box">
++        <div class="fineness-heading">
++          <span>Feinheit</span>
++          <label class="fineness-value">
++            <span>Feinheit:</span>
++            <input
++              v-model.number="fineControlPercent"
++              type="number"
++              :min="MIN_FINE_PERCENT"
++              :max="MAX_FINE_PERCENT"
++              step="1"
++              @change="normalizeFineControlPercent"
++            />
++            <span>%</span>
++          </label>
++        </div>
++        <input
++          v-model.number="fineControlPercent"
++          class="fineness-slider"
++          type="range"
++          :min="MIN_FINE_PERCENT"
++          :max="MAX_FINE_PERCENT"
++          step="1"
++          @input="normalizeFineControlPercent"
++        />
++        <div class="fineness-scale">
++          <span>{{ MIN_FINE_PERCENT }} %</span>
++          <span>Steuerbereich ±{{ assistLimit }}</span>
++          <span>{{ MAX_FINE_PERCENT }} %</span>
++        </div>
++      </div>
+ 
+-      <div class="slider-grid">
++      <div class="fine-controls-group">
++        <div class="fine-controls-title">Feinsteuerung</div>
++        <div class="assist-note">Throttle, Yaw, Pitch und Roll zentrieren beim Loslassen automatisch auf 0.</div>
++        <div class="slider-grid">
+         <label v-for="axis in axes" :key="axis.key" class="axis-row">
+           <span class="axis-label">{{ axis.label }}</span>
+           <input
+             type="range"
+-            :min="-ASSIST_LIMIT"
+-            :max="ASSIST_LIMIT"
++            :min="-assistLimit"
++            :max="assistLimit"
+             step="1"
+             :value="store.userJoysticks[axis.key]"
+             @pointerdown="beginControl"
+@@ -28,6 +61,7 @@
+           />
+           <span class="axis-value">{{ store.userJoysticks[axis.key] }}</span>
+         </label>
++        </div>
+       </div>
+ 
+       <div class="assist-actions">
+@@ -52,7 +86,7 @@
+ </template>
+ 
+ <script setup lang="ts">
+-import { computed, ref } from 'vue'
++import { computed, ref, watch } from 'vue'
+ import { useDroneStore } from '../../stores/useDroneStore'
+ import { DroneControlService } from '../../services/DroneControlService'
+ import { AndroidMediaService } from '../../services/AndroidMediaService'
+@@ -66,10 +100,12 @@
+   (e: 'change'): void
+ }>()
+ 
+-const ASSIST_LIMIT = 250
++const NORMAL_JOYSTICK_LIMIT = 1000
++const MIN_FINE_PERCENT = 10
++const MAX_FINE_PERCENT = 25
+ const store = useDroneStore()
+ const telemetry = store.telemetry
+-const { crosshairVisible, panelOpen, returnHeight } = useLandingAssistSettings()
++const { crosshairVisible, panelOpen, returnHeight, fineControlPercent } = useLandingAssistSettings()
+ const snapshotBusy = ref(false)
+ const status = ref('')
+ let activePointers = 0
+@@ -82,6 +118,23 @@
+ ]
+ 
+ const sanitizedRthHeight = computed(() => Math.max(20, Math.min(120, Math.round(Number(returnHeight.value) || 120))))
++const sanitizedFineControlPercent = computed(() => Math.max(MIN_FINE_PERCENT, Math.min(MAX_FINE_PERCENT, Math.round(Number(fineControlPercent.value) || 15))))
++const assistLimit = computed(() => Math.round(NORMAL_JOYSTICK_LIMIT * sanitizedFineControlPercent.value / 100))
++
++
++function normalizeFineControlPercent() {
++  fineControlPercent.value = sanitizedFineControlPercent.value
++}
++
++watch(assistLimit, limit => {
++  for (const axis of axes) {
++    const current = Number(store.userJoysticks[axis.key]) || 0
++    if (Math.abs(current) > limit) {
++      store.userJoysticks[axis.key] = Math.max(-limit, Math.min(limit, current))
++      emit('change')
++    }
++  }
++})
+ 
+ function beginControl() {
+   activePointers += 1
+@@ -90,7 +143,7 @@
+ 
+ function setAxis(axis: FlightAxis, event: Event) {
+   const target = event.target as HTMLInputElement
+-  const value = Math.max(-ASSIST_LIMIT, Math.min(ASSIST_LIMIT, Number(target.value) || 0))
++  const value = Math.max(-assistLimit.value, Math.min(assistLimit.value, Number(target.value) || 0))
+   store.userJoysticks[axis] = Math.round(value)
+   emit('change')
+ }
+@@ -163,5 +216,5 @@
+ </script>
+ 
+ <style scoped>
+-.landing-assist{padding:0;overflow:visible;flex:0 0 auto}.landing-assist-header{width:100%;height:36px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;border:0;background:var(--ui-bg-card);color:var(--ui-text);font-weight:700;cursor:pointer}.landing-assist-body{display:flex;flex-direction:column;gap:10px;padding:10px}.crosshair-toggle{display:flex;align-items:center;gap:8px;font-size:var(--ui-font-xs);font-weight:700}.assist-note,.assist-status{font-size:var(--ui-font-xs);color:var(--ui-text-muted);line-height:1.35}.slider-grid{display:flex;flex-direction:column;gap:8px}.axis-row{display:grid;grid-template-columns:58px 1fr 42px;gap:8px;align-items:center;font-size:var(--ui-font-xs)}.axis-label{font-weight:700;color:var(--ui-text)}.axis-row input[type=range]{width:100%;accent-color:var(--cyan);touch-action:none}.axis-value{text-align:right;font-family:var(--ui-font-mono);color:var(--ui-text-muted)}.assist-actions{display:grid;grid-template-columns:1fr 1.4fr;gap:8px;align-items:stretch}.rth-box{display:flex;flex-direction:column;gap:6px}.rth-height-label{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:var(--ui-font-xs);color:var(--ui-text-muted)}.rth-input-wrap{white-space:nowrap}.rth-height-input{width:58px;height:28px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control);color:var(--ui-text);padding:0 6px;text-align:right}.assist-status{border-top:1px solid var(--ui-border);padding-top:7px}
++.landing-assist{padding:0;overflow:visible;flex:0 0 auto}.landing-assist-header{width:100%;height:36px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;border:0;background:var(--ui-bg-card);color:var(--ui-text);font-weight:700;cursor:pointer}.landing-assist-body{display:flex;flex-direction:column;gap:10px;padding:10px}.crosshair-toggle{display:flex;align-items:center;gap:8px;font-size:var(--ui-font-xs);font-weight:700}.assist-note,.assist-status{font-size:var(--ui-font-xs);color:var(--ui-text-muted);line-height:1.35}.fineness-box{display:flex;flex-direction:column;gap:7px;padding:10px;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control)}.fineness-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:var(--ui-font-xs);font-weight:800;color:var(--ui-text)}.fineness-value{display:flex;align-items:center;gap:4px;font-weight:700}.fineness-value input{width:48px;height:26px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-card);color:var(--ui-text);padding:0 4px;text-align:right;font-family:var(--ui-font-mono)}.fineness-slider{width:100%;accent-color:var(--cyan)}.fineness-scale{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:var(--ui-text-muted);font-family:var(--ui-font-mono)}.fine-controls-group{display:flex;flex-direction:column;gap:7px;padding:9px;border:1px solid var(--ui-border);border-radius:var(--ui-radius-md)}.fine-controls-title{font-size:var(--ui-font-xs);font-weight:800;color:var(--ui-text)}.slider-grid{display:flex;flex-direction:column;gap:8px}.axis-row{display:grid;grid-template-columns:58px 1fr 42px;gap:8px;align-items:center;font-size:var(--ui-font-xs)}.axis-label{font-weight:700;color:var(--ui-text)}.axis-row input[type=range]{width:100%;accent-color:var(--cyan);touch-action:none}.axis-value{text-align:right;font-family:var(--ui-font-mono);color:var(--ui-text-muted)}.assist-actions{display:grid;grid-template-columns:1fr 1.4fr;gap:8px;align-items:stretch}.rth-box{display:flex;flex-direction:column;gap:6px}.rth-height-label{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:var(--ui-font-xs);color:var(--ui-text-muted)}.rth-input-wrap{white-space:nowrap}.rth-height-input{width:58px;height:28px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control);color:var(--ui-text);padding:0 6px;text-align:right}.assist-status{border-top:1px solid var(--ui-border);padding-top:7px}
+ </style>
+
+--- PotensicProxy_TAF/webui/src/composables/useLandingAssistSettings.ts
++++ PotensicProxy_TAF/webui/src/composables/useLandingAssistSettings.ts
+@@ -3,11 +3,13 @@
+ const crosshairVisible = ref(localStorage.getItem('potensic-landing-assist-crosshair') === 'true')
+ const panelOpen = ref(localStorage.getItem('potensic-landing-assist-open') === 'true')
+ const returnHeight = ref(Number(localStorage.getItem('potensic-landing-assist-rth-height') || '120'))
++const fineControlPercent = ref(Number(localStorage.getItem('potensic-landing-assist-fine-percent') || '15'))
+ 
+ watch(crosshairVisible, value => localStorage.setItem('potensic-landing-assist-crosshair', String(value)))
+ watch(panelOpen, value => localStorage.setItem('potensic-landing-assist-open', String(value)))
+ watch(returnHeight, value => localStorage.setItem('potensic-landing-assist-rth-height', String(value)))
++watch(fineControlPercent, value => localStorage.setItem('potensic-landing-assist-fine-percent', String(value)))
+ 
+ export function useLandingAssistSettings() {
+-  return { crosshairVisible, panelOpen, returnHeight }
++  return { crosshairVisible, panelOpen, returnHeight, fineControlPercent }
+ }
