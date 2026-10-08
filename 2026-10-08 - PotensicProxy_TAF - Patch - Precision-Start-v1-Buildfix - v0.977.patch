@@ -1,0 +1,98 @@
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 49
+-        versionName = "0.976"
++        versionCode = 50
++        versionName = "0.977"
+     }
+ 
+     signingConfigs {
+--- a/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
++++ b/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
+@@ -20,6 +20,9 @@
+ import java.util.Date
+ import java.util.Locale
+ import java.util.UUID
++import kotlin.math.abs
++import kotlin.math.floor
++import kotlin.math.roundToLong
+ 
+ /**
+  * Android-owned image storage for the two intentionally separate media paths:
+@@ -298,7 +301,7 @@
+             val latitude = telemetry?.optDouble("latitude", Double.NaN) ?: Double.NaN
+             val longitude = telemetry?.optDouble("longitude", Double.NaN) ?: Double.NaN
+             if (latitude.isFinite() && longitude.isFinite() && latitude in -90.0..90.0 && longitude in -180.0..180.0 && !(latitude == 0.0 && longitude == 0.0)) {
+-                exif.setLatLong(latitude, longitude)
++                writeGpsExif(exif, latitude, longitude)
+             }
+             exif.saveAttributes()
+ 
+@@ -309,6 +312,36 @@
+         }
+     }
+ 
++    /**
++     * android.media.ExifInterface does not expose setLatLong() on the platform
++     * API used by this project. Write standard GPS EXIF tags explicitly.
++     */
++    private fun writeGpsExif(exif: ExifInterface, latitude: Double, longitude: Double) {
++        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, if (latitude >= 0.0) "N" else "S")
++        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, decimalDegreesToExifDms(latitude))
++        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, if (longitude >= 0.0) "E" else "W")
++        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, decimalDegreesToExifDms(longitude))
++    }
++
++    private fun decimalDegreesToExifDms(value: Double): String {
++        val absolute = abs(value)
++        var degrees = floor(absolute).toInt()
++        val minutesRaw = (absolute - degrees) * 60.0
++        var minutes = floor(minutesRaw).toInt()
++        var secondsNumerator = ((minutesRaw - minutes) * 60.0 * 1_000_000.0).roundToLong()
++
++        if (secondsNumerator >= 60_000_000L) {
++            secondsNumerator = 0L
++            minutes += 1
++        }
++        if (minutes >= 60) {
++            minutes = 0
++            degrees += 1
++        }
++
++        return "$degrees/1,$minutes/1,$secondsNumerator/1000000"
++    }
++
+     private fun buildXmpPacket(metadata: JSONObject): String {
+         val pstart = metadata.optJSONObject("pstart")
+         val capture = metadata.optJSONObject("capture")
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.976",
++  "version": "0.977",
+   "private": true,
+   "type": "module",
+   "scripts": {
+--- a/webui/package-lock.json
++++ b/webui/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.976",
++  "version": "0.977",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.976",
++      "version": "0.977",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",

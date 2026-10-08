@@ -23,8 +23,8 @@ android {
         applicationId = "com.potensic.proxy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 49
-        versionName = "0.976"
+        versionCode = 50
+        versionName = "0.977"
     }
 
     signingConfigs {

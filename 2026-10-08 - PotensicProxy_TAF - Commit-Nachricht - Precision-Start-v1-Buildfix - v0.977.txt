@@ -1,0 +1,20 @@
+BL_Fix Android EXIF GPS metadata build
+Date: 2026-10-08
+
+Summary:
+- Fixed the Android Kotlin compilation error caused by calling setLatLong on android.media.ExifInterface.
+- Replaced the unavailable call with standard GPS EXIF latitude/longitude tags using DMS rational values.
+- Kept the existing PStart XMP payload and metadata workflow unchanged.
+- Bumped the Android app to version 0.977 / versionCode 50 and synchronized the WebUI package version.
+- Updated the project documentation and delivery notes for the CI build fix.
+
+Changed files:
+- app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
+- webui/package.json
+- webui/package-lock.json
+- DOCUMENTATION/2026-10-08 - PotensicProxy_TAF - Projektdokumentation - Precision-Start-v1-Buildfix - v0.977.docx
+- DOCUMENTATION/2026-10-08 - PotensicProxy_TAF - Projektdokumentation - Precision-Start-v1-Buildfix - v0.977.pdf
+- 2026-10-08 - PotensicProxy_TAF - Patch - Precision-Start-v1-Buildfix - v0.977.patch
+- 2026-10-08 - PotensicProxy_TAF - Auslieferungshinweis - Precision-Start-v1-Buildfix - v0.977.md
+- 2026-10-08 - PotensicProxy_TAF - Commit-Nachricht - Precision-Start-v1-Buildfix - v0.977.txt

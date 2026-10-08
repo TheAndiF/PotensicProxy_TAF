@@ -20,6 +20,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.abs
+import kotlin.math.floor
+import kotlin.math.roundToLong
 
 /**
  * Android-owned image storage for the two intentionally separate media paths:
@@ -298,7 +301,7 @@ class AndroidMediaRepository(
             val latitude = telemetry?.optDouble("latitude", Double.NaN) ?: Double.NaN
             val longitude = telemetry?.optDouble("longitude", Double.NaN) ?: Double.NaN
             if (latitude.isFinite() && longitude.isFinite() && latitude in -90.0..90.0 && longitude in -180.0..180.0 && !(latitude == 0.0 && longitude == 0.0)) {
-                exif.setLatLong(latitude, longitude)
+                writeGpsExif(exif, latitude, longitude)
             }
             exif.saveAttributes()
 
@@ -307,6 +310,36 @@ class AndroidMediaRepository(
         } finally {
             try { temp.delete() } catch (_: Exception) {}
         }
+    }
+
+    /**
+     * android.media.ExifInterface does not expose setLatLong() on the platform
+     * API used by this project. Write standard GPS EXIF tags explicitly.
+     */
+    private fun writeGpsExif(exif: ExifInterface, latitude: Double, longitude: Double) {
+        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, if (latitude >= 0.0) "N" else "S")
+        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, decimalDegreesToExifDms(latitude))
+        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, if (longitude >= 0.0) "E" else "W")
+        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, decimalDegreesToExifDms(longitude))
+    }
+
+    private fun decimalDegreesToExifDms(value: Double): String {
+        val absolute = abs(value)
+        var degrees = floor(absolute).toInt()
+        val minutesRaw = (absolute - degrees) * 60.0
+        var minutes = floor(minutesRaw).toInt()
+        var secondsNumerator = ((minutesRaw - minutes) * 60.0 * 1_000_000.0).roundToLong()
+
+        if (secondsNumerator >= 60_000_000L) {
+            secondsNumerator = 0L
+            minutes += 1
+        }
+        if (minutes >= 60) {
+            minutes = 0
+            degrees += 1
+        }
+
+        return "$degrees/1,$minutes/1,$secondsNumerator/1000000"
     }
 
     private fun buildXmpPacket(metadata: JSONObject): String {
