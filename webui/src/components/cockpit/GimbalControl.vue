@@ -74,6 +74,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useCameraStore } from '../../stores/useCameraStore'
 import { CameraMediaService } from '../../services/CameraMediaService'
 import { DroneControlService } from '../../services/DroneControlService'
+import { PrecisionStartService } from '../../services/PrecisionStartService'
 import { useDroneStore } from '../../stores/useDroneStore'
 
 const MIN_ZOOM = 1
@@ -112,6 +113,7 @@ const gimbalStatus = computed(() => pendingGimbalAngle.value != null ? 'Warte au
 const zoomStatus = computed(() => camera.zoomPending ? 'Warte auf Kamera …' : actualZoom.value == null ? 'Keine Rückmeldung' : Math.abs(actualZoom.value - targetZoom.value) <= 0.02 ? 'Erreicht' : 'Abweichung')
 
 function setPresetAngle(value: 0 | -45 | -90) {
+  PrecisionStartService.notifyManualControl('manuelle Gimbal-Voreinstellung')
   store.gimbalControl.targetAngle = value
   const sent = DroneControlService.setGimbalPitchPreset(value)
   pendingGimbalAngle.value = sent ? null : value
@@ -138,9 +140,10 @@ function setZoom(value: number, immediate = false) {
     }, Math.max(1, 33 - (now - lastZoomSend)))
   }
 }
-function onZoomNumberChange(e: Event) { setZoom(Number((e.target as HTMLInputElement).value), true) }
+function onZoomNumberChange(e: Event) { PrecisionStartService.notifyManualControl('manuelle Zoom-Aenderung'); setZoom(Number((e.target as HTMLInputElement).value), true) }
 
 function onPointerDown(e: PointerEvent) {
+  PrecisionStartService.notifyManualControl('manuelle Gimbal-Steuerung')
   dragging = true
   pendingGimbalAngle.value = null
   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
@@ -163,6 +166,7 @@ function updateFromPointer(e: PointerEvent) {
   DroneControlService.setDirectGimbalCommand(command)
 }
 function onZoomPointerDown(e: PointerEvent) {
+  PrecisionStartService.notifyManualControl('manuelle Zoom-Steuerung')
   zoomDragging = true
   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   updateZoomFromPointer(e)

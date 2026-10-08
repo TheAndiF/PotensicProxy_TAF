@@ -1,0 +1,40 @@
+BL_Add precision start v1 reference capture
+Date: 2026-10-08
+
+Summary:
+- Added the PStart flight action with a blinking active-state button and a disabled PLanding placeholder.
+- Added Step 0 prerequisite validation with a 10-second timeout, image-bound start documentation, explicit abort reasons, and manual override handling.
+- Reused the existing normal takeoff command, then added a vertical-only reference ascent without automatic pitch/roll/yaw correction.
+- Added the first reference point at stable hover height + 0.10 m, followed by zero-based configurable altitude grid steps up to the configured end height without descending.
+- Added throttle-neutral, gimbal -90° preset verification with exactly two attempts, stabilization, and two captures per documentation/reference point (1.00x and maximum zoom).
+- Added EXIF + XMP embedding before SHA-256 verification so every PStart JPEG carries the full PStart telemetry/data payload.
+- Added System > PStart settings for end height, height spacing, and stabilization time.
+- Added manual PStart cancellation from pilot input or the blinking PStart button; manual cancellation returns control to normal hover/pilot control.
+- Bumped the application to versionName 0.976 / versionCode 49.
+
+Changed files:
+- app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- webui/package.json
+- webui/package-lock.json
+- webui/src/components/cockpit/CockpitView.vue
+- webui/src/components/cockpit/FlightActions.vue
+- webui/src/components/cockpit/GimbalControl.vue
+- webui/src/components/debug/DebugConsoleView.vue
+- webui/src/components/settings/PrecisionStartSettings.vue
+- webui/src/composables/usePrecisionStartSettings.ts
+- webui/src/i18n/index.ts
+- webui/src/services/AndroidMediaService.ts
+- webui/src/services/PrecisionStartMetadataService.ts
+- webui/src/services/PrecisionStartService.ts
+- webui/src/stores/useDebugStore.ts
+- webui/src/stores/usePrecisionStartStore.ts
+- DOCUMENTATION/2026-10-08 - PotensicProxy_TAF - Projektdokumentation - Precision-Start-v1 - v0.976.docx
+- DOCUMENTATION/2026-10-08 - PotensicProxy_TAF - Projektdokumentation - Precision-Start-v1 - v0.976.pdf
+
+Validation:
+- Vue/TypeScript: node node_modules/vue-tsc/bin/vue-tsc.js --noEmit -> PASS.
+- Vite production bundle could not be run in this Linux workspace because the delivered node_modules only contains Windows Rollup native packages and lacks @rollup/rollup-linux-x64-gnu.
+- Android/Kotlin compile could not be run because the Gradle wrapper requires downloading Gradle 8.11.1 and this workspace has no network access.
+- Hardware/flight validation remains mandatory before operational use.

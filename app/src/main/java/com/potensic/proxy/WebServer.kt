@@ -306,8 +306,14 @@ class WebServer(
                     call.response.header("Access-Control-Allow-Origin", "*")
                     val requestedLibrary = call.request.queryParameters["library"]?.lowercase()
                     val snapshotLibrary = if (requestedLibrary == "camera") "camera" else "recognition"
-                    val requestedSource = call.request.queryParameters["source"]
-                    val snapshotSource = if (snapshotLibrary == "camera" && requestedSource == "cockpit-snapshot") "cockpit-snapshot" else "live-reco"
+                    val requestedSource = call.request.queryParameters["source"]?.take(64)?.lowercase()
+                    val snapshotSource = when {
+                        snapshotLibrary == "camera" && requestedSource == "cockpit-snapshot" -> "cockpit-snapshot"
+                        snapshotLibrary == "recognition" && requestedSource == "pstart-documentation" -> "pstart-documentation"
+                        snapshotLibrary == "recognition" && requestedSource == "pstart-reference" -> "pstart-reference"
+                        else -> "live-reco"
+                    }
+                    val snapshotName = call.request.queryParameters["name"]?.take(180)
                     val metadata = try {
                         val text = call.receiveText().trim()
                         if (text.isNotEmpty()) JSONObject(text) else null
@@ -336,7 +342,7 @@ class WebServer(
                             val saved = withContext(Dispatchers.IO) {
                                 androidMedia.saveImage(
                                     bytes = frame,
-                                    requestedName = null,
+                                    requestedName = snapshotName,
                                     source = snapshotSource,
                                     library = snapshotLibrary,
                                     metadata = metadata,

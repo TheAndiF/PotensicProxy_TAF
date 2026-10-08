@@ -1,0 +1,1335 @@
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 48
+-        versionName = "0.975"
++        versionCode = 49
++        versionName = "0.976"
+     }
+ 
+     signingConfigs {
+--- a/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
++++ b/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
+@@ -5,6 +5,7 @@
+ import android.content.Context
+ import android.content.pm.PackageManager
+ import android.graphics.BitmapFactory
++import android.media.ExifInterface
+ import android.net.Uri
+ import android.os.Build
+ import android.os.Environment
+@@ -12,6 +13,7 @@
+ import androidx.core.content.ContextCompat
+ import org.json.JSONArray
+ import org.json.JSONObject
++import java.io.ByteArrayOutputStream
+ import java.io.File
+ import java.security.MessageDigest
+ import java.text.SimpleDateFormat
+@@ -64,6 +66,8 @@
+             ?.takeIf { it > 0L }
+             ?: System.currentTimeMillis()
+ 
++        val finalizedBytes = finalizeImageBytes(bytes, mimeType, metadata, captureTime)
++
+         val values = ContentValues().apply {
+             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+             put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+@@ -88,7 +92,7 @@
+             ?: throw IllegalStateException("Android MediaStore rejected image insert")
+ 
+         try {
+-            resolver.openOutputStream(uri, "w")?.use { it.write(bytes) }
++            resolver.openOutputStream(uri, "w")?.use { it.write(finalizedBytes) }
+                 ?: throw IllegalStateException("Could not open Android MediaStore output stream")
+ 
+             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+@@ -102,22 +106,22 @@
+ 
+         // Verification is deliberately performed before callers are allowed to delete
+         // a Drone Reco source file from the drone SD card.
+-        val sourceHash = sha256(bytes)
++        val sourceHash = sha256(finalizedBytes)
+         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+-        try { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds) } catch (_: Exception) {}
++        try { BitmapFactory.decodeByteArray(finalizedBytes, 0, finalizedBytes.size, bounds) } catch (_: Exception) {}
+         val storedBytes = try {
+             resolver.openInputStream(uri)?.use { it.readBytes() }
+         } catch (_: Exception) {
+             null
+         }
+         val storedHash = storedBytes?.let(::sha256)
+-        val verified = storedBytes != null && storedBytes.size == bytes.size && storedHash == sourceHash
++        val verified = storedBytes != null && storedBytes.size == finalizedBytes.size && storedHash == sourceHash
+ 
+         val item = JSONObject().apply {
+             put("id", UUID.randomUUID().toString())
+             put("name", displayName)
+             put("mimeType", mimeType)
+-            put("size", bytes.size)
++            put("size", finalizedBytes.size)
+             put("source", source)
+             put("library", normalizedLibrary)
+             put("createdAt", System.currentTimeMillis())
+@@ -130,13 +134,13 @@
+                 put("width", if (bounds.outWidth > 0) bounds.outWidth else JSONObject.NULL)
+                 put("height", if (bounds.outHeight > 0) bounds.outHeight else JSONObject.NULL)
+                 put("format", mimeType)
+-                put("byteSize", bytes.size)
++                put("byteSize", finalizedBytes.size)
+                 put("sha256", sourceHash)
+             })
+             if (metadata != null) put("metadata", metadata)
+         }
+         appendToIndex(item)
+-        Log.i("[MediaStore] Saved ${bytes.size} bytes as $displayName [$normalizedLibrary/$source] verified=$verified -> $uri")
++        Log.i("[MediaStore] Saved ${finalizedBytes.size} bytes as $displayName [$normalizedLibrary/$source] verified=$verified metadataEmbedded=${metadata != null && mimeType == "image/jpeg"} -> $uri")
+         return item
+     }
+ 
+@@ -277,6 +281,118 @@
+         }
+     }
+ 
++    private fun finalizeImageBytes(bytes: ByteArray, mimeType: String, metadata: JSONObject?, captureTime: Long): ByteArray {
++        if (mimeType != "image/jpeg" || metadata == null) return bytes
++        val temp = File(indexDir, "metadata_${UUID.randomUUID()}.jpg")
++        return try {
++            temp.writeBytes(bytes)
++            val exif = ExifInterface(temp.absolutePath)
++            val localTime = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date(captureTime))
++            exif.setAttribute(ExifInterface.TAG_DATETIME, localTime)
++            exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, localTime)
++            exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, localTime)
++            exif.setAttribute(ExifInterface.TAG_SOFTWARE, "PotensicProxy_TAF")
++            exif.setAttribute(ExifInterface.TAG_USER_COMMENT, "PotensicProxy metadata: full PStart/recognition payload stored in XMP")
++
++            val telemetry = metadata.optJSONObject("telemetry")
++            val latitude = telemetry?.optDouble("latitude", Double.NaN) ?: Double.NaN
++            val longitude = telemetry?.optDouble("longitude", Double.NaN) ?: Double.NaN
++            if (latitude.isFinite() && longitude.isFinite() && latitude in -90.0..90.0 && longitude in -180.0..180.0 && !(latitude == 0.0 && longitude == 0.0)) {
++                exif.setLatLong(latitude, longitude)
++            }
++            exif.saveAttributes()
++
++            val xmp = buildXmpPacket(metadata)
++            injectXmpApp1(temp.readBytes(), xmp)
++        } finally {
++            try { temp.delete() } catch (_: Exception) {}
++        }
++    }
++
++    private fun buildXmpPacket(metadata: JSONObject): String {
++        val pstart = metadata.optJSONObject("pstart")
++        val capture = metadata.optJSONObject("capture")
++        val telemetry = metadata.optJSONObject("telemetry")
++        fun text(value: Any?): String = xmlEscape(
++            when (value) {
++                null, JSONObject.NULL -> ""
++                else -> value.toString()
++            }
++        )
++        val payloadJson = text(metadata.toString())
++        return """<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
++<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="PotensicProxy_TAF">
++  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
++    <rdf:Description rdf:about=""
++      xmlns:xmp="http://ns.adobe.com/xap/1.0/"
++      xmlns:taf="https://potensicproxy.local/ns/pstart/1.0/">
++      <xmp:CreateDate>${text(capture?.opt("timestampIso"))}</xmp:CreateDate>
++      <taf:Schema>PotensicProxy/PStart</taf:Schema>
++      <taf:SchemaVersion>${text(pstart?.opt("schemaVersion"))}</taf:SchemaVersion>
++      <taf:SessionId>${text(pstart?.opt("sessionId"))}</taf:SessionId>
++      <taf:StepId>${text(pstart?.opt("stepId"))}</taf:StepId>
++      <taf:ReferenceIndex>${text(pstart?.opt("referenceIndex"))}</taf:ReferenceIndex>
++      <taf:TargetHeight>${text(pstart?.opt("targetHeight"))}</taf:TargetHeight>
++      <taf:RelativeHeight>${text(pstart?.opt("relativeHeight"))}</taf:RelativeHeight>
++      <taf:ImageRole>${text(pstart?.opt("imageRole"))}</taf:ImageRole>
++      <taf:ReferenceEligible>${text(pstart?.opt("referenceEligible"))}</taf:ReferenceEligible>
++      <taf:ZoomRole>${text(pstart?.opt("zoomRole"))}</taf:ZoomRole>
++      <taf:Latitude>${text(telemetry?.opt("latitude"))}</taf:Latitude>
++      <taf:Longitude>${text(telemetry?.opt("longitude"))}</taf:Longitude>
++      <taf:Heading>${text(telemetry?.opt("heading"))}</taf:Heading>
++      <taf:GimbalPitch>${text(telemetry?.opt("gimbalPitch"))}</taf:GimbalPitch>
++      <taf:HorizontalSpeed>${text(telemetry?.opt("horizontalSpeed"))}</taf:HorizontalSpeed>
++      <taf:VerticalSpeed>${text(telemetry?.opt("verticalSpeed"))}</taf:VerticalSpeed>
++      <taf:TofHeight>${text(telemetry?.opt("tofHeight"))}</taf:TofHeight>
++      <taf:PayloadJson>$payloadJson</taf:PayloadJson>
++    </rdf:Description>
++  </rdf:RDF>
++</x:xmpmeta>
++<?xpacket end="w"?>"""
++    }
++
++    private fun injectXmpApp1(jpeg: ByteArray, xmp: String): ByteArray {
++        require(jpeg.size >= 4 && (jpeg[0].toInt() and 0xff) == 0xff && (jpeg[1].toInt() and 0xff) == 0xd8) {
++            "XMP embedding requires a valid JPEG"
++        }
++        val header = "http://ns.adobe.com/xap/1.0/\u0000".toByteArray(Charsets.UTF_8)
++        val xml = xmp.toByteArray(Charsets.UTF_8)
++        val payloadLength = header.size + xml.size
++        require(payloadLength + 2 <= 0xffff) { "XMP metadata exceeds the JPEG APP1 size limit" }
++
++        val segment = ByteArrayOutputStream(payloadLength + 4).apply {
++            write(0xff)
++            write(0xe1)
++            val length = payloadLength + 2
++            write((length ushr 8) and 0xff)
++            write(length and 0xff)
++            write(header)
++            write(xml)
++        }.toByteArray()
++
++        var insertAt = 2
++        while (insertAt + 4 <= jpeg.size && (jpeg[insertAt].toInt() and 0xff) == 0xff) {
++            val marker = jpeg[insertAt + 1].toInt() and 0xff
++            if (marker != 0xe0 && marker != 0xe1) break
++            val length = ((jpeg[insertAt + 2].toInt() and 0xff) shl 8) or (jpeg[insertAt + 3].toInt() and 0xff)
++            if (length < 2 || insertAt + 2 + length > jpeg.size) break
++            insertAt += 2 + length
++        }
++
++        return ByteArrayOutputStream(jpeg.size + segment.size).apply {
++            write(jpeg, 0, insertAt)
++            write(segment)
++            write(jpeg, insertAt, jpeg.size - insertAt)
++        }.toByteArray()
++    }
++
++    private fun xmlEscape(value: String): String = value
++        .replace("&", "&amp;")
++        .replace("<", "&lt;")
++        .replace(">", "&gt;")
++        .replace("\"", "&quot;")
++        .replace("'", "&apos;")
++
+     private fun sha256(bytes: ByteArray): String = MessageDigest
+         .getInstance("SHA-256")
+         .digest(bytes)
+--- a/app/src/main/java/com/potensic/proxy/WebServer.kt
++++ b/app/src/main/java/com/potensic/proxy/WebServer.kt
+@@ -306,8 +306,14 @@
+                     call.response.header("Access-Control-Allow-Origin", "*")
+                     val requestedLibrary = call.request.queryParameters["library"]?.lowercase()
+                     val snapshotLibrary = if (requestedLibrary == "camera") "camera" else "recognition"
+-                    val requestedSource = call.request.queryParameters["source"]
+-                    val snapshotSource = if (snapshotLibrary == "camera" && requestedSource == "cockpit-snapshot") "cockpit-snapshot" else "live-reco"
++                    val requestedSource = call.request.queryParameters["source"]?.take(64)?.lowercase()
++                    val snapshotSource = when {
++                        snapshotLibrary == "camera" && requestedSource == "cockpit-snapshot" -> "cockpit-snapshot"
++                        snapshotLibrary == "recognition" && requestedSource == "pstart-documentation" -> "pstart-documentation"
++                        snapshotLibrary == "recognition" && requestedSource == "pstart-reference" -> "pstart-reference"
++                        else -> "live-reco"
++                    }
++                    val snapshotName = call.request.queryParameters["name"]?.take(180)
+                     val metadata = try {
+                         val text = call.receiveText().trim()
+                         if (text.isNotEmpty()) JSONObject(text) else null
+@@ -336,7 +342,7 @@
+                             val saved = withContext(Dispatchers.IO) {
+                                 androidMedia.saveImage(
+                                     bytes = frame,
+-                                    requestedName = null,
++                                    requestedName = snapshotName,
+                                     source = snapshotSource,
+                                     library = snapshotLibrary,
+                                     metadata = metadata,
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.975",
++  "version": "0.976",
+   "private": true,
+   "type": "module",
+   "scripts": {
+--- a/webui/package-lock.json
++++ b/webui/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.975",
++  "version": "0.976",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.975",
++      "version": "0.976",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",
+--- a/webui/src/components/cockpit/CockpitView.vue
++++ b/webui/src/components/cockpit/CockpitView.vue
+@@ -90,6 +90,7 @@
+ import TelemetryDetails from './TelemetryDetails.vue'
+ import { useDroneStore } from '../../stores/useDroneStore'
+ import { DroneControlService } from '../../services/DroneControlService'
++import { PrecisionStartService } from '../../services/PrecisionStartService'
+ import { useCockpitViewSettings } from '../../composables/useCockpitViewSettings'
+ 
+ const store = useDroneStore()
+@@ -141,11 +142,11 @@
+   // Send a neutral frame immediately after both sticks have been released.
+   sendAxesNow()
+ }
+-function startLeftControl() { leftControlActive = true; ensureAxisLoop() }
++function startLeftControl() { PrecisionStartService.notifyManualControl('linker Steuerknüppel'); leftControlActive = true; ensureAxisLoop() }
+ function stopLeftControl() { leftControlActive = false; maybeStopAxisLoop() }
+-function startRightControl() { rightControlActive = true; ensureAxisLoop() }
++function startRightControl() { PrecisionStartService.notifyManualControl('rechter Steuerknüppel'); rightControlActive = true; ensureAxisLoop() }
+ function stopRightControl() { rightControlActive = false; maybeStopAxisLoop() }
+-function startLandingControl() { landingControlActive = true; ensureAxisLoop() }
++function startLandingControl() { PrecisionStartService.notifyManualControl('Landehilfe/Feinsteuerung'); landingControlActive = true; ensureAxisLoop() }
+ function stopLandingControl() { landingControlActive = false; maybeStopAxisLoop() }
+ function onLandingControlChange() { if (Date.now() - lastSend >= 80) sendAxesNow() }
+ function onJoystickChange() { if (Date.now() - lastSend >= 80) sendAxesNow() }
+--- a/webui/src/components/cockpit/FlightActions.vue
++++ b/webui/src/components/cockpit/FlightActions.vue
+@@ -2,10 +2,15 @@
+   <div class="actions-container">
+     <div class="panel-title">✈️ {{ t('actions.flight') }}</div>
+     <div class="btn-grid">
+-      <button class="taf-btn taf-btn--success" :disabled="telemetry.flying || telemetry.takingOff" @click="confirmTakeoff">🛫 {{ t('actions.takeoff') }}</button>
+-      <button class="taf-btn" :class="{ 'taf-btn--danger': telemetry.landing }" :disabled="!telemetry.flying && !telemetry.landing" @click="landOrCancel">🛬 {{ telemetry.landing ? t('actions.cancelLand') : t('actions.land') }}</button>
+-      <button class="taf-btn" :class="{ 'taf-btn--danger': telemetry.returning }" :disabled="!telemetry.flying && !telemetry.returning" @click="rthOrCancel">🏠 {{ telemetry.returning ? t('actions.cancelRth') : t('actions.rth') }}</button>
++      <button class="taf-btn taf-btn--success" :disabled="telemetry.flying || telemetry.takingOff || pstart.state.active" @click="confirmTakeoff">🛫 {{ t('actions.takeoff') }}</button>
++      <button class="taf-btn" :class="{ 'taf-btn--danger': telemetry.landing }" :disabled="pstart.state.active || (!telemetry.flying && !telemetry.landing)" @click="landOrCancel">🛬 {{ telemetry.landing ? t('actions.cancelLand') : t('actions.land') }}</button>
++      <button class="taf-btn pstart-button" :class="{ 'pstart-button--active': pstart.blinking }" :disabled="!pstart.state.active && (telemetry.flying || telemetry.takingOff)" @click="togglePStart">🎯 {{ t('actions.pstart') }}</button>
++      <button class="taf-btn" disabled title="Precision Landing ist in dieser Version noch nicht implementiert">🎯 {{ t('actions.planding') }}</button>
++      <button class="taf-btn" :class="{ 'taf-btn--danger': telemetry.returning }" :disabled="pstart.state.active || (!telemetry.flying && !telemetry.returning)" @click="rthOrCancel">🏠 {{ telemetry.returning ? t('actions.cancelRth') : t('actions.rth') }}</button>
+       <button class="taf-btn taf-btn--danger" @click="openEmergencyConfirm">⛔ {{ t('actions.emergency') }}</button>
++    </div>
++    <div v-if="pstart.state.status" class="pstart-status" :class="{ 'pstart-status--error': pstart.state.phase === 'ABORTED' }">
++      <strong>PStart:</strong> {{ pstart.state.status }}
+     </div>
+ 
+     <div class="panel-title" style="margin-top: 10px;">📷 {{ t('actions.camera') }}</div>
+@@ -34,15 +39,22 @@
+ import { DroneControlService } from '../../services/DroneControlService'
+ import { useDroneStore } from '../../stores/useDroneStore'
+ import { useCameraStore } from '../../stores/useCameraStore'
++import { usePrecisionStartStore } from '../../stores/usePrecisionStartStore'
++import { PrecisionStartService } from '../../services/PrecisionStartService'
+ import { useI18n } from '../../i18n'
+ const { t } = useI18n()
+ const store = useDroneStore()
+ const camera = useCameraStore()
++const pstart = usePrecisionStartStore()
+ const { telemetry } = store
+ const emergencyConfirmOpen = ref(false)
+ 
+ function confirmTakeoff() {
+   if (window.confirm(t('actions.takeoffConfirm'))) DroneControlService.takeoff()
++}
++
++function togglePStart() {
++  void PrecisionStartService.toggle()
+ }
+ 
+ function landOrCancel() {
+@@ -72,6 +84,7 @@
+ function confirmEmergency() {
+   if (!emergencyConfirmOpen.value) return
+   emergencyConfirmOpen.value = false
++  if (pstart.state.active) PrecisionStartService.abort('Not-Aus durch Benutzer bestätigt', 'manual')
+   store.addLog('WARN', '[Emergency stop] explicitly confirmed; executing existing emergency-stop path')
+   DroneControlService.emergencyStop()
+ }
+@@ -90,6 +103,11 @@
+   gap: 8px;
+ }
+ 
++.pstart-button--active { animation: pstart-blink .8s steps(2, start) infinite; border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan) inset; }
++@keyframes pstart-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: .35; } }
++.pstart-status { padding: 7px 9px; border: 1px solid var(--ui-border); border-radius: 6px; background: var(--ui-bg-control); color: var(--ui-text-muted); font-size: 11px; line-height: 1.35; }
++.pstart-status--error { border-color: var(--ui-danger, #ef4444); color: var(--ui-danger, #ef4444); }
++
+ .confirm-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: rgba(0,0,0,.66); padding: 20px; }
+ .confirm-dialog { width: min(460px, 100%); background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px; box-shadow: 0 18px 50px rgba(0,0,0,.45); }
+ .confirm-dialog h3 { margin: 0 0 10px; }
+--- a/webui/src/components/cockpit/GimbalControl.vue
++++ b/webui/src/components/cockpit/GimbalControl.vue
+@@ -74,6 +74,7 @@
+ import { useCameraStore } from '../../stores/useCameraStore'
+ import { CameraMediaService } from '../../services/CameraMediaService'
+ import { DroneControlService } from '../../services/DroneControlService'
++import { PrecisionStartService } from '../../services/PrecisionStartService'
+ import { useDroneStore } from '../../stores/useDroneStore'
+ 
+ const MIN_ZOOM = 1
+@@ -112,6 +113,7 @@
+ const zoomStatus = computed(() => camera.zoomPending ? 'Warte auf Kamera …' : actualZoom.value == null ? 'Keine Rückmeldung' : Math.abs(actualZoom.value - targetZoom.value) <= 0.02 ? 'Erreicht' : 'Abweichung')
+ 
+ function setPresetAngle(value: 0 | -45 | -90) {
++  PrecisionStartService.notifyManualControl('manuelle Gimbal-Voreinstellung')
+   store.gimbalControl.targetAngle = value
+   const sent = DroneControlService.setGimbalPitchPreset(value)
+   pendingGimbalAngle.value = sent ? null : value
+@@ -138,9 +140,10 @@
+     }, Math.max(1, 33 - (now - lastZoomSend)))
+   }
+ }
+-function onZoomNumberChange(e: Event) { setZoom(Number((e.target as HTMLInputElement).value), true) }
++function onZoomNumberChange(e: Event) { PrecisionStartService.notifyManualControl('manuelle Zoom-Aenderung'); setZoom(Number((e.target as HTMLInputElement).value), true) }
+ 
+ function onPointerDown(e: PointerEvent) {
++  PrecisionStartService.notifyManualControl('manuelle Gimbal-Steuerung')
+   dragging = true
+   pendingGimbalAngle.value = null
+   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+@@ -163,6 +166,7 @@
+   DroneControlService.setDirectGimbalCommand(command)
+ }
+ function onZoomPointerDown(e: PointerEvent) {
++  PrecisionStartService.notifyManualControl('manuelle Zoom-Steuerung')
+   zoomDragging = true
+   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+   updateZoomFromPointer(e)
+--- a/webui/src/components/debug/DebugConsoleView.vue
++++ b/webui/src/components/debug/DebugConsoleView.vue
+@@ -5,6 +5,7 @@
+       <div class="tab-selectors">
+         <el-radio-group v-model="debugStore.activeSubTab" size="small">
+           <el-radio-button value="flight">✈️ {{ t('system.flight') }}</el-radio-button>
++          <el-radio-button value="pstart">🎯 {{ t('pstart.tab') }}</el-radio-button>
+           <el-radio-button value="camera">📷 {{ t('engineering.camera') }}</el-radio-button>
+           <el-radio-button value="fpv">📶 {{ t('engineering.fpv') }}</el-radio-button>
+           <el-radio-button value="sensor">⚖️ {{ t('engineering.sensor') }}</el-radio-button>
+@@ -36,6 +37,10 @@
+       <!-- ================= System: flight limits, smart modes and calibration ================= -->
+       <div v-show="debugStore.activeSubTab === 'flight'" class="sub-tab-pane system-flight-pane">
+         <AdvancedFlightPanel />
++      </div>
++
++      <div v-show="debugStore.activeSubTab === 'pstart'" class="sub-tab-pane system-flight-pane">
++        <PrecisionStartSettings />
+       </div>
+ 
+       <!-- ================= Sub-tab 1: Camera command console ================= -->
+@@ -668,6 +673,7 @@
+ 
+ <script setup lang="ts">
+ import AdvancedFlightPanel from '../cockpit/AdvancedFlightPanel.vue'
++import PrecisionStartSettings from '../settings/PrecisionStartSettings.vue'
+ import { ref, nextTick, watch, onMounted } from 'vue'
+ import { useDebugStore } from '../../stores/useDebugStore'
+ import { DroneControlService } from '../../services/DroneControlService'
+--- a/webui/src/components/settings/PrecisionStartSettings.vue
++++ b/webui/src/components/settings/PrecisionStartSettings.vue
+@@ -0,0 +1,52 @@
++<template>
++  <section class="pstart-settings">
++    <div class="settings-card">
++      <div class="settings-title">🎯 {{ t('pstart.settingsTitle') }}</div>
++      <p class="settings-help">{{ t('pstart.settingsHelp') }}</p>
++
++      <div class="settings-grid">
++        <label>
++          <span>{{ t('pstart.endHeight') }}</span>
++          <span class="input-unit"><input v-model.number="endHeight" type="number" min="1" max="120" step="0.5" @change="normalize" /> m</span>
++        </label>
++        <label>
++          <span>{{ t('pstart.heightStep') }}</span>
++          <span class="input-unit"><input v-model.number="heightStep" type="number" min="0.5" max="50" step="0.5" @change="normalize" /> m</span>
++        </label>
++        <label>
++          <span>{{ t('pstart.stabilization') }}</span>
++          <span class="input-unit"><input v-model.number="stabilizationSeconds" type="number" min="0" max="15" step="0.5" @change="normalize" /> s</span>
++        </label>
++      </div>
++
++      <div class="rules-box">
++        <strong>{{ t('pstart.v1Rules') }}</strong>
++        <ul>
++          <li>{{ t('pstart.ruleNoLateral') }}</li>
++          <li>{{ t('pstart.ruleFirstPoint') }}</li>
++          <li>{{ t('pstart.ruleGrid') }}</li>
++          <li>{{ t('pstart.ruleImages') }}</li>
++          <li>{{ t('pstart.ruleStep0') }}</li>
++        </ul>
++      </div>
++    </div>
++  </section>
++</template>
++
++<script setup lang="ts">
++import { useI18n } from '../../i18n'
++import { usePrecisionStartSettings } from '../../composables/usePrecisionStartSettings'
++
++const { t } = useI18n()
++const { endHeight, heightStep, stabilizationSeconds } = usePrecisionStartSettings()
++
++function normalize() {
++  endHeight.value = Math.max(1, Math.min(120, Number(endHeight.value) || 20))
++  heightStep.value = Math.max(0.5, Math.min(50, Number(heightStep.value) || 5))
++  stabilizationSeconds.value = Math.max(0, Math.min(15, Number(stabilizationSeconds.value) || 2))
++}
++</script>
++
++<style scoped>
++.pstart-settings{padding:14px;overflow:auto;height:100%;box-sizing:border-box}.settings-card{max-width:760px;border:1px solid var(--ui-border);background:var(--ui-bg-card);border-radius:var(--ui-radius-lg);padding:16px}.settings-title{font-size:15px;font-weight:800;color:var(--ui-text);margin-bottom:5px}.settings-help{margin:0 0 16px;color:var(--ui-text-muted);font-size:12px;line-height:1.45}.settings-grid{display:grid;grid-template-columns:repeat(3,minmax(150px,1fr));gap:12px}.settings-grid label{display:flex;flex-direction:column;gap:7px;padding:11px;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);font-size:12px;font-weight:700}.input-unit{display:flex;align-items:center;gap:5px;color:var(--ui-text-muted)}.input-unit input{width:90px;height:30px;box-sizing:border-box;border:1px solid var(--ui-border-control);border-radius:var(--ui-radius-md);background:var(--ui-bg-control);color:var(--ui-text);padding:0 7px}.rules-box{margin-top:14px;padding:12px;border:1px solid var(--ui-border);border-radius:var(--ui-radius-md);font-size:12px;line-height:1.45;color:var(--ui-text-muted)}.rules-box strong{color:var(--ui-text)}.rules-box ul{margin:7px 0 0;padding-left:18px}.rules-box li+li{margin-top:4px}@media(max-width:720px){.settings-grid{grid-template-columns:1fr}}
++</style>
+--- a/webui/src/composables/usePrecisionStartSettings.ts
++++ b/webui/src/composables/usePrecisionStartSettings.ts
+@@ -0,0 +1,17 @@
++import { ref, watch } from 'vue'
++
++const END_HEIGHT_KEY = 'potensic-pstart-end-height'
++const HEIGHT_STEP_KEY = 'potensic-pstart-height-step'
++const STABILIZATION_KEY = 'potensic-pstart-stabilization-seconds'
++
++const endHeight = ref(Number(localStorage.getItem(END_HEIGHT_KEY) || '20'))
++const heightStep = ref(Number(localStorage.getItem(HEIGHT_STEP_KEY) || '5'))
++const stabilizationSeconds = ref(Number(localStorage.getItem(STABILIZATION_KEY) || '2'))
++
++watch(endHeight, value => localStorage.setItem(END_HEIGHT_KEY, String(value)))
++watch(heightStep, value => localStorage.setItem(HEIGHT_STEP_KEY, String(value)))
++watch(stabilizationSeconds, value => localStorage.setItem(STABILIZATION_KEY, String(value)))
++
++export function usePrecisionStartSettings() {
++  return { endHeight, heightStep, stabilizationSeconds }
++}
+--- a/webui/src/i18n/index.ts
++++ b/webui/src/i18n/index.ts
+@@ -32,7 +32,7 @@
+     'telemetry.verticalSpeed': 'Vertical Speed', 'telemetry.horizontalDistance': 'Horizontal Distance', 'telemetry.satellites': 'Satellites',
+     'telemetry.heading': 'Heading', 'telemetry.pitch': 'Pitch', 'telemetry.roll': 'Roll', 'telemetry.controllerVoltage': 'Controller Voltage',
+     'telemetry.phoneBattery': 'Phone', 'telemetry.controllerBattery': 'Controller', 'telemetry.droneBattery': 'Drone',
+-    'actions.flight': 'Flight Actions', 'actions.takeoff': 'Takeoff', 'actions.takeoffConfirm': 'Confirm takeoff?', 'actions.land': 'Land', 'actions.landConfirm': 'Confirm landing?', 'actions.cancelLand': 'Cancel landing', 'actions.rth': 'RTH', 'actions.rthConfirm': 'Confirm return-to-home?', 'actions.cancelRth': 'Cancel RTH',
++    'actions.flight': 'Flight Actions', 'actions.pstart': 'PStart', 'actions.planding': 'PLanding', 'actions.takeoff': 'Takeoff', 'actions.takeoffConfirm': 'Confirm takeoff?', 'actions.land': 'Land', 'actions.landConfirm': 'Confirm landing?', 'actions.cancelLand': 'Cancel landing', 'actions.rth': 'RTH', 'actions.rthConfirm': 'Confirm return-to-home?', 'actions.cancelRth': 'Cancel RTH',
+     'actions.emergency': 'Emergency Stop', 'actions.emergencyConfirmTitle': 'Confirm emergency stop', 'actions.emergencyConfirmText': 'Emergency stop can stop the motors immediately. Really execute this action?', 'actions.emergencyExecute': 'Execute emergency stop', 'actions.cancel': 'Cancel', 'actions.camera': 'Camera & Video Control', 'actions.photo': 'Photo', 'actions.photoMode': 'Switch to Photo', 'actions.photoShoot': 'Take Photo', 'actions.snapshotAndroid': 'Live Reco capture',
+     'actions.record': 'Video Start/Stop', 'actions.recordStart': 'Start Video', 'actions.recordStop': 'Stop Video', 'actions.keyframe': 'Request Keyframe (IDR)', 'actions.liveview': 'Initialize LiveView Parameters',
+     'video.waitingTitle': 'Waiting for drone video stream',
+@@ -46,6 +46,7 @@
+     'video.render': 'Render', 'video.hwDecode': 'HW Decode', 'video.stream': 'Stream', 'video.requestIFrame': 'Request I-Frame',
+     'video.fullscreen': 'Fullscreen', 'video.fullscreenTitle': 'View video fullscreen', 'video.battery': 'Battery',
+     'system.flight': 'Flight / Calibration / Smart Modes',
++    'pstart.tab': 'PStart', 'pstart.settingsTitle': 'Precision Start - Version 1', 'pstart.settingsHelp': 'Reference-ascent settings. Version 1 uses vertical throttle control only; no automatic pitch/roll/yaw correction.', 'pstart.endHeight': 'End height', 'pstart.heightStep': 'Height spacing', 'pstart.stabilization': 'Stabilization time', 'pstart.v1Rules': 'Version 1 rules', 'pstart.ruleNoLateral': 'No automatic pitch/roll/yaw correction during ascent.', 'pstart.ruleFirstPoint': 'First reference point: stable hover height + 0.10 m.', 'pstart.ruleGrid': 'Further points use the fixed grid calculated from 0 m; PStart never descends.', 'pstart.ruleImages': 'Two images per point: no zoom and maximum zoom; telemetry is embedded in EXIF/XMP.', 'pstart.ruleStep0': 'Step 0 has a 10 s timeout and creates documentation images that are not landing references.',
+     'engineering.camera': 'Camera Console', 'engineering.fpv': 'Video & RF', 'engineering.sensor': 'Sensors & Calibration',
+     'engineering.rid': 'Remote ID & System', 'engineering.relay': 'Remote / Relay', 'engineering.map': 'Map', 'engineering.logs': 'Logs', 'engineering.frontend': 'Frontend',
+     'engineering.backend': 'Backend', 'engineering.hardwareTelemetry': 'Hardware Telemetry', 'engineering.waitingData': 'Waiting for data',
+@@ -74,7 +75,7 @@
+     'telemetry.verticalSpeed': 'Vertikale Geschwindigkeit', 'telemetry.horizontalDistance': 'Horizontale Entfernung', 'telemetry.satellites': 'Satelliten',
+     'telemetry.heading': 'Kurs', 'telemetry.pitch': 'Nick', 'telemetry.roll': 'Roll', 'telemetry.controllerVoltage': 'Controller-Spannung',
+     'telemetry.phoneBattery': 'Handy', 'telemetry.controllerBattery': 'FB', 'telemetry.droneBattery': 'Drohne',
+-    'actions.flight': 'Flugaktionen', 'actions.takeoff': 'Start', 'actions.takeoffConfirm': 'Start wirklich ausloesen?', 'actions.land': 'Landung', 'actions.landConfirm': 'Landung wirklich ausloesen?', 'actions.cancelLand': 'Landung abbrechen', 'actions.rth': 'RTH', 'actions.rthConfirm': 'Rueckkehr wirklich ausloesen?', 'actions.cancelRth': 'RTH abbrechen',
++    'actions.flight': 'Flugaktionen', 'actions.pstart': 'PStart', 'actions.planding': 'PLanding', 'actions.takeoff': 'Start', 'actions.takeoffConfirm': 'Start wirklich ausloesen?', 'actions.land': 'Landung', 'actions.landConfirm': 'Landung wirklich ausloesen?', 'actions.cancelLand': 'Landung abbrechen', 'actions.rth': 'RTH', 'actions.rthConfirm': 'Rueckkehr wirklich ausloesen?', 'actions.cancelRth': 'RTH abbrechen',
+     'actions.emergency': 'Not-Aus', 'actions.emergencyConfirmTitle': 'Not-Aus bestaetigen', 'actions.emergencyConfirmText': 'Not-Aus kann die Motoren sofort stoppen. Aktion wirklich ausfuehren?', 'actions.emergencyExecute': 'Not-Aus ausfuehren', 'actions.cancel': 'Abbrechen', 'actions.camera': 'Kamera & Video', 'actions.photo': 'Foto', 'actions.photoMode': 'Zu Foto wechseln', 'actions.photoShoot': 'Foto ausloesen', 'actions.snapshotAndroid': 'Live Reco aufnehmen',
+     'actions.record': 'Video Start/Stopp', 'actions.recordStart': 'Video starten', 'actions.recordStop': 'Video stoppen', 'actions.keyframe': 'Schlüsselbild anfordern (IDR)', 'actions.liveview': 'LiveView-Parameter initialisieren',
+     'video.waitingTitle': 'Warte auf Drohnen-Videostream',
+@@ -88,6 +89,7 @@
+     'video.render': 'Darstellung', 'video.hwDecode': 'HW-Decoding', 'video.stream': 'Stream', 'video.requestIFrame': 'I-Frame anfordern',
+     'video.fullscreen': 'Vollbild', 'video.fullscreenTitle': 'Video im Vollbild anzeigen', 'video.battery': 'Batterie',
+     'system.flight': 'Flug / Kalibrierung / Smart Modes',
++    'pstart.tab': 'PStart', 'pstart.settingsTitle': 'Precision Start - Version 1', 'pstart.settingsHelp': 'Einstellungen fuer den Referenzaufstieg. Version 1 steuert nur vertikal per Throttle; keine automatische Pitch-/Roll-/Yaw-Korrektur.', 'pstart.endHeight': 'Endhoehe', 'pstart.heightStep': 'Hoehenstaffelung', 'pstart.stabilization': 'Stabilisierungszeit', 'pstart.v1Rules': 'Regeln Version 1', 'pstart.ruleNoLateral': 'Kein automatischer Pitch-/Roll-/Yaw-Regeleingriff waehrend des Aufstiegs.', 'pstart.ruleFirstPoint': 'Erster Referenzpunkt: stabile Schwebehoehe + 0,10 m.', 'pstart.ruleGrid': 'Weitere Punkte folgen dem festen Raster ab 0 m; PStart senkt niemals ab.', 'pstart.ruleImages': 'Zwei Bilder pro Punkt: ohne Zoom und maximaler Zoom; Telemetrie wird in EXIF/XMP eingebettet.', 'pstart.ruleStep0': 'Schritt 0 hat 10 s Zeitlimit und erzeugt Dokumentationsbilder, die keine Landereferenzen sind.',
+     'engineering.camera': 'Kamera-Konsole', 'engineering.fpv': 'Video & RF', 'engineering.sensor': 'Sensoren & Kalibrierung',
+     'engineering.rid': 'Remote ID & System', 'engineering.relay': 'Remote / Relay', 'engineering.map': 'Karte', 'engineering.logs': 'Logs', 'engineering.frontend': 'Frontend',
+     'engineering.backend': 'Backend', 'engineering.hardwareTelemetry': 'Hardware-Telemetrie', 'engineering.waitingData': 'Warte auf Daten',
+@@ -113,7 +115,7 @@
+     'telemetry.battery': '电量', 'telemetry.altitude': '高度', 'telemetry.horizontalSpeed': '水平速度', 'telemetry.verticalSpeed': '垂直速度',
+     'telemetry.horizontalDistance': '水平距离', 'telemetry.satellites': '卫星', 'telemetry.heading': '航向', 'telemetry.pitch': '俯仰',
+     'telemetry.roll': '横滚', 'telemetry.controllerVoltage': '遥控器电压', 'telemetry.phoneBattery': '手机', 'telemetry.controllerBattery': '遥控器', 'telemetry.droneBattery': '无人机',
+-    'actions.flight': '飞行动作', 'actions.takeoff': '起飞', 'actions.takeoffConfirm': '确认起飞？', 'actions.land': '降落', 'actions.landConfirm': '确认降落？', 'actions.cancelLand': '取消降落', 'actions.rth': '返航', 'actions.rthConfirm': '确认返航？', 'actions.cancelRth': '取消返航', 'actions.emergency': '紧急停止', 'actions.emergencyConfirmTitle': '确认紧急停止', 'actions.emergencyConfirmText': '紧急停止可能立即停止电机。确定执行吗？', 'actions.emergencyExecute': '执行紧急停止', 'actions.cancel': '取消',
++    'actions.flight': '飞行动作', 'actions.pstart': '精确起飞', 'actions.planding': '精确降落', 'actions.takeoff': '起飞', 'actions.takeoffConfirm': '确认起飞？', 'actions.land': '降落', 'actions.landConfirm': '确认降落？', 'actions.cancelLand': '取消降落', 'actions.rth': '返航', 'actions.rthConfirm': '确认返航？', 'actions.cancelRth': '取消返航', 'actions.emergency': '紧急停止', 'actions.emergencyConfirmTitle': '确认紧急停止', 'actions.emergencyConfirmText': '紧急停止可能立即停止电机。确定执行吗？', 'actions.emergencyExecute': '执行紧急停止', 'actions.cancel': '取消',
+     'actions.camera': '相机与视频控制', 'actions.photo': '拍照', 'actions.photoMode': '切换到拍照模式', 'actions.photoShoot': '执行拍照', 'actions.snapshotAndroid': '保存 Live Reco 图像', 'actions.record': '视频开始/停止', 'actions.recordStart': '开始录像', 'actions.recordStop': '停止录像', 'actions.keyframe': '请求关键帧 (IDR)',
+     'actions.liveview': '初始化 LiveView 参数',
+     'video.waitingTitle': '等待无人机视频流', 'video.waitingDesc': '当前使用前端 USB 直通模式。如果飞行器已开机并完成配对，请激活视频流以发送初始化序列。',
+@@ -125,6 +127,7 @@
+     'video.render': '渲染', 'video.hwDecode': '硬件解码', 'video.stream': '视频流', 'video.requestIFrame': '请求 I 帧', 'video.fullscreen': '全屏',
+     'video.fullscreenTitle': '全屏查看视频', 'video.battery': '电量',
+     'system.flight': '飞行 / 校准 / 智能模式',
++    'pstart.tab': '精确起飞', 'pstart.settingsTitle': '精确起飞 - 版本 1', 'pstart.settingsHelp': '参考上升设置。版本 1 仅通过油门进行垂直控制，不自动修正俯仰、横滚或偏航。', 'pstart.endHeight': '终止高度', 'pstart.heightStep': '高度间隔', 'pstart.stabilization': '稳定时间', 'pstart.v1Rules': '版本 1 规则', 'pstart.ruleNoLateral': '上升过程中不自动修正俯仰、横滚或偏航。', 'pstart.ruleFirstPoint': '第一个参考点：稳定悬停高度 + 0.10 m。', 'pstart.ruleGrid': '后续参考点使用从 0 m 计算的固定高度网格；PStart 不会下降。', 'pstart.ruleImages': '每个点拍两张图：无变焦和最大变焦；遥测写入 EXIF/XMP。', 'pstart.ruleStep0': '步骤 0 的超时为 10 秒，并生成不可用于降落参考的文档图像。',
+     'engineering.camera': '相机控制台', 'engineering.fpv': '视频与射频', 'engineering.sensor': '传感器与校准', 'engineering.rid': '远程识别与系统',
+     'engineering.relay': '远程 / 中继', 'engineering.map': '地图', 'engineering.logs': '日志', 'engineering.frontend': '前端', 'engineering.backend': '后端', 'engineering.hardwareTelemetry': '硬件遥测', 'engineering.waitingData': '等待数据',
+     'map.settings': '地图设置', 'map.versionIndex': '版本信息', 'map.projectPackage': '项目包', 'map.androidApp': 'Android 应用', 'map.backend': '后端', 'map.webUi': 'Web UI', 'map.module': '地图模块', 'map.api': '地图 API', 'map.buildDate': '构建日期',
+--- a/webui/src/services/AndroidMediaService.ts
++++ b/webui/src/services/AndroidMediaService.ts
+@@ -48,11 +48,30 @@
+     return `${protocol}//${host}`
+   }
+ 
+-  static async saveLiveSnapshot(metadata?: RecognitionMetadata): Promise<AndroidStoredImage> {
++  static async saveLiveSnapshot(metadata?: RecognitionMetadata | Record<string, unknown>): Promise<AndroidStoredImage> {
+     const response = await fetch(`${this.baseUrl()}/api/media/snapshot`, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+       body: metadata ? JSON.stringify(metadata) : '{}'
++    })
++    const body = await response.json().catch(() => ({}))
++    if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`)
++    const saved = body as AndroidStoredImage
++    window.dispatchEvent(new CustomEvent('taf-android-media-saved', { detail: saved }))
++    return saved
++  }
++
++
++  static async savePrecisionSnapshot(
++    metadata: Record<string, unknown>,
++    fileName: string,
++    source: 'pstart-documentation' | 'pstart-reference'
++  ): Promise<AndroidStoredImage> {
++    const params = new URLSearchParams({ library: 'recognition', source, name: fileName })
++    const response = await fetch(`${this.baseUrl()}/api/media/snapshot?${params.toString()}`, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify(metadata)
+     })
+     const body = await response.json().catch(() => ({}))
+     if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`)
+--- a/webui/src/services/PrecisionStartMetadataService.ts
++++ b/webui/src/services/PrecisionStartMetadataService.ts
+@@ -0,0 +1,111 @@
++import { FRONTEND_VERSION } from '../version'
++import { useCameraStore } from '../stores/useCameraStore'
++import { useDroneStore } from '../stores/useDroneStore'
++
++export type PStartImageRole = 'PSTART_DOCUMENTATION' | 'PSTART_REFERENCE'
++export type PStartZoomRole = 'ZERO' | 'MAX'
++
++export type PStartCaptureContext = {
++  sessionId: string
++  stepId: string
++  referenceIndex: number
++  targetHeight: number | null
++  startVerticalDistance: number
++  startLatitude: number
++  startLongitude: number
++  startHeading: number
++  hoverHeight: number
++  imageRole: PStartImageRole
++  referenceEligible: boolean
++  referenceReason?: string
++  zoomRole: PStartZoomRole
++}
++
++const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
++
++export class PrecisionStartMetadataService {
++  static build(context: PStartCaptureContext): Record<string, unknown> {
++    const drone = useDroneStore()
++    const camera = useCameraStore()
++    const now = Date.now()
++    const relativeHeight = Number(drone.telemetry.verticalDistance || 0) - Number(context.startVerticalDistance || 0)
++    const homeOffset = this.distanceMeters(context.startLatitude, context.startLongitude, Number(drone.telemetry.latitude || 0), Number(drone.telemetry.longitude || 0))
++
++    return {
++      schemaVersion: 1,
++      source: 'PSTART',
++      capture: {
++        timestampUnixMs: now,
++        timestampIso: new Date(now).toISOString(),
++      },
++      pstart: {
++        schema: 'PotensicProxy/PStart',
++        schemaVersion: '1.0',
++        sessionId: context.sessionId,
++        stepId: context.stepId,
++        referenceIndex: context.referenceIndex,
++        targetHeight: context.targetHeight,
++        startVerticalDistance: context.startVerticalDistance,
++        startLatitude: context.startLatitude,
++        startLongitude: context.startLongitude,
++        startHeading: context.startHeading,
++        hoverHeight: context.hoverHeight,
++        relativeHeight,
++        homeOffset,
++        imageRole: context.imageRole,
++        referenceEligible: context.referenceEligible,
++        referenceReason: context.referenceReason || '',
++        zoomRole: context.zoomRole,
++      },
++      telemetry: clone(drone.telemetry),
++      camera: {
++        videoResolutionIndex: camera.videoResolutionIndex,
++        photoResolutionIndex: camera.photoResolutionIndex,
++        videoEv: camera.videoEv,
++        photoEv: camera.photoEv,
++        zoomTarget: camera.zoomTarget,
++        zoomActual: camera.zoomActual,
++        zoomMax: camera.zoomMax,
++        zoomMaxSource: camera.zoomMaxSource,
++        manualMode: clone(camera.manualMode),
++        sd: clone(camera.sd),
++      },
++      controls: {
++        requested: clone(drone.userJoysticks),
++        rcHardware: clone(drone.rcHardwareJoysticks),
++        telemetryRc: {
++          throttle: drone.telemetry.rcThrottle,
++          yaw: drone.telemetry.rcYaw,
++          pitch: drone.telemetry.rcPitch,
++          roll: drone.telemetry.rcRoll,
++        },
++        gimbal: {
++          pitch: drone.telemetry.gimbalPitch,
++          roll: drone.telemetry.gimbalRoll,
++          yaw: drone.telemetry.gimbalYaw,
++          controlPitch: drone.telemetry.gimbalControlPitch,
++          pitchSpeed: drone.telemetry.gimbalPitchSpeedActual,
++          rollSpeed: drone.telemetry.gimbalRollSpeed,
++          yawSpeed: drone.telemetry.gimbalYawSpeed,
++        },
++      },
++      connection: clone(drone.connection),
++      app: {
++        version: FRONTEND_VERSION,
++        metadataSchema: 1,
++      },
++    }
++  }
++
++  private static distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number | null {
++    if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return null
++    if ((lat1 === 0 && lon1 === 0) || (lat2 === 0 && lon2 === 0)) return null
++    const rad = Math.PI / 180
++    const p1 = lat1 * rad
++    const p2 = lat2 * rad
++    const dLat = (lat2 - lat1) * rad
++    const dLon = (lon2 - lon1) * rad
++    const a = Math.sin(dLat / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dLon / 2) ** 2
++    return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
++  }
++}
+--- a/webui/src/services/PrecisionStartService.ts
++++ b/webui/src/services/PrecisionStartService.ts
+@@ -0,0 +1,547 @@
++import { AndroidMediaService } from './AndroidMediaService'
++import { CameraMediaService } from './CameraMediaService'
++import { DroneControlService } from './DroneControlService'
++import { PrecisionStartMetadataService, type PStartImageRole } from './PrecisionStartMetadataService'
++import { useDroneStore } from '../stores/useDroneStore'
++import { useCameraStore } from '../stores/useCameraStore'
++import { usePrecisionStartStore } from '../stores/usePrecisionStartStore'
++import { usePrecisionStartSettings } from '../composables/usePrecisionStartSettings'
++
++const STEP0_TIMEOUT_MS = 10_000
++const STEP0_STABLE_MS = 1_000
++const TAKEOFF_HOVER_TIMEOUT_MS = 20_000
++const ASCENT_TIMEOUT_MS = 45_000
++const GIMBAL_ATTEMPT_TIMEOUT_MS = 2_500
++const ZOOM_TIMEOUT_MS = 3_000
++const CONTROL_INTERVAL_MS = 80
++const MANUAL_RC_THRESHOLD = 120
++const GIMBAL_TOLERANCE_DEG = 2
++const HOVER_VERTICAL_SPEED_MPS = 0.25
++const HOVER_STABLE_MS = 1_000
++const TARGET_TOLERANCE_M = 0.05
++const FIRST_REFERENCE_OFFSET_M = 0.10
++
++const sleep = (ms: number) => new Promise<void>(resolve => window.setTimeout(resolve, ms))
++
++export class PrecisionStartService {
++  private static runId = 0
++  private static axisTimer: ReturnType<typeof setInterval> | null = null
++  private static autoThrottle = 0
++  private static aborting = false
++  private static fallbackActive = false
++
++  static isActive(): boolean {
++    return usePrecisionStartStore().state.active
++  }
++
++  static async toggle() {
++    if (this.isActive()) {
++      this.abort('Benutzerabbruch über PStart-Taste', 'manual')
++      return
++    }
++    await this.start()
++  }
++
++  static notifyManualControl(source: string) {
++    if (this.fallbackActive) {
++      this.fallbackActive = false
++      this.stopAutomaticAxes(true)
++      useDroneStore().addLog('WARN', `[PStart fallback] stopped by manual control (${source}); hover/pilot control restored`)
++      return
++    }
++    if (!this.isActive()) return
++    this.abort(`manueller Steuereingriff (${source})`, 'manual')
++  }
++
++  static abort(reason: string, kind: 'manual' | 'error' = 'error') {
++    if (this.aborting) return
++    const pstart = usePrecisionStartStore()
++    const drone = useDroneStore()
++    if (!pstart.state.active && pstart.state.phase !== 'TAKEOFF' && pstart.state.phase !== 'WAIT_HOVER' && pstart.state.phase !== 'ASCEND' && pstart.state.phase !== 'GIMBAL' && pstart.state.phase !== 'STABILIZE' && pstart.state.phase !== 'CAPTURE') return
++
++    this.aborting = true
++    const previousPhase = pstart.state.phase
++    this.runId += 1
++    this.stopAutomaticAxes(true)
++    CameraMediaService.setZoom(1)
++    pstart.abort(reason)
++    drone.addLog(
++      kind === 'manual' ? 'WARN' : 'ERROR',
++      `[PStart] aborted: reason=${reason}; phase=${previousPhase}; ` +
++      `height=${this.relativeHeight(pstart.state.startVerticalDistance).toFixed(2)}m; ` +
++      `target=${pstart.state.currentTargetHeight ?? 'n/a'}m; ` +
++      `gps=${drone.telemetry.latitude.toFixed(7)},${drone.telemetry.longitude.toFixed(7)}; ` +
++      `vSpeed=${drone.telemetry.verticalSpeed.toFixed(2)}m/s`
++    )
++    window.setTimeout(() => { this.aborting = false }, 0)
++  }
++
++  private static async start() {
++    const pstart = usePrecisionStartStore()
++    const drone = useDroneStore()
++    const id = ++this.runId
++    const sessionId = this.makeSessionId()
++    pstart.begin(sessionId)
++    drone.addLog('INFO', `[PStart] session=${sessionId} started; step0 timeout=${STEP0_TIMEOUT_MS / 1000}s`)
++
++    // PStart starts from neutral user axes and never injects pitch/roll/yaw in V1.
++    drone.userJoysticks.throttle = 0
++    drone.userJoysticks.yaw = 0
++    drone.userJoysticks.pitch = 0
++    drone.userJoysticks.roll = 0
++    DroneControlService.sendJoysticks()
++
++    try {
++      const ready = await this.waitForStep0Prerequisites(id)
++      if (!ready || !this.isCurrent(id)) return
++
++      pstart.state.startVerticalDistance = Number(drone.telemetry.verticalDistance || 0)
++      pstart.state.startLatitude = Number(drone.telemetry.latitude || 0)
++      pstart.state.startLongitude = Number(drone.telemetry.longitude || 0)
++      pstart.state.startHeading = Number(drone.telemetry.heading || 0)
++      pstart.state.phase = 'STEP0_DOCUMENT'
++      pstart.state.status = 'Schritt 0: Voraussetzungen erfüllt - Dokumentationsbilder werden erstellt.'
++
++      if (!await this.ensureGimbalMinus90(id, false)) return
++      await this.capturePair(id, {
++        stepId: 'STEP0',
++        referenceIndex: -1,
++        targetHeight: null,
++        imageRole: 'PSTART_DOCUMENTATION',
++        referenceEligible: false,
++        referenceReason: 'step0_not_optically_suitable',
++      })
++      if (!this.isCurrent(id)) return
++
++      pstart.state.phase = 'TAKEOFF'
++      pstart.state.stepId = 'TAKEOFF'
++      pstart.state.status = 'Schritt 1: normaler Start - kein Precision-Regeleingriff.'
++      drone.addLog('INFO', '[PStart] Step 1: executing existing normal takeoff command without pitch/roll/yaw intervention')
++      DroneControlService.takeoff()
++
++      const hoverHeight = await this.waitForStableHover(id)
++      if (hoverHeight == null || !this.isCurrent(id)) return
++      pstart.state.hoverHeight = hoverHeight
++      drone.addLog('INFO', `[PStart] stable hover height=${hoverHeight.toFixed(2)}m (relative to PStart zero)`)
++
++      const { endHeight, heightStep } = usePrecisionStartSettings()
++      const end = Math.max(1, Number(endHeight.value) || 20)
++      const step = Math.max(0.5, Number(heightStep.value) || 5)
++      const firstReference = this.roundHeight(hoverHeight + FIRST_REFERENCE_OFFSET_M)
++
++      if (firstReference > end + TARGET_TOLERANCE_M) {
++        this.abort(`Endhöhe ${end.toFixed(1)} m liegt unter dem ersten Referenzpunkt ${firstReference.toFixed(1)} m`)
++        return
++      }
++
++      const targets = this.buildTargets(firstReference, step, end)
++      drone.addLog('INFO', `[PStart] reference targets=${targets.map(v => v.toFixed(2)).join(' -> ')}m`)
++
++      for (let index = 0; index < targets.length; index++) {
++        if (!this.isCurrent(id)) return
++        const target = targets[index]
++        pstart.state.referenceIndex = index
++        pstart.state.stepId = `REF_${index}`
++        pstart.state.currentTargetHeight = target
++
++        if (!await this.ascendTo(id, target)) return
++        if (!this.isCurrent(id)) return
++
++        if (!await this.ensureGimbalMinus90(id, true)) return
++        if (!this.isCurrent(id)) return
++
++        const stabilizationMs = Math.max(0, Number(usePrecisionStartSettings().stabilizationSeconds.value) || 0) * 1000
++        pstart.state.phase = 'STABILIZE'
++        pstart.state.status = `Referenz ${index + 1}: Stabilisierung bei ${target.toFixed(1)} m.`
++        if (!await this.delayWithAbortCheck(id, stabilizationMs)) return
++
++        // Final angle check directly before the two pictures. A drift triggers the second-preset logic again.
++        if (!this.gimbalIsReady()) {
++          if (!await this.ensureGimbalMinus90(id, true)) return
++        }
++
++        await this.capturePair(id, {
++          stepId: `REF_${index}`,
++          referenceIndex: index,
++          targetHeight: target,
++          imageRole: 'PSTART_REFERENCE',
++          referenceEligible: true,
++        })
++      }
++
++      if (!this.isCurrent(id)) return
++      this.stopAutomaticAxes(true)
++      CameraMediaService.setZoom(1)
++      pstart.finish(`PStart abgeschlossen: ${pstart.state.capturedImages} Bilder dokumentiert. Drohne schwebt auf Endhöhe.`)
++      drone.addLog('INFO', `[PStart] completed session=${sessionId}; images=${pstart.state.capturedImages}; finalHeight=${this.relativeHeight(pstart.state.startVerticalDistance).toFixed(2)}m`)
++    } catch (error: any) {
++      if (this.isCurrent(id)) this.abort(error?.message || String(error))
++    }
++  }
++
++  private static async waitForStep0Prerequisites(id: number): Promise<boolean> {
++    const pstart = usePrecisionStartStore()
++    const drone = useDroneStore()
++    const camera = useCameraStore()
++    const deadline = Date.now() + STEP0_TIMEOUT_MS
++    let stableSince = 0
++    let lastReasons: string[] = []
++
++    if (!drone.telemetry.gimbalSettingsValid) DroneControlService.requestGimbalSettings()
++    if (!camera.initialization.ready) DroneControlService.initLiveView()
++
++    while (Date.now() < deadline) {
++      if (!this.isCurrent(id)) return false
++      lastReasons = this.prerequisiteFailures()
++      if (lastReasons.length === 0) {
++        if (!stableSince) stableSince = Date.now()
++        const stableFor = Date.now() - stableSince
++        pstart.state.status = `Schritt 0: Voraussetzungen OK - Stabilität ${(stableFor / 1000).toFixed(1)}/${(STEP0_STABLE_MS / 1000).toFixed(1)} s.`
++        if (stableFor >= STEP0_STABLE_MS) return true
++      } else {
++        stableSince = 0
++        pstart.state.status = `Schritt 0: ${lastReasons.join('; ')}`
++        if (!drone.telemetry.gimbalSettingsValid) DroneControlService.requestGimbalSettings()
++      }
++      await sleep(100)
++    }
++
++    const reason = lastReasons.length ? lastReasons.join('; ') : 'Voraussetzungen innerhalb von 10 s nicht stabil'
++    this.abort(`Schritt 0 Timeout: ${reason}`)
++    return false
++  }
++
++  private static prerequisiteFailures(): string[] {
++    const drone = useDroneStore()
++    const camera = useCameraStore()
++    const t = drone.telemetry
++    const failures: string[] = []
++    const rxFresh = !!drone.connection.lastRxTimestamp && Date.now() - Number(drone.connection.lastRxTimestamp) < 2500
++
++    if (!drone.connection.usbConnected) failures.push('Drohnenverbindung fehlt')
++    if (!t.remoterConnected) failures.push('Fernsteuerung nicht verbunden')
++    if (!rxFresh) failures.push('Telemetrie nicht aktuell')
++    if (!t.receiveGps || !t.gpsLocationValid || t.gpsInterference || !Number.isFinite(t.latitude) || !Number.isFinite(t.longitude) || (t.latitude === 0 && t.longitude === 0)) failures.push('GPS nicht stabil')
++    if (!camera.initialization.ready || !drone.connection.videoStreaming) failures.push('Kamera/Livebild nicht bereit')
++    if (!t.gimbalSettingsValid || !t.gimbalStateValid || t.gimbalNotReady || Number(t.gimbalErrorStatus || 0) !== 0) failures.push('Gimbal nicht bereit')
++    if (t.battery <= 0 || t.lowPowerMode) failures.push('Akku nicht ausreichend')
++    if (t.needCalibration || t.geomagneticFault || t.emergencyStop || t.flightInNoFlyZone || t.restrictedZone) failures.push('kritischer Flug-/Sensorstatus')
++    if (t.flying || t.takingOff || t.landing) failures.push('Drohne nicht am Boden/startbereit')
++    if (this.hardwareManualInputActive()) failures.push('Steuerknüppel nicht in Neutralstellung')
++    return failures
++  }
++
++  private static async waitForStableHover(id: number): Promise<number | null> {
++    const pstart = usePrecisionStartStore()
++    const drone = useDroneStore()
++    const deadline = Date.now() + TAKEOFF_HOVER_TIMEOUT_MS
++    let stableSince = 0
++
++    pstart.state.phase = 'WAIT_HOVER'
++    pstart.state.status = 'Normaler Start läuft - warte auf stabilen Schwebeflug.'
++
++    while (Date.now() < deadline) {
++      if (!this.isCurrent(id)) return null
++      if (this.hardwareManualInputActive()) {
++        this.abort('manueller Steuereingriff während des normalen Starts', 'manual')
++        return null
++      }
++      const t = drone.telemetry
++      const stable = !!t.flying && !t.takingOff && !t.landing && Math.abs(Number(t.verticalSpeed || 0)) <= HOVER_VERTICAL_SPEED_MPS
++      if (stable) {
++        if (!stableSince) stableSince = Date.now()
++        if (Date.now() - stableSince >= HOVER_STABLE_MS) return this.relativeHeight(pstart.state.startVerticalDistance)
++      } else {
++        stableSince = 0
++      }
++      await sleep(100)
++    }
++
++    this.abort('Normaler Start: stabiler Schwebeflug nicht innerhalb von 20 s erkannt')
++    return null
++  }
++
++  private static buildTargets(firstReference: number, step: number, end: number): number[] {
++    const targets: number[] = [Math.min(firstReference, end)]
++    let grid = (Math.floor(firstReference / step) + 1) * step
++    while (grid < end - TARGET_TOLERANCE_M) {
++      if (grid > firstReference + TARGET_TOLERANCE_M) targets.push(this.roundHeight(grid))
++      grid += step
++    }
++    if (end > targets[targets.length - 1] + TARGET_TOLERANCE_M) targets.push(this.roundHeight(end))
++    return targets
++  }
++
++  private static async ascendTo(id: number, target: number): Promise<boolean> {
++    const pstart = usePrecisionStartStore()
++    const drone = useDroneStore()
++    const current = this.relativeHeight(pstart.state.startVerticalDistance)
++    if (target <= current + TARGET_TOLERANCE_M) {
++      // Never descend. If telemetry already passed the target, continue with the next stage at current altitude.
++      drone.addLog('WARN', `[PStart] target ${target.toFixed(2)}m already reached/passed at ${current.toFixed(2)}m; no descent commanded`)
++      this.neutralThrottle()
++      return true
++    }
++
++    pstart.state.phase = 'ASCEND'
++    pstart.state.status = `Steige auf ${target.toFixed(1)} m - nur Throttle, kein Pitch/Roll/Yaw.`
++    const deadline = Date.now() + ASCENT_TIMEOUT_MS
++    this.startAutomaticAxes()
++
++    while (Date.now() < deadline) {
++      if (!this.isCurrent(id)) return false
++      if (this.hardwareManualInputActive()) {
++        this.abort('manueller Steuereingriff während des Aufstiegs', 'manual')
++        return false
++      }
++      const height = this.relativeHeight(pstart.state.startVerticalDistance)
++      const remaining = target - height
++      if (remaining <= TARGET_TOLERANCE_M) {
++        this.neutralThrottle()
++        drone.addLog('INFO', `[PStart] target ${target.toFixed(2)}m reached at ${height.toFixed(2)}m; throttle neutral`)
++        return true
++      }
++
++      // Vertical-only V1 control: softer throttle as the target approaches.
++      const throttle = remaining > 1.0 ? 260 : remaining > 0.35 ? 160 : 90
++      this.setAutoThrottle(throttle)
++      await sleep(80)
++    }
++
++    this.neutralThrottle()
++    this.abort(`Zielhöhe ${target.toFixed(1)} m konnte nicht innerhalb von 45 s erreicht werden`)
++    return false
++  }
++
++  private static async ensureGimbalMinus90(id: number, airborne: boolean): Promise<boolean> {
++    const pstart = usePrecisionStartStore()
++    const drone = useDroneStore()
++    pstart.state.phase = 'GIMBAL'
++    pstart.state.status = 'Gimbal wird über Preset auf -90° gestellt.'
++
++    for (let attempt = 1; attempt <= 2; attempt++) {
++      if (!this.isCurrent(id)) return false
++      const sent = DroneControlService.setGimbalPitchPreset(-90)
++      if (!sent) DroneControlService.requestGimbalSettings()
++      const deadline = Date.now() + GIMBAL_ATTEMPT_TIMEOUT_MS
++      while (Date.now() < deadline) {
++        if (!this.isCurrent(id)) return false
++        if (airborne && this.hardwareManualInputActive()) {
++          this.abort('manueller Steuereingriff während der Gimbal-Ausrichtung', 'manual')
++          return false
++        }
++        if (this.gimbalIsReady()) {
++          drone.addLog('INFO', `[PStart] gimbal -90° confirmed on attempt ${attempt}: ${Number(drone.telemetry.gimbalPitch || 0).toFixed(1)}°`)
++          return true
++        }
++        await sleep(100)
++      }
++      drone.addLog('WARN', `[PStart] gimbal -90° not confirmed after preset attempt ${attempt}/2`)
++    }
++
++    const reason = 'Gimbal -90° nach 2 Preset-Versuchen nicht erreicht'
++    this.abort(reason)
++    if (airborne) void this.continueToEndHeightAfterGimbalFailure(reason)
++    return false
++  }
++
++  private static gimbalIsReady(): boolean {
++    const t = useDroneStore().telemetry
++    return !!t.gimbalStateValid && !t.gimbalNotReady && Number(t.gimbalErrorStatus || 0) === 0 && Math.abs(Number(t.gimbalPitch || 0) + 90) <= GIMBAL_TOLERANCE_DEG
++  }
++
++  private static async capturePair(
++    id: number,
++    context: {
++      stepId: string
++      referenceIndex: number
++      targetHeight: number | null
++      imageRole: PStartImageRole
++      referenceEligible: boolean
++      referenceReason?: string
++    },
++  ) {
++    const pstart = usePrecisionStartStore()
++    const camera = useCameraStore()
++    const drone = useDroneStore()
++    pstart.state.phase = 'CAPTURE'
++    pstart.state.stepId = context.stepId
++
++    await this.setZoomAndWait(id, 1)
++    if (!this.isCurrent(id)) return
++    pstart.state.status = `${context.stepId}: Bild 1/2 ohne Zoom wird dokumentiert.`
++    await this.captureOne(id, context, 'ZERO')
++
++    const maxZoom = Math.max(1, Number(camera.zoomMax || 1))
++    await this.setZoomAndWait(id, maxZoom)
++    if (!this.isCurrent(id)) return
++    pstart.state.status = `${context.stepId}: Bild 2/2 mit maximalem Zoom wird dokumentiert.`
++    await this.captureOne(id, context, 'MAX')
++
++    // Keep the pilot/live view wide between stages.
++    CameraMediaService.setZoom(1)
++    drone.addLog('INFO', `[PStart] ${context.stepId} image pair completed (1.00x + ${maxZoom.toFixed(2)}x)`)
++  }
++
++  private static async captureOne(
++    id: number,
++    context: {
++      stepId: string
++      referenceIndex: number
++      targetHeight: number | null
++      imageRole: PStartImageRole
++      referenceEligible: boolean
++      referenceReason?: string
++    },
++    zoomRole: 'ZERO' | 'MAX',
++  ) {
++    if (!this.isCurrent(id)) return
++    const pstart = usePrecisionStartStore()
++    const metadata = PrecisionStartMetadataService.build({
++      sessionId: pstart.state.sessionId,
++      stepId: context.stepId,
++      referenceIndex: context.referenceIndex,
++      targetHeight: context.targetHeight,
++      startVerticalDistance: pstart.state.startVerticalDistance,
++      startLatitude: pstart.state.startLatitude,
++      startLongitude: pstart.state.startLongitude,
++      startHeading: pstart.state.startHeading,
++      hoverHeight: pstart.state.hoverHeight,
++      imageRole: context.imageRole,
++      referenceEligible: context.referenceEligible,
++      referenceReason: context.referenceReason,
++      zoomRole,
++    })
++    const heightLabel = context.targetHeight == null ? 'step0' : `${context.targetHeight.toFixed(1).replace('.', 'p')}m`
++    const name = `PStart_${pstart.state.sessionId}_${context.stepId}_${heightLabel}_${zoomRole.toLowerCase()}.jpg`
++    const source = context.referenceEligible ? 'pstart-reference' : 'pstart-documentation'
++    const saved = await AndroidMediaService.savePrecisionSnapshot(metadata, name, source)
++    if (!this.isCurrent(id)) return
++    pstart.state.capturedImages += 1
++    useDroneStore().addLog('INFO', `[PStart] image saved: ${saved.relativePath}/${saved.name}; verified=${saved.verified === true}`)
++  }
++
++  private static async setZoomAndWait(id: number, zoom: number) {
++    const camera = useCameraStore()
++    CameraMediaService.setZoom(zoom)
++    const deadline = Date.now() + ZOOM_TIMEOUT_MS
++    while (Date.now() < deadline) {
++      if (!this.isCurrent(id)) return
++      const actual = Number(camera.zoomActual ?? camera.zoomTarget)
++      if (!camera.zoomPending && Math.abs(actual - zoom) <= 0.05) return
++      await sleep(80)
++    }
++    throw new Error(`Kamerazoom ${zoom.toFixed(2)}x wurde nicht bestätigt`)
++  }
++
++  private static async continueToEndHeightAfterGimbalFailure(reason: string) {
++    const pstart = usePrecisionStartStore()
++    const drone = useDroneStore()
++    const end = Math.max(1, Number(usePrecisionStartSettings().endHeight.value) || 20)
++    const startOffset = pstart.state.startVerticalDistance
++    const current = this.relativeHeight(startOffset)
++    if (!drone.telemetry.flying || end <= current + TARGET_TOLERANCE_M) return
++
++    drone.addLog('WARN', `[PStart fallback] ${reason}; continuing vertically to configured end height ${end.toFixed(1)}m without PStart/reference capture`)
++    this.fallbackActive = true
++    const deadline = Date.now() + ASCENT_TIMEOUT_MS
++    this.startAutomaticAxes()
++    while (Date.now() < deadline && drone.telemetry.flying) {
++      if (this.hardwareManualInputActive()) {
++        this.fallbackActive = false
++        this.stopAutomaticAxes(true)
++        drone.addLog('WARN', '[PStart fallback] manual RC input detected; fallback climb stopped and hover/pilot control restored')
++        return
++      }
++      const height = this.relativeHeight(startOffset)
++      const remaining = end - height
++      if (remaining <= TARGET_TOLERANCE_M) {
++        this.fallbackActive = false
++        this.stopAutomaticAxes(true)
++        drone.addLog('INFO', `[PStart fallback] configured flight height ${end.toFixed(1)}m reached; throttle neutral`)
++        return
++      }
++      this.setAutoThrottle(remaining > 1 ? 260 : 120)
++      await sleep(80)
++    }
++    this.fallbackActive = false
++    this.stopAutomaticAxes(true)
++  }
++
++  private static hardwareManualInputActive(): boolean {
++    const rc = useDroneStore().rcHardwareJoysticks
++    return [rc.throttle, rc.yaw, rc.pitch, rc.roll].some(value => Math.abs(Number(value || 0)) > MANUAL_RC_THRESHOLD)
++  }
++
++  private static relativeHeight(startVerticalDistance: number): number {
++    return Number(useDroneStore().telemetry.verticalDistance || 0) - Number(startVerticalDistance || 0)
++  }
++
++  private static roundHeight(value: number): number {
++    return Math.round(value * 100) / 100
++  }
++
++  private static startAutomaticAxes() {
++    if (this.axisTimer) return
++    this.axisTimer = setInterval(() => {
++      const drone = useDroneStore()
++      drone.userJoysticks.throttle = this.autoThrottle
++      drone.userJoysticks.yaw = 0
++      drone.userJoysticks.pitch = 0
++      drone.userJoysticks.roll = 0
++      DroneControlService.sendJoysticks()
++    }, CONTROL_INTERVAL_MS)
++  }
++
++  private static setAutoThrottle(value: number) {
++    this.autoThrottle = Math.max(-1000, Math.min(1000, Math.round(value)))
++    const drone = useDroneStore()
++    drone.userJoysticks.throttle = this.autoThrottle
++    drone.userJoysticks.yaw = 0
++    drone.userJoysticks.pitch = 0
++    drone.userJoysticks.roll = 0
++    DroneControlService.sendJoysticks()
++  }
++
++  private static neutralThrottle() {
++    this.autoThrottle = 0
++    const drone = useDroneStore()
++    drone.userJoysticks.throttle = 0
++    drone.userJoysticks.yaw = 0
++    drone.userJoysticks.pitch = 0
++    drone.userJoysticks.roll = 0
++    DroneControlService.sendJoysticks()
++  }
++
++  private static stopAutomaticAxes(sendNeutral: boolean) {
++    if (this.axisTimer) {
++      clearInterval(this.axisTimer)
++      this.axisTimer = null
++    }
++    this.autoThrottle = 0
++    if (sendNeutral) this.neutralThrottle()
++  }
++
++  private static async delayWithAbortCheck(id: number, ms: number): Promise<boolean> {
++    const deadline = Date.now() + ms
++    while (Date.now() < deadline) {
++      if (!this.isCurrent(id)) return false
++      if (this.hardwareManualInputActive()) {
++        this.abort('manueller Steuereingriff während der Stabilisierung', 'manual')
++        return false
++      }
++      await sleep(Math.min(100, Math.max(1, deadline - Date.now())))
++    }
++    return this.isCurrent(id)
++  }
++
++  private static isCurrent(id: number): boolean {
++    return id === this.runId && usePrecisionStartStore().state.active
++  }
++
++  private static makeSessionId(): string {
++    const d = new Date()
++    const pad = (n: number, width = 2) => String(n).padStart(width, '0')
++    return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}_${pad(d.getMilliseconds(), 3)}`
++  }
++}
+--- a/webui/src/stores/useDebugStore.ts
++++ b/webui/src/stores/useDebugStore.ts
+@@ -15,7 +15,7 @@
+ 
+ export const useDebugStore = defineStore('debug', () => {
+   // Active sub-tab in Debug View
+-  const activeSubTab = ref<'flight' | 'camera' | 'fpv' | 'rf' | 'sensor' | 'rid' | 'relay' | 'logs'>('flight')
++  const activeSubTab = ref<'flight' | 'pstart' | 'camera' | 'fpv' | 'rf' | 'sensor' | 'rid' | 'relay' | 'logs'>('flight')
+ 
+   // 1. Camera Interactive Debug Console
+   const terminalLogs = ref<CameraTerminalEntry[]>([])
+--- a/webui/src/stores/usePrecisionStartStore.ts
++++ b/webui/src/stores/usePrecisionStartStore.ts
+@@ -0,0 +1,73 @@
++import { defineStore } from 'pinia'
++import { computed, reactive } from 'vue'
++
++export type PrecisionStartPhase =
++  | 'IDLE'
++  | 'STEP0_CHECK'
++  | 'STEP0_DOCUMENT'
++  | 'TAKEOFF'
++  | 'WAIT_HOVER'
++  | 'ASCEND'
++  | 'GIMBAL'
++  | 'STABILIZE'
++  | 'CAPTURE'
++  | 'COMPLETE'
++  | 'ABORTED'
++
++export const usePrecisionStartStore = defineStore('precision-start', () => {
++  const state = reactive({
++    active: false,
++    phase: 'IDLE' as PrecisionStartPhase,
++    sessionId: '',
++    status: '',
++    abortReason: '',
++    startedAt: 0,
++    stepId: '',
++    startVerticalDistance: 0,
++    startLatitude: 0,
++    startLongitude: 0,
++    startHeading: 0,
++    hoverHeight: 0,
++    currentTargetHeight: null as number | null,
++    referenceIndex: -1,
++    capturedImages: 0,
++  })
++
++  const blinking = computed(() => state.active)
++
++  function begin(sessionId: string) {
++    state.active = true
++    state.phase = 'STEP0_CHECK'
++    state.sessionId = sessionId
++    state.status = 'Schritt 0: Voraussetzungen werden geprüft.'
++    state.abortReason = ''
++    state.startedAt = Date.now()
++    state.stepId = 'STEP0'
++    state.startVerticalDistance = 0
++    state.startLatitude = 0
++    state.startLongitude = 0
++    state.startHeading = 0
++    state.hoverHeight = 0
++    state.currentTargetHeight = null
++    state.referenceIndex = -1
++    state.capturedImages = 0
++  }
++
++  function finish(status: string) {
++    state.active = false
++    state.phase = 'COMPLETE'
++    state.status = status
++    state.abortReason = ''
++    state.currentTargetHeight = null
++  }
++
++  function abort(reason: string) {
++    state.active = false
++    state.phase = 'ABORTED'
++    state.abortReason = reason
++    state.status = `PStart abgebrochen: ${reason}`
++    state.currentTargetHeight = null
++  }
++
++  return { state, blinking, begin, finish, abort }
++})

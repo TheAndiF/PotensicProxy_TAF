@@ -90,6 +90,7 @@ import CameraMediaPanel from './CameraMediaPanel.vue'
 import TelemetryDetails from './TelemetryDetails.vue'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { DroneControlService } from '../../services/DroneControlService'
+import { PrecisionStartService } from '../../services/PrecisionStartService'
 import { useCockpitViewSettings } from '../../composables/useCockpitViewSettings'
 
 const store = useDroneStore()
@@ -141,11 +142,11 @@ function maybeStopAxisLoop() {
   // Send a neutral frame immediately after both sticks have been released.
   sendAxesNow()
 }
-function startLeftControl() { leftControlActive = true; ensureAxisLoop() }
+function startLeftControl() { PrecisionStartService.notifyManualControl('linker Steuerknüppel'); leftControlActive = true; ensureAxisLoop() }
 function stopLeftControl() { leftControlActive = false; maybeStopAxisLoop() }
-function startRightControl() { rightControlActive = true; ensureAxisLoop() }
+function startRightControl() { PrecisionStartService.notifyManualControl('rechter Steuerknüppel'); rightControlActive = true; ensureAxisLoop() }
 function stopRightControl() { rightControlActive = false; maybeStopAxisLoop() }
-function startLandingControl() { landingControlActive = true; ensureAxisLoop() }
+function startLandingControl() { PrecisionStartService.notifyManualControl('Landehilfe/Feinsteuerung'); landingControlActive = true; ensureAxisLoop() }
 function stopLandingControl() { landingControlActive = false; maybeStopAxisLoop() }
 function onLandingControlChange() { if (Date.now() - lastSend >= 80) sendAxesNow() }
 function onJoystickChange() { if (Date.now() - lastSend >= 80) sendAxesNow() }

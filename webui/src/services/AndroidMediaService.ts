@@ -48,11 +48,30 @@ export class AndroidMediaService {
     return `${protocol}//${host}`
   }
 
-  static async saveLiveSnapshot(metadata?: RecognitionMetadata): Promise<AndroidStoredImage> {
+  static async saveLiveSnapshot(metadata?: RecognitionMetadata | Record<string, unknown>): Promise<AndroidStoredImage> {
     const response = await fetch(`${this.baseUrl()}/api/media/snapshot`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: metadata ? JSON.stringify(metadata) : '{}'
+    })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`)
+    const saved = body as AndroidStoredImage
+    window.dispatchEvent(new CustomEvent('taf-android-media-saved', { detail: saved }))
+    return saved
+  }
+
+
+  static async savePrecisionSnapshot(
+    metadata: Record<string, unknown>,
+    fileName: string,
+    source: 'pstart-documentation' | 'pstart-reference'
+  ): Promise<AndroidStoredImage> {
+    const params = new URLSearchParams({ library: 'recognition', source, name: fileName })
+    const response = await fetch(`${this.baseUrl()}/api/media/snapshot?${params.toString()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(metadata)
     })
     const body = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`)

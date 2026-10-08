@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -12,6 +13,7 @@ import android.provider.MediaStore
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
@@ -64,6 +66,8 @@ class AndroidMediaRepository(
             ?.takeIf { it > 0L }
             ?: System.currentTimeMillis()
 
+        val finalizedBytes = finalizeImageBytes(bytes, mimeType, metadata, captureTime)
+
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Images.Media.MIME_TYPE, mimeType)
@@ -88,7 +92,7 @@ class AndroidMediaRepository(
             ?: throw IllegalStateException("Android MediaStore rejected image insert")
 
         try {
-            resolver.openOutputStream(uri, "w")?.use { it.write(bytes) }
+            resolver.openOutputStream(uri, "w")?.use { it.write(finalizedBytes) }
                 ?: throw IllegalStateException("Could not open Android MediaStore output stream")
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -102,22 +106,22 @@ class AndroidMediaRepository(
 
         // Verification is deliberately performed before callers are allowed to delete
         // a Drone Reco source file from the drone SD card.
-        val sourceHash = sha256(bytes)
+        val sourceHash = sha256(finalizedBytes)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        try { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds) } catch (_: Exception) {}
+        try { BitmapFactory.decodeByteArray(finalizedBytes, 0, finalizedBytes.size, bounds) } catch (_: Exception) {}
         val storedBytes = try {
             resolver.openInputStream(uri)?.use { it.readBytes() }
         } catch (_: Exception) {
             null
         }
         val storedHash = storedBytes?.let(::sha256)
-        val verified = storedBytes != null && storedBytes.size == bytes.size && storedHash == sourceHash
+        val verified = storedBytes != null && storedBytes.size == finalizedBytes.size && storedHash == sourceHash
 
         val item = JSONObject().apply {
             put("id", UUID.randomUUID().toString())
             put("name", displayName)
             put("mimeType", mimeType)
-            put("size", bytes.size)
+            put("size", finalizedBytes.size)
             put("source", source)
             put("library", normalizedLibrary)
             put("createdAt", System.currentTimeMillis())
@@ -130,13 +134,13 @@ class AndroidMediaRepository(
                 put("width", if (bounds.outWidth > 0) bounds.outWidth else JSONObject.NULL)
                 put("height", if (bounds.outHeight > 0) bounds.outHeight else JSONObject.NULL)
                 put("format", mimeType)
-                put("byteSize", bytes.size)
+                put("byteSize", finalizedBytes.size)
                 put("sha256", sourceHash)
             })
             if (metadata != null) put("metadata", metadata)
         }
         appendToIndex(item)
-        Log.i("[MediaStore] Saved ${bytes.size} bytes as $displayName [$normalizedLibrary/$source] verified=$verified -> $uri")
+        Log.i("[MediaStore] Saved ${finalizedBytes.size} bytes as $displayName [$normalizedLibrary/$source] verified=$verified metadataEmbedded=${metadata != null && mimeType == "image/jpeg"} -> $uri")
         return item
     }
 
@@ -276,6 +280,118 @@ class AndroidMediaRepository(
             else -> "$safe.jpg" to "image/jpeg"
         }
     }
+
+    private fun finalizeImageBytes(bytes: ByteArray, mimeType: String, metadata: JSONObject?, captureTime: Long): ByteArray {
+        if (mimeType != "image/jpeg" || metadata == null) return bytes
+        val temp = File(indexDir, "metadata_${UUID.randomUUID()}.jpg")
+        return try {
+            temp.writeBytes(bytes)
+            val exif = ExifInterface(temp.absolutePath)
+            val localTime = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date(captureTime))
+            exif.setAttribute(ExifInterface.TAG_DATETIME, localTime)
+            exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, localTime)
+            exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, localTime)
+            exif.setAttribute(ExifInterface.TAG_SOFTWARE, "PotensicProxy_TAF")
+            exif.setAttribute(ExifInterface.TAG_USER_COMMENT, "PotensicProxy metadata: full PStart/recognition payload stored in XMP")
+
+            val telemetry = metadata.optJSONObject("telemetry")
+            val latitude = telemetry?.optDouble("latitude", Double.NaN) ?: Double.NaN
+            val longitude = telemetry?.optDouble("longitude", Double.NaN) ?: Double.NaN
+            if (latitude.isFinite() && longitude.isFinite() && latitude in -90.0..90.0 && longitude in -180.0..180.0 && !(latitude == 0.0 && longitude == 0.0)) {
+                exif.setLatLong(latitude, longitude)
+            }
+            exif.saveAttributes()
+
+            val xmp = buildXmpPacket(metadata)
+            injectXmpApp1(temp.readBytes(), xmp)
+        } finally {
+            try { temp.delete() } catch (_: Exception) {}
+        }
+    }
+
+    private fun buildXmpPacket(metadata: JSONObject): String {
+        val pstart = metadata.optJSONObject("pstart")
+        val capture = metadata.optJSONObject("capture")
+        val telemetry = metadata.optJSONObject("telemetry")
+        fun text(value: Any?): String = xmlEscape(
+            when (value) {
+                null, JSONObject.NULL -> ""
+                else -> value.toString()
+            }
+        )
+        val payloadJson = text(metadata.toString())
+        return """<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="PotensicProxy_TAF">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about=""
+      xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+      xmlns:taf="https://potensicproxy.local/ns/pstart/1.0/">
+      <xmp:CreateDate>${text(capture?.opt("timestampIso"))}</xmp:CreateDate>
+      <taf:Schema>PotensicProxy/PStart</taf:Schema>
+      <taf:SchemaVersion>${text(pstart?.opt("schemaVersion"))}</taf:SchemaVersion>
+      <taf:SessionId>${text(pstart?.opt("sessionId"))}</taf:SessionId>
+      <taf:StepId>${text(pstart?.opt("stepId"))}</taf:StepId>
+      <taf:ReferenceIndex>${text(pstart?.opt("referenceIndex"))}</taf:ReferenceIndex>
+      <taf:TargetHeight>${text(pstart?.opt("targetHeight"))}</taf:TargetHeight>
+      <taf:RelativeHeight>${text(pstart?.opt("relativeHeight"))}</taf:RelativeHeight>
+      <taf:ImageRole>${text(pstart?.opt("imageRole"))}</taf:ImageRole>
+      <taf:ReferenceEligible>${text(pstart?.opt("referenceEligible"))}</taf:ReferenceEligible>
+      <taf:ZoomRole>${text(pstart?.opt("zoomRole"))}</taf:ZoomRole>
+      <taf:Latitude>${text(telemetry?.opt("latitude"))}</taf:Latitude>
+      <taf:Longitude>${text(telemetry?.opt("longitude"))}</taf:Longitude>
+      <taf:Heading>${text(telemetry?.opt("heading"))}</taf:Heading>
+      <taf:GimbalPitch>${text(telemetry?.opt("gimbalPitch"))}</taf:GimbalPitch>
+      <taf:HorizontalSpeed>${text(telemetry?.opt("horizontalSpeed"))}</taf:HorizontalSpeed>
+      <taf:VerticalSpeed>${text(telemetry?.opt("verticalSpeed"))}</taf:VerticalSpeed>
+      <taf:TofHeight>${text(telemetry?.opt("tofHeight"))}</taf:TofHeight>
+      <taf:PayloadJson>$payloadJson</taf:PayloadJson>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>"""
+    }
+
+    private fun injectXmpApp1(jpeg: ByteArray, xmp: String): ByteArray {
+        require(jpeg.size >= 4 && (jpeg[0].toInt() and 0xff) == 0xff && (jpeg[1].toInt() and 0xff) == 0xd8) {
+            "XMP embedding requires a valid JPEG"
+        }
+        val header = "http://ns.adobe.com/xap/1.0/\u0000".toByteArray(Charsets.UTF_8)
+        val xml = xmp.toByteArray(Charsets.UTF_8)
+        val payloadLength = header.size + xml.size
+        require(payloadLength + 2 <= 0xffff) { "XMP metadata exceeds the JPEG APP1 size limit" }
+
+        val segment = ByteArrayOutputStream(payloadLength + 4).apply {
+            write(0xff)
+            write(0xe1)
+            val length = payloadLength + 2
+            write((length ushr 8) and 0xff)
+            write(length and 0xff)
+            write(header)
+            write(xml)
+        }.toByteArray()
+
+        var insertAt = 2
+        while (insertAt + 4 <= jpeg.size && (jpeg[insertAt].toInt() and 0xff) == 0xff) {
+            val marker = jpeg[insertAt + 1].toInt() and 0xff
+            if (marker != 0xe0 && marker != 0xe1) break
+            val length = ((jpeg[insertAt + 2].toInt() and 0xff) shl 8) or (jpeg[insertAt + 3].toInt() and 0xff)
+            if (length < 2 || insertAt + 2 + length > jpeg.size) break
+            insertAt += 2 + length
+        }
+
+        return ByteArrayOutputStream(jpeg.size + segment.size).apply {
+            write(jpeg, 0, insertAt)
+            write(segment)
+            write(jpeg, insertAt, jpeg.size - insertAt)
+        }.toByteArray()
+    }
+
+    private fun xmlEscape(value: String): String = value
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&apos;")
 
     private fun sha256(bytes: ByteArray): String = MessageDigest
         .getInstance("SHA-256")
