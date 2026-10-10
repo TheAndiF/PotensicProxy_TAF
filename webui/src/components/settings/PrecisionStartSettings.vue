@@ -17,6 +17,14 @@
           <span>{{ t('pstart.stabilization') }}</span>
           <span class="input-unit"><input v-model.number="stabilizationSeconds" type="number" min="0" max="15" step="0.5" @change="normalize" /> s</span>
         </label>
+        <label>
+          <span>{{ t('pstart.positionWarning') }}</span>
+          <span class="input-unit"><input v-model.number="positionWarningMeters" type="number" min="0.5" max="50" step="0.5" @change="normalize" /> m</span>
+        </label>
+        <label>
+          <span>{{ t('pstart.positionAbort') }}</span>
+          <span class="input-unit"><input v-model.number="positionAbortMeters" type="number" min="1" max="100" step="0.5" @change="normalize" /> m</span>
+        </label>
       </div>
 
       <div class="rules-box">
@@ -24,8 +32,10 @@
         <ul>
           <li>{{ t('pstart.ruleNoLateral') }}</li>
           <li>{{ t('pstart.ruleFirstPoint') }}</li>
+          <li>{{ t('pstart.rulePositionTolerance') }}</li>
           <li>{{ t('pstart.ruleGrid') }}</li>
           <li>{{ t('pstart.ruleImages') }}</li>
+          <li>{{ t('pstart.ruleProtocol') }}</li>
           <li>{{ t('pstart.ruleStep0') }}</li>
         </ul>
       </div>
@@ -38,12 +48,14 @@ import { useI18n } from '../../i18n'
 import { usePrecisionStartSettings } from '../../composables/usePrecisionStartSettings'
 
 const { t } = useI18n()
-const { endHeight, heightStep, stabilizationSeconds } = usePrecisionStartSettings()
+const { endHeight, heightStep, stabilizationSeconds, positionWarningMeters, positionAbortMeters } = usePrecisionStartSettings()
 
 function normalize() {
   endHeight.value = Math.max(1, Math.min(120, Number(endHeight.value) || 20))
   heightStep.value = Math.max(0.5, Math.min(50, Number(heightStep.value) || 5))
   stabilizationSeconds.value = Math.max(0, Math.min(15, Number(stabilizationSeconds.value) || 2))
+  positionWarningMeters.value = Math.max(0.5, Math.min(50, Number(positionWarningMeters.value) || 3))
+  positionAbortMeters.value = Math.max(positionWarningMeters.value + 0.5, Math.min(100, Number(positionAbortMeters.value) || 6))
 }
 </script>
 

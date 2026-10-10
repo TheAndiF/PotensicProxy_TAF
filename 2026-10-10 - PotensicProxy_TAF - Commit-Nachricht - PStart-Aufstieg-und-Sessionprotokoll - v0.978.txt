@@ -1,0 +1,38 @@
+BL_Improve PStart ascent and session logging
+
+Date: 2026-10-10
+
+Summary:
+- Made the first PStart air-reference stage more robust by averaging the stable hover height, using a stronger close-range throttle command, accepting target crossing instead of exact decimetre locking, and settling vertical motion inside a tolerance band without commanding descent.
+- Added configurable horizontal GPS warning and abort radii. Position drift inside the warning radius no longer blocks height stages; the abort radius must be exceeded continuously for one second before aborting.
+- Added a 5 Hz per-session JSONL protocol with telemetry, PStart control commands, state transitions, image events, quality information, and explicit completion/abort status.
+- Store PStart images and the JSONL sidecar in a session-specific Pictures/PotensicProxy/Recognition/PStart_<SessionId> directory when Android scoped storage permits it.
+- Made the first STEP0 zero-zoom image the session master and embed the finalized gzip-compressed JSONL protocol in chunked JPEG APP15 segments. Master-image embedding is attempted independently so the protocol can still be preserved if Android rejects the JSONL sidecar.
+- Extended PStart image XMP metadata with stage, height error, GPS/position quality, configured tolerance limits, PStart throttle command, and session/master/protocol references.
+- Updated PStart settings, translations, application version to 0.978, and project documentation.
+
+Validation:
+- Vue/TypeScript check: passed with node node_modules/vue-tsc/bin/vue-tsc.js --noEmit.
+- Kotlin parser/syntax scan: no parser errors; Android/project symbols are unresolved without the Android Gradle classpath.
+- JPEG APP15 protocol container: tested with a real 1280x720 PStart JPEG; image remained decodable after embedding.
+- Full Vite bundle: environment blocked because the delivered node_modules lacks @rollup/rollup-linux-x64-gnu.
+- Android Gradle compile: environment blocked because the Gradle wrapper attempts to download Gradle 8.11.1 while network access is unavailable.
+- Flight/hardware validation remains required for throttle values, wind behaviour, GPS tolerance, and Android scoped-storage sidecar placement.
+
+Changed files:
+- app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- webui/package.json
+- webui/package-lock.json
+- webui/src/components/settings/PrecisionStartSettings.vue
+- webui/src/composables/usePrecisionStartSettings.ts
+- webui/src/i18n/index.ts
+- webui/src/services/AndroidMediaService.ts
+- webui/src/services/PrecisionStartMetadataService.ts
+- webui/src/services/PrecisionStartService.ts
+- DOCUMENTATION/2026-10-10 - PotensicProxy_TAF - Projektdokumentation - PStart-Aufstieg-und-Sessionprotokoll - v0.978.docx
+- DOCUMENTATION/2026-10-10 - PotensicProxy_TAF - Projektdokumentation - PStart-Aufstieg-und-Sessionprotokoll - v0.978.pdf
+- 2026-10-10 - PotensicProxy_TAF - Patch - PStart-Aufstieg-und-Sessionprotokoll - v0.978.patch
+- 2026-10-10 - PotensicProxy_TAF - Auslieferungshinweis - PStart-Aufstieg-und-Sessionprotokoll - v0.978.md
+- 2026-10-10 - PotensicProxy_TAF - Commit-Nachricht - PStart-Aufstieg-und-Sessionprotokoll - v0.978.txt

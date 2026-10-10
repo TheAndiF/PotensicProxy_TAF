@@ -4,6 +4,7 @@ import { useDroneStore } from '../stores/useDroneStore'
 
 export type PStartImageRole = 'PSTART_DOCUMENTATION' | 'PSTART_REFERENCE'
 export type PStartZoomRole = 'ZERO' | 'MAX'
+export type PStartQualityStatus = 'GOOD' | 'WARNING_POSITION' | 'WARNING_MOTION' | 'WARNING_POSITION_MOTION'
 
 export type PStartCaptureContext = {
   sessionId: string
@@ -19,6 +20,9 @@ export type PStartCaptureContext = {
   referenceEligible: boolean
   referenceReason?: string
   zoomRole: PStartZoomRole
+  positionWarningMeters: number
+  positionAbortMeters: number
+  pstartThrottleCommand: number
 }
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -29,10 +33,22 @@ export class PrecisionStartMetadataService {
     const camera = useCameraStore()
     const now = Date.now()
     const relativeHeight = Number(drone.telemetry.verticalDistance || 0) - Number(context.startVerticalDistance || 0)
-    const homeOffset = this.distanceMeters(context.startLatitude, context.startLongitude, Number(drone.telemetry.latitude || 0), Number(drone.telemetry.longitude || 0))
+    const homeOffset = this.homeOffsetMeters(context.startLatitude, context.startLongitude, Number(drone.telemetry.latitude || 0), Number(drone.telemetry.longitude || 0))
+    const horizontalSpeed = Math.abs(Number(drone.telemetry.horizontalSpeed || 0))
+    const verticalSpeed = Math.abs(Number(drone.telemetry.verticalSpeed || 0))
+    const positionWarning = homeOffset != null && homeOffset > context.positionWarningMeters
+    const motionWarning = horizontalSpeed > 1.0 || verticalSpeed > 0.35
+    const qualityStatus: PStartQualityStatus = positionWarning && motionWarning
+      ? 'WARNING_POSITION_MOTION'
+      : positionWarning
+        ? 'WARNING_POSITION'
+        : motionWarning ? 'WARNING_MOTION' : 'GOOD'
+    const sessionMaster = context.stepId === 'STEP0' && context.zoomRole === 'ZERO'
+    const sessionProtocolFile = `PStart_${context.sessionId}_session.jsonl`
+    const sessionMasterImage = `PStart_${context.sessionId}_STEP0_step0_zero.jpg`
 
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       source: 'PSTART',
       capture: {
         timestampUnixMs: now,
@@ -40,11 +56,13 @@ export class PrecisionStartMetadataService {
       },
       pstart: {
         schema: 'PotensicProxy/PStart',
-        schemaVersion: '1.0',
+        schemaVersion: '1.1',
         sessionId: context.sessionId,
         stepId: context.stepId,
+        stageId: context.stepId,
         referenceIndex: context.referenceIndex,
         targetHeight: context.targetHeight,
+        heightError: context.targetHeight == null ? null : relativeHeight - context.targetHeight,
         startVerticalDistance: context.startVerticalDistance,
         startLatitude: context.startLatitude,
         startLongitude: context.startLongitude,
@@ -52,10 +70,21 @@ export class PrecisionStartMetadataService {
         hoverHeight: context.hoverHeight,
         relativeHeight,
         homeOffset,
+        positionWarningMeters: context.positionWarningMeters,
+        positionAbortMeters: context.positionAbortMeters,
+        positionQuality: homeOffset == null ? 'UNKNOWN' : homeOffset > context.positionWarningMeters ? 'WARNING_POSITION' : 'GOOD',
+        qualityStatus,
+        gpsQuality: drone.telemetry.receiveGps && drone.telemetry.gpsLocationValid && !drone.telemetry.gpsInterference ? 'VALID' : 'INVALID',
         imageRole: context.imageRole,
         referenceEligible: context.referenceEligible,
         referenceReason: context.referenceReason || '',
         zoomRole: context.zoomRole,
+        pstartThrottleCommand: context.pstartThrottleCommand,
+        sessionMaster,
+        sessionMasterImage,
+        sessionProtocolFile,
+        sessionProtocolFormat: 'JSONL',
+        sessionProtocolEmbeddedInMaster: 'APP15_CHUNKED_GZIP_ON_FINALIZE',
       },
       telemetry: clone(drone.telemetry),
       camera: {
@@ -72,6 +101,12 @@ export class PrecisionStartMetadataService {
       },
       controls: {
         requested: clone(drone.userJoysticks),
+        pstart: {
+          throttleCommand: context.pstartThrottleCommand,
+          yawCommand: 0,
+          pitchCommand: 0,
+          rollCommand: 0,
+        },
         rcHardware: clone(drone.rcHardwareJoysticks),
         telemetryRc: {
           throttle: drone.telemetry.rcThrottle,
@@ -92,12 +127,12 @@ export class PrecisionStartMetadataService {
       connection: clone(drone.connection),
       app: {
         version: FRONTEND_VERSION,
-        metadataSchema: 1,
+        metadataSchema: 2,
       },
     }
   }
 
-  private static distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number | null {
+  static homeOffsetMeters(lat1: number, lon1: number, lat2: number, lon2: number): number | null {
     if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return null
     if ((lat1 === 0 && lon1 === 0) || (lat2 === 0 && lon2 === 0)) return null
     const rad = Math.PI / 180

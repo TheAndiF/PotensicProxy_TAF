@@ -20,6 +20,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import java.util.zip.GZIPOutputStream
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.roundToLong
@@ -44,6 +45,7 @@ class AndroidMediaRepository(
         private const val RECOGNITION_DIR = "Pictures/PotensicProxy/Recognition"
         private const val CAMERA_VIDEO_DIR = "Movies/PotensicProxy/Camera"
         private const val MAX_INDEX_ITEMS = 1000
+        private val PSTART_PROTOCOL_SIGNATURE = "POTENSIC_PSTART_PROTOCOL\u0000".toByteArray(Charsets.UTF_8)
     }
 
     private val indexDir = File(filesDir, "media").apply { mkdirs() }
@@ -56,12 +58,17 @@ class AndroidMediaRepository(
         source: String,
         library: String = "camera",
         metadata: JSONObject? = null,
+        sessionId: String? = null,
     ): JSONObject {
         require(bytes.isNotEmpty()) { "Image payload is empty" }
         ensureLegacyWritePermission()
 
         val normalizedLibrary = normalizeLibrary(library)
-        val relativeDir = relativeDir(normalizedLibrary)
+        val relativeDir = if (
+            normalizedLibrary == "recognition" &&
+            source.startsWith("pstart", ignoreCase = true) &&
+            !sessionId.isNullOrBlank()
+        ) pstartRelativeDir(sessionId) else relativeDir(normalizedLibrary)
         val (displayName, mimeType) = normalizedNameAndMime(requestedName, normalizedLibrary)
         val captureTime = metadata
             ?.optJSONObject("capture")
@@ -220,6 +227,147 @@ class AndroidMediaRepository(
         return item
     }
 
+
+
+    /**
+     * Publishes the finalized PStart JSONL protocol into the same public session
+     * directory as the PStart images. The protocol is verified after MediaStore
+     * write using byte count and SHA-256, just like image storage.
+     */
+    @Synchronized
+    fun savePStartSessionProtocol(
+        sessionId: String,
+        protocol: String,
+        requestedName: String? = null,
+    ): JSONObject {
+        require(sessionId.isNotBlank()) { "PStart session id is required" }
+        require(protocol.isNotEmpty()) { "PStart protocol is empty" }
+        ensureLegacyWritePermission()
+
+        val relativeDir = pstartRelativeDir(sessionId)
+        val rawName = requestedName
+            ?.substringAfterLast('/')
+            ?.substringAfterLast('\\')
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: "PStart_${sanitizeSessionId(sessionId)}_session.jsonl"
+        val safeBase = rawName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val displayName = if (safeBase.endsWith(".jsonl", ignoreCase = true)) safeBase else "$safeBase.jsonl"
+        val bytes = protocol.toByteArray(Charsets.UTF_8)
+        val mimeType = "application/x-ndjson"
+
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+            put(MediaStore.MediaColumns.DATE_ADDED, System.currentTimeMillis() / 1000L)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relativeDir)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            } else {
+                @Suppress("DEPRECATION")
+                val publicDir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                    relativeDir.removePrefix("Pictures/"),
+                ).apply { mkdirs() }
+                @Suppress("DEPRECATION")
+                put(MediaStore.MediaColumns.DATA, File(publicDir, displayName).absolutePath)
+            }
+        }
+
+        val resolver = context.contentResolver
+        val collection = MediaStore.Files.getContentUri("external")
+        val uri = resolver.insert(collection, values)
+            ?: throw IllegalStateException("Android MediaStore rejected PStart protocol insert")
+        try {
+            resolver.openOutputStream(uri, "w")?.use { it.write(bytes) }
+                ?: throw IllegalStateException("Could not open Android MediaStore protocol output stream")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val ready = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                resolver.update(uri, ready, null, null)
+            }
+        } catch (e: Exception) {
+            try { resolver.delete(uri, null, null) } catch (_: Exception) {}
+            throw e
+        }
+
+        val sourceHash = sha256(bytes)
+        val storedBytes = try { resolver.openInputStream(uri)?.use { it.readBytes() } } catch (_: Exception) { null }
+        val verified = storedBytes != null && storedBytes.size == bytes.size && sha256(storedBytes) == sourceHash
+        return JSONObject().apply {
+            put("name", displayName)
+            put("mimeType", mimeType)
+            put("size", bytes.size)
+            put("createdAt", System.currentTimeMillis())
+            put("uri", uri.toString())
+            put("relativePath", relativeDir)
+            put("sha256", sourceHash)
+            put("verified", verified)
+        }
+    }
+
+    /**
+     * Adds the complete finalized PStart protocol to the first STEP0 JPEG. The
+     * protocol is gzip-compressed and split over custom APP15 chunks so it is not
+     * limited by the single 64 KiB XMP APP1 segment size. JPEG decoders ignore
+     * these application segments and continue to display the image normally.
+     */
+    @Synchronized
+    fun embedPStartProtocolInImage(
+        imageId: String,
+        protocol: String,
+        protocolInfo: JSONObject,
+    ): JSONObject? {
+        if (imageId.isBlank() || protocol.isEmpty()) return null
+        val all = readIndex().toMutableList()
+        val index = all.indexOfLast { it.optString("id") == imageId }
+        if (index < 0) return null
+        val existing = all[index]
+        if (!existing.optString("mimeType", "image/jpeg").equals("image/jpeg", ignoreCase = true)) return null
+        val uriText = existing.optString("uri")
+        if (uriText.isBlank()) return null
+
+        val resolver = context.contentResolver
+        val uri = Uri.parse(uriText)
+        val original = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+        val clean = stripPStartProtocolApp15(original)
+        val protocolBytes = protocol.toByteArray(Charsets.UTF_8)
+        val descriptor = JSONObject(protocolInfo.toString()).apply {
+            put("containerSchema", "PotensicProxy/PStartProtocol-APP15")
+            put("containerVersion", 1)
+            put("format", "JSONL")
+            put("mimeType", "application/x-ndjson")
+            put("compression", "gzip")
+            put("rawBytes", protocolBytes.size)
+            put("rawSha256", sha256(protocolBytes))
+        }
+        val embedded = injectPStartProtocolApp15(clean, protocolBytes, descriptor)
+        val finalBytes = embedded.first
+        val chunkCount = embedded.second
+
+        resolver.openOutputStream(uri, "w")?.use { it.write(finalBytes) }
+            ?: throw IllegalStateException("Could not rewrite PStart master image")
+        val storedBytes = try { resolver.openInputStream(uri)?.use { it.readBytes() } } catch (_: Exception) { null }
+        val finalHash = sha256(finalBytes)
+        val verified = storedBytes != null && storedBytes.size == finalBytes.size && sha256(storedBytes) == finalHash
+
+        val updated = JSONObject(existing.toString()).apply {
+            put("size", finalBytes.size)
+            put("sha256", finalHash)
+            put("verified", verified)
+            put("protocolEmbedded", true)
+            put("protocolChunks", chunkCount)
+            put("protocol", descriptor)
+            optJSONObject("image")?.apply {
+                put("byteSize", finalBytes.size)
+                put("sha256", finalHash)
+            }
+        }
+        all[index] = updated
+        writeIndex(all)
+        Log.i("[PStart] Embedded protocol ${protocolBytes.size} bytes into ${updated.optString("name")} as $chunkCount APP15 chunks; verified=$verified")
+        return updated
+    }
+
     @Synchronized
     fun listImages(library: String? = null): JSONArray {
         val normalized = library?.takeIf { it.isNotBlank() }?.let(::normalizeLibrary)
@@ -263,6 +411,15 @@ class AndroidMediaRepository(
     }
 
     private fun relativeDir(library: String): String = if (library == "recognition") RECOGNITION_DIR else CAMERA_DIR
+
+    private fun sanitizeSessionId(sessionId: String): String = sessionId
+        .trim()
+        .replace(Regex("[^A-Za-z0-9._-]"), "_")
+        .take(80)
+        .ifBlank { "unknown" }
+
+    private fun pstartRelativeDir(sessionId: String): String =
+        "$RECOGNITION_DIR/PStart_${sanitizeSessionId(sessionId)}"
 
     private fun normalizedNameAndMime(requestedName: String?, library: String): Pair<String, String> {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
@@ -367,9 +524,14 @@ class AndroidMediaRepository(
       <taf:ReferenceIndex>${text(pstart?.opt("referenceIndex"))}</taf:ReferenceIndex>
       <taf:TargetHeight>${text(pstart?.opt("targetHeight"))}</taf:TargetHeight>
       <taf:RelativeHeight>${text(pstart?.opt("relativeHeight"))}</taf:RelativeHeight>
+      <taf:HomeOffset>${text(pstart?.opt("homeOffset"))}</taf:HomeOffset>
+      <taf:QualityStatus>${text(pstart?.opt("qualityStatus"))}</taf:QualityStatus>
       <taf:ImageRole>${text(pstart?.opt("imageRole"))}</taf:ImageRole>
       <taf:ReferenceEligible>${text(pstart?.opt("referenceEligible"))}</taf:ReferenceEligible>
       <taf:ZoomRole>${text(pstart?.opt("zoomRole"))}</taf:ZoomRole>
+      <taf:SessionMaster>${text(pstart?.opt("sessionMaster"))}</taf:SessionMaster>
+      <taf:SessionMasterImage>${text(pstart?.opt("sessionMasterImage"))}</taf:SessionMasterImage>
+      <taf:SessionProtocolFile>${text(pstart?.opt("sessionProtocolFile"))}</taf:SessionProtocolFile>
       <taf:Latitude>${text(telemetry?.opt("latitude"))}</taf:Latitude>
       <taf:Longitude>${text(telemetry?.opt("longitude"))}</taf:Longitude>
       <taf:Heading>${text(telemetry?.opt("heading"))}</taf:Heading>
@@ -419,6 +581,130 @@ class AndroidMediaRepository(
         }.toByteArray()
     }
 
+
+
+    private fun injectPStartProtocolApp15(
+        jpeg: ByteArray,
+        protocolBytes: ByteArray,
+        descriptor: JSONObject,
+    ): Pair<ByteArray, Int> {
+        require(jpeg.size >= 4 && (jpeg[0].toInt() and 0xff) == 0xff && (jpeg[1].toInt() and 0xff) == 0xd8) {
+            "PStart protocol embedding requires a valid JPEG"
+        }
+        val compressed = gzip(protocolBytes)
+        descriptor.put("compressedBytes", compressed.size)
+        val descriptorBytes = descriptor.toString().toByteArray(Charsets.UTF_8)
+        val container = ByteArrayOutputStream(4 + descriptorBytes.size + compressed.size).apply {
+            writeInt32(this, descriptorBytes.size)
+            write(descriptorBytes)
+            write(compressed)
+        }.toByteArray()
+
+        val signature = PSTART_PROTOCOL_SIGNATURE
+        val fixedHeaderSize = signature.size + 1 + 2 + 2 + 4
+        val maxChunkData = 60_000
+        val chunkCount = (container.size + maxChunkData - 1) / maxChunkData
+        require(chunkCount <= 0xffff) { "PStart protocol requires too many JPEG chunks" }
+
+        val segments = ByteArrayOutputStream()
+        for (index in 0 until chunkCount) {
+            val start = index * maxChunkData
+            val end = minOf(container.size, start + maxChunkData)
+            val chunk = container.copyOfRange(start, end)
+            val payloadLength = fixedHeaderSize + chunk.size
+            require(payloadLength + 2 <= 0xffff) { "PStart APP15 chunk exceeds JPEG segment limit" }
+            segments.write(0xff)
+            segments.write(0xef)
+            val jpegLength = payloadLength + 2
+            segments.write((jpegLength ushr 8) and 0xff)
+            segments.write(jpegLength and 0xff)
+            segments.write(signature)
+            segments.write(1) // container version
+            writeInt16(segments, index)
+            writeInt16(segments, chunkCount)
+            writeInt32(segments, container.size)
+            segments.write(chunk)
+        }
+
+        var insertAt = 2
+        while (insertAt + 4 <= jpeg.size && (jpeg[insertAt].toInt() and 0xff) == 0xff) {
+            val marker = jpeg[insertAt + 1].toInt() and 0xff
+            if (marker != 0xe0 && marker != 0xe1) break
+            val length = ((jpeg[insertAt + 2].toInt() and 0xff) shl 8) or (jpeg[insertAt + 3].toInt() and 0xff)
+            if (length < 2 || insertAt + 2 + length > jpeg.size) break
+            insertAt += 2 + length
+        }
+
+        val segmentBytes = segments.toByteArray()
+        val result = ByteArrayOutputStream(jpeg.size + segmentBytes.size).apply {
+            write(jpeg, 0, insertAt)
+            write(segmentBytes)
+            write(jpeg, insertAt, jpeg.size - insertAt)
+        }.toByteArray()
+        return result to chunkCount
+    }
+
+    private fun stripPStartProtocolApp15(jpeg: ByteArray): ByteArray {
+        if (jpeg.size < 4 || (jpeg[0].toInt() and 0xff) != 0xff || (jpeg[1].toInt() and 0xff) != 0xd8) return jpeg
+        val out = ByteArrayOutputStream(jpeg.size)
+        out.write(jpeg, 0, 2)
+        var pos = 2
+        while (pos + 1 < jpeg.size) {
+            if ((jpeg[pos].toInt() and 0xff) != 0xff) {
+                out.write(jpeg, pos, jpeg.size - pos)
+                break
+            }
+            val marker = jpeg[pos + 1].toInt() and 0xff
+            if (marker == 0xda || marker == 0xd9) {
+                out.write(jpeg, pos, jpeg.size - pos)
+                break
+            }
+            if (marker in 0xd0..0xd7 || marker == 0x01) {
+                out.write(jpeg, pos, 2)
+                pos += 2
+                continue
+            }
+            if (pos + 4 > jpeg.size) {
+                out.write(jpeg, pos, jpeg.size - pos)
+                break
+            }
+            val length = ((jpeg[pos + 2].toInt() and 0xff) shl 8) or (jpeg[pos + 3].toInt() and 0xff)
+            val end = pos + 2 + length
+            if (length < 2 || end > jpeg.size) {
+                out.write(jpeg, pos, jpeg.size - pos)
+                break
+            }
+            val isPStartProtocol = marker == 0xef && startsWithAt(jpeg, pos + 4, PSTART_PROTOCOL_SIGNATURE)
+            if (!isPStartProtocol) out.write(jpeg, pos, end - pos)
+            pos = end
+        }
+        return out.toByteArray()
+    }
+
+    private fun startsWithAt(bytes: ByteArray, offset: Int, prefix: ByteArray): Boolean {
+        if (offset < 0 || offset + prefix.size > bytes.size) return false
+        for (i in prefix.indices) if (bytes[offset + i] != prefix[i]) return false
+        return true
+    }
+
+    private fun gzip(bytes: ByteArray): ByteArray {
+        val out = ByteArrayOutputStream()
+        GZIPOutputStream(out).use { it.write(bytes) }
+        return out.toByteArray()
+    }
+
+    private fun writeInt16(out: ByteArrayOutputStream, value: Int) {
+        out.write((value ushr 8) and 0xff)
+        out.write(value and 0xff)
+    }
+
+    private fun writeInt32(out: ByteArrayOutputStream, value: Int) {
+        out.write((value ushr 24) and 0xff)
+        out.write((value ushr 16) and 0xff)
+        out.write((value ushr 8) and 0xff)
+        out.write(value and 0xff)
+    }
+
     private fun xmlEscape(value: String): String = value
         .replace("&", "&amp;")
         .replace("<", "&lt;")
@@ -444,8 +730,14 @@ class AndroidMediaRepository(
         indexFile.appendText(item.toString() + "\n")
         val all = readIndex()
         if (all.size > MAX_INDEX_ITEMS * 2) {
-            indexFile.writeText(all.takeLast(MAX_INDEX_ITEMS).joinToString("\n") { it.toString() } + "\n")
+            writeIndex(all.takeLast(MAX_INDEX_ITEMS))
         }
+    }
+
+    private fun writeIndex(items: List<JSONObject>) {
+        indexDir.mkdirs()
+        val kept = items.takeLast(MAX_INDEX_ITEMS * 2)
+        indexFile.writeText(if (kept.isEmpty()) "" else kept.joinToString("\n") { it.toString() } + "\n")
     }
 
     private fun readIndex(): List<JSONObject> {

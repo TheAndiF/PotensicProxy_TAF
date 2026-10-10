@@ -314,6 +314,7 @@ class WebServer(
                         else -> "live-reco"
                     }
                     val snapshotName = call.request.queryParameters["name"]?.take(180)
+                    val snapshotSessionId = call.request.queryParameters["session"]?.take(80)
                     val metadata = try {
                         val text = call.receiveText().trim()
                         if (text.isNotEmpty()) JSONObject(text) else null
@@ -346,6 +347,7 @@ class WebServer(
                                     source = snapshotSource,
                                     library = snapshotLibrary,
                                     metadata = metadata,
+                                    sessionId = snapshotSessionId,
                                 )
                             }
                             call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
@@ -354,6 +356,97 @@ class WebServer(
                         } catch (e: Exception) {
                             call.respondText(JSONObject().put("error", e.message ?: "snapshot save failed").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
                         }
+                    }
+                }
+
+
+                post("/api/pstart/session/finalize") {
+                    call.response.header("Access-Control-Allow-Origin", "*")
+                    try {
+                        val body = JSONObject(call.receiveText())
+                        val sessionId = body.optString("sessionId").trim().take(80)
+                        val masterImageId = body.optString("masterImageId").trim().take(128)
+                        val masterImageName = body.optString("masterImageName").trim().take(180)
+                        val requestedFileName = body.optString("fileName").trim().take(180)
+                        val protocol = body.optString("protocol")
+                        val summary = body.optJSONObject("summary") ?: JSONObject()
+                        if (sessionId.isBlank() || protocol.isBlank()) {
+                            call.respondText(
+                                JSONObject().put("error", "sessionId and protocol are required").toString(),
+                                ContentType.Application.Json,
+                                HttpStatusCode.BadRequest,
+                            )
+                            return@post
+                        }
+
+                        // The sidecar and the embedded master-image copy are intentionally
+                        // independent. Some Android scoped-storage implementations can reject a
+                        // non-media JSONL item in Pictures; that must not prevent the complete
+                        // protocol from being preserved in the STEP0 master JPEG.
+                        var protocolItem: JSONObject? = null
+                        var protocolSidecarError = ""
+                        try {
+                            protocolItem = withContext(Dispatchers.IO) {
+                                androidMedia.savePStartSessionProtocol(
+                                    sessionId = sessionId,
+                                    protocol = protocol,
+                                    requestedName = requestedFileName.takeIf { it.isNotBlank() },
+                                )
+                            }
+                        } catch (e: Exception) {
+                            protocolSidecarError = e.message ?: e.javaClass.simpleName
+                            Log.w("[PStart] Session JSONL sidecar could not be saved; preserving protocol in master image: $protocolSidecarError")
+                        }
+
+                        val protocolInfo = JSONObject(summary.toString()).apply {
+                            put("sessionId", sessionId)
+                            put("protocolFile", protocolItem?.optString("name") ?: requestedFileName.ifBlank { "PStart_${sessionId}_session.jsonl" })
+                            put("protocolRelativePath", protocolItem?.optString("relativePath") ?: "")
+                            put("protocolSha256", protocolItem?.optString("sha256") ?: "")
+                            put("protocolVerified", protocolItem?.optBoolean("verified", false) ?: false)
+                            put("protocolSidecarSaved", protocolItem != null)
+                            if (protocolSidecarError.isNotBlank()) put("protocolSidecarError", protocolSidecarError)
+                            put("masterImageName", masterImageName)
+                        }
+                        val masterItem = if (masterImageId.isNotBlank()) {
+                            withContext(Dispatchers.IO) {
+                                androidMedia.embedPStartProtocolInImage(
+                                    imageId = masterImageId,
+                                    protocol = protocol,
+                                    protocolInfo = protocolInfo,
+                                )
+                            }
+                        } else null
+
+                        if (protocolItem == null && masterItem == null) {
+                            throw IllegalStateException(
+                                "PStart protocol could neither be saved as JSONL sidecar nor embedded in the master image" +
+                                    if (protocolSidecarError.isNotBlank()) ": $protocolSidecarError" else ""
+                            )
+                        }
+
+                        call.respondText(
+                            JSONObject().apply {
+                                put("success", true)
+                                put("protocol", protocolItem ?: JSONObject().apply {
+                                    put("name", requestedFileName.ifBlank { "PStart_${sessionId}_session.jsonl" })
+                                    put("relativePath", "")
+                                    put("uri", "")
+                                    put("size", protocol.toByteArray(Charsets.UTF_8).size)
+                                    put("sha256", "")
+                                    put("verified", false)
+                                    put("saved", false)
+                                    put("error", protocolSidecarError)
+                                })
+                                if (masterItem != null) put("masterImage", masterItem)
+                            }.toString(),
+                            ContentType.Application.Json,
+                            HttpStatusCode.Created,
+                        )
+                    } catch (e: SecurityException) {
+                        call.respondText(JSONObject().put("error", e.message ?: "storage permission denied").toString(), ContentType.Application.Json, HttpStatusCode.Forbidden)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", e.message ?: "PStart protocol finalization failed").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
                     }
                 }
 

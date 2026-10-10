@@ -65,9 +65,10 @@ export class AndroidMediaService {
   static async savePrecisionSnapshot(
     metadata: Record<string, unknown>,
     fileName: string,
-    source: 'pstart-documentation' | 'pstart-reference'
+    source: 'pstart-documentation' | 'pstart-reference',
+    sessionId: string
   ): Promise<AndroidStoredImage> {
-    const params = new URLSearchParams({ library: 'recognition', source, name: fileName })
+    const params = new URLSearchParams({ library: 'recognition', source, name: fileName, session: sessionId })
     const response = await fetch(`${this.baseUrl()}/api/media/snapshot?${params.toString()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -78,6 +79,30 @@ export class AndroidMediaService {
     const saved = body as AndroidStoredImage
     window.dispatchEvent(new CustomEvent('taf-android-media-saved', { detail: saved }))
     return saved
+  }
+
+
+
+  static async finalizePrecisionSession(payload: {
+    sessionId: string
+    masterImageId: string
+    masterImageName: string
+    fileName: string
+    protocol: string
+    summary: Record<string, unknown>
+  }): Promise<{
+    success: boolean
+    protocol: { name: string; relativePath: string; uri: string; size: number; sha256: string; verified: boolean; saved?: boolean; error?: string }
+    masterImage?: { id: string; name: string; size: number; sha256: string; verified: boolean; protocolEmbedded: boolean; protocolChunks: number }
+  }> {
+    const response = await fetch(`${this.baseUrl()}/api/pstart/session/finalize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`)
+    return body
   }
 
   static async saveCockpitSnapshot(): Promise<AndroidStoredImage> {

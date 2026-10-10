@@ -1,0 +1,1482 @@
+# PotensicProxy_TAF v0.978 source patch
+# Base: v0.977
+# Binary PDF/DOCX documentation is delivered separately and is not embedded in this unified text patch.
+
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 50
+-        versionName = "0.977"
++        versionCode = 51
++        versionName = "0.978"
+     }
+ 
+     signingConfigs {
+--- a/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
++++ b/app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
+@@ -20,6 +20,7 @@
+ import java.util.Date
+ import java.util.Locale
+ import java.util.UUID
++import java.util.zip.GZIPOutputStream
+ import kotlin.math.abs
+ import kotlin.math.floor
+ import kotlin.math.roundToLong
+@@ -44,6 +45,7 @@
+         private const val RECOGNITION_DIR = "Pictures/PotensicProxy/Recognition"
+         private const val CAMERA_VIDEO_DIR = "Movies/PotensicProxy/Camera"
+         private const val MAX_INDEX_ITEMS = 1000
++        private val PSTART_PROTOCOL_SIGNATURE = "POTENSIC_PSTART_PROTOCOL\u0000".toByteArray(Charsets.UTF_8)
+     }
+ 
+     private val indexDir = File(filesDir, "media").apply { mkdirs() }
+@@ -56,12 +58,17 @@
+         source: String,
+         library: String = "camera",
+         metadata: JSONObject? = null,
++        sessionId: String? = null,
+     ): JSONObject {
+         require(bytes.isNotEmpty()) { "Image payload is empty" }
+         ensureLegacyWritePermission()
+ 
+         val normalizedLibrary = normalizeLibrary(library)
+-        val relativeDir = relativeDir(normalizedLibrary)
++        val relativeDir = if (
++            normalizedLibrary == "recognition" &&
++            source.startsWith("pstart", ignoreCase = true) &&
++            !sessionId.isNullOrBlank()
++        ) pstartRelativeDir(sessionId) else relativeDir(normalizedLibrary)
+         val (displayName, mimeType) = normalizedNameAndMime(requestedName, normalizedLibrary)
+         val captureTime = metadata
+             ?.optJSONObject("capture")
+@@ -220,6 +227,147 @@
+         return item
+     }
+ 
++
++
++    /**
++     * Publishes the finalized PStart JSONL protocol into the same public session
++     * directory as the PStart images. The protocol is verified after MediaStore
++     * write using byte count and SHA-256, just like image storage.
++     */
++    @Synchronized
++    fun savePStartSessionProtocol(
++        sessionId: String,
++        protocol: String,
++        requestedName: String? = null,
++    ): JSONObject {
++        require(sessionId.isNotBlank()) { "PStart session id is required" }
++        require(protocol.isNotEmpty()) { "PStart protocol is empty" }
++        ensureLegacyWritePermission()
++
++        val relativeDir = pstartRelativeDir(sessionId)
++        val rawName = requestedName
++            ?.substringAfterLast('/')
++            ?.substringAfterLast('\\')
++            ?.trim()
++            ?.takeIf { it.isNotBlank() }
++            ?: "PStart_${sanitizeSessionId(sessionId)}_session.jsonl"
++        val safeBase = rawName.replace(Regex("[^A-Za-z0-9._-]"), "_")
++        val displayName = if (safeBase.endsWith(".jsonl", ignoreCase = true)) safeBase else "$safeBase.jsonl"
++        val bytes = protocol.toByteArray(Charsets.UTF_8)
++        val mimeType = "application/x-ndjson"
++
++        val values = ContentValues().apply {
++            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
++            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
++            put(MediaStore.MediaColumns.DATE_ADDED, System.currentTimeMillis() / 1000L)
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++                put(MediaStore.MediaColumns.RELATIVE_PATH, relativeDir)
++                put(MediaStore.MediaColumns.IS_PENDING, 1)
++            } else {
++                @Suppress("DEPRECATION")
++                val publicDir = File(
++                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
++                    relativeDir.removePrefix("Pictures/"),
++                ).apply { mkdirs() }
++                @Suppress("DEPRECATION")
++                put(MediaStore.MediaColumns.DATA, File(publicDir, displayName).absolutePath)
++            }
++        }
++
++        val resolver = context.contentResolver
++        val collection = MediaStore.Files.getContentUri("external")
++        val uri = resolver.insert(collection, values)
++            ?: throw IllegalStateException("Android MediaStore rejected PStart protocol insert")
++        try {
++            resolver.openOutputStream(uri, "w")?.use { it.write(bytes) }
++                ?: throw IllegalStateException("Could not open Android MediaStore protocol output stream")
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++                val ready = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
++                resolver.update(uri, ready, null, null)
++            }
++        } catch (e: Exception) {
++            try { resolver.delete(uri, null, null) } catch (_: Exception) {}
++            throw e
++        }
++
++        val sourceHash = sha256(bytes)
++        val storedBytes = try { resolver.openInputStream(uri)?.use { it.readBytes() } } catch (_: Exception) { null }
++        val verified = storedBytes != null && storedBytes.size == bytes.size && sha256(storedBytes) == sourceHash
++        return JSONObject().apply {
++            put("name", displayName)
++            put("mimeType", mimeType)
++            put("size", bytes.size)
++            put("createdAt", System.currentTimeMillis())
++            put("uri", uri.toString())
++            put("relativePath", relativeDir)
++            put("sha256", sourceHash)
++            put("verified", verified)
++        }
++    }
++
++    /**
++     * Adds the complete finalized PStart protocol to the first STEP0 JPEG. The
++     * protocol is gzip-compressed and split over custom APP15 chunks so it is not
++     * limited by the single 64 KiB XMP APP1 segment size. JPEG decoders ignore
++     * these application segments and continue to display the image normally.
++     */
++    @Synchronized
++    fun embedPStartProtocolInImage(
++        imageId: String,
++        protocol: String,
++        protocolInfo: JSONObject,
++    ): JSONObject? {
++        if (imageId.isBlank() || protocol.isEmpty()) return null
++        val all = readIndex().toMutableList()
++        val index = all.indexOfLast { it.optString("id") == imageId }
++        if (index < 0) return null
++        val existing = all[index]
++        if (!existing.optString("mimeType", "image/jpeg").equals("image/jpeg", ignoreCase = true)) return null
++        val uriText = existing.optString("uri")
++        if (uriText.isBlank()) return null
++
++        val resolver = context.contentResolver
++        val uri = Uri.parse(uriText)
++        val original = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
++        val clean = stripPStartProtocolApp15(original)
++        val protocolBytes = protocol.toByteArray(Charsets.UTF_8)
++        val descriptor = JSONObject(protocolInfo.toString()).apply {
++            put("containerSchema", "PotensicProxy/PStartProtocol-APP15")
++            put("containerVersion", 1)
++            put("format", "JSONL")
++            put("mimeType", "application/x-ndjson")
++            put("compression", "gzip")
++            put("rawBytes", protocolBytes.size)
++            put("rawSha256", sha256(protocolBytes))
++        }
++        val embedded = injectPStartProtocolApp15(clean, protocolBytes, descriptor)
++        val finalBytes = embedded.first
++        val chunkCount = embedded.second
++
++        resolver.openOutputStream(uri, "w")?.use { it.write(finalBytes) }
++            ?: throw IllegalStateException("Could not rewrite PStart master image")
++        val storedBytes = try { resolver.openInputStream(uri)?.use { it.readBytes() } } catch (_: Exception) { null }
++        val finalHash = sha256(finalBytes)
++        val verified = storedBytes != null && storedBytes.size == finalBytes.size && sha256(storedBytes) == finalHash
++
++        val updated = JSONObject(existing.toString()).apply {
++            put("size", finalBytes.size)
++            put("sha256", finalHash)
++            put("verified", verified)
++            put("protocolEmbedded", true)
++            put("protocolChunks", chunkCount)
++            put("protocol", descriptor)
++            optJSONObject("image")?.apply {
++                put("byteSize", finalBytes.size)
++                put("sha256", finalHash)
++            }
++        }
++        all[index] = updated
++        writeIndex(all)
++        Log.i("[PStart] Embedded protocol ${protocolBytes.size} bytes into ${updated.optString("name")} as $chunkCount APP15 chunks; verified=$verified")
++        return updated
++    }
++
+     @Synchronized
+     fun listImages(library: String? = null): JSONArray {
+         val normalized = library?.takeIf { it.isNotBlank() }?.let(::normalizeLibrary)
+@@ -263,6 +411,15 @@
+     }
+ 
+     private fun relativeDir(library: String): String = if (library == "recognition") RECOGNITION_DIR else CAMERA_DIR
++
++    private fun sanitizeSessionId(sessionId: String): String = sessionId
++        .trim()
++        .replace(Regex("[^A-Za-z0-9._-]"), "_")
++        .take(80)
++        .ifBlank { "unknown" }
++
++    private fun pstartRelativeDir(sessionId: String): String =
++        "$RECOGNITION_DIR/PStart_${sanitizeSessionId(sessionId)}"
+ 
+     private fun normalizedNameAndMime(requestedName: String?, library: String): Pair<String, String> {
+         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+@@ -367,9 +524,14 @@
+       <taf:ReferenceIndex>${text(pstart?.opt("referenceIndex"))}</taf:ReferenceIndex>
+       <taf:TargetHeight>${text(pstart?.opt("targetHeight"))}</taf:TargetHeight>
+       <taf:RelativeHeight>${text(pstart?.opt("relativeHeight"))}</taf:RelativeHeight>
++      <taf:HomeOffset>${text(pstart?.opt("homeOffset"))}</taf:HomeOffset>
++      <taf:QualityStatus>${text(pstart?.opt("qualityStatus"))}</taf:QualityStatus>
+       <taf:ImageRole>${text(pstart?.opt("imageRole"))}</taf:ImageRole>
+       <taf:ReferenceEligible>${text(pstart?.opt("referenceEligible"))}</taf:ReferenceEligible>
+       <taf:ZoomRole>${text(pstart?.opt("zoomRole"))}</taf:ZoomRole>
++      <taf:SessionMaster>${text(pstart?.opt("sessionMaster"))}</taf:SessionMaster>
++      <taf:SessionMasterImage>${text(pstart?.opt("sessionMasterImage"))}</taf:SessionMasterImage>
++      <taf:SessionProtocolFile>${text(pstart?.opt("sessionProtocolFile"))}</taf:SessionProtocolFile>
+       <taf:Latitude>${text(telemetry?.opt("latitude"))}</taf:Latitude>
+       <taf:Longitude>${text(telemetry?.opt("longitude"))}</taf:Longitude>
+       <taf:Heading>${text(telemetry?.opt("heading"))}</taf:Heading>
+@@ -419,6 +581,130 @@
+         }.toByteArray()
+     }
+ 
++
++
++    private fun injectPStartProtocolApp15(
++        jpeg: ByteArray,
++        protocolBytes: ByteArray,
++        descriptor: JSONObject,
++    ): Pair<ByteArray, Int> {
++        require(jpeg.size >= 4 && (jpeg[0].toInt() and 0xff) == 0xff && (jpeg[1].toInt() and 0xff) == 0xd8) {
++            "PStart protocol embedding requires a valid JPEG"
++        }
++        val compressed = gzip(protocolBytes)
++        descriptor.put("compressedBytes", compressed.size)
++        val descriptorBytes = descriptor.toString().toByteArray(Charsets.UTF_8)
++        val container = ByteArrayOutputStream(4 + descriptorBytes.size + compressed.size).apply {
++            writeInt32(this, descriptorBytes.size)
++            write(descriptorBytes)
++            write(compressed)
++        }.toByteArray()
++
++        val signature = PSTART_PROTOCOL_SIGNATURE
++        val fixedHeaderSize = signature.size + 1 + 2 + 2 + 4
++        val maxChunkData = 60_000
++        val chunkCount = (container.size + maxChunkData - 1) / maxChunkData
++        require(chunkCount <= 0xffff) { "PStart protocol requires too many JPEG chunks" }
++
++        val segments = ByteArrayOutputStream()
++        for (index in 0 until chunkCount) {
++            val start = index * maxChunkData
++            val end = minOf(container.size, start + maxChunkData)
++            val chunk = container.copyOfRange(start, end)
++            val payloadLength = fixedHeaderSize + chunk.size
++            require(payloadLength + 2 <= 0xffff) { "PStart APP15 chunk exceeds JPEG segment limit" }
++            segments.write(0xff)
++            segments.write(0xef)
++            val jpegLength = payloadLength + 2
++            segments.write((jpegLength ushr 8) and 0xff)
++            segments.write(jpegLength and 0xff)
++            segments.write(signature)
++            segments.write(1) // container version
++            writeInt16(segments, index)
++            writeInt16(segments, chunkCount)
++            writeInt32(segments, container.size)
++            segments.write(chunk)
++        }
++
++        var insertAt = 2
++        while (insertAt + 4 <= jpeg.size && (jpeg[insertAt].toInt() and 0xff) == 0xff) {
++            val marker = jpeg[insertAt + 1].toInt() and 0xff
++            if (marker != 0xe0 && marker != 0xe1) break
++            val length = ((jpeg[insertAt + 2].toInt() and 0xff) shl 8) or (jpeg[insertAt + 3].toInt() and 0xff)
++            if (length < 2 || insertAt + 2 + length > jpeg.size) break
++            insertAt += 2 + length
++        }
++
++        val segmentBytes = segments.toByteArray()
++        val result = ByteArrayOutputStream(jpeg.size + segmentBytes.size).apply {
++            write(jpeg, 0, insertAt)
++            write(segmentBytes)
++            write(jpeg, insertAt, jpeg.size - insertAt)
++        }.toByteArray()
++        return result to chunkCount
++    }
++
++    private fun stripPStartProtocolApp15(jpeg: ByteArray): ByteArray {
++        if (jpeg.size < 4 || (jpeg[0].toInt() and 0xff) != 0xff || (jpeg[1].toInt() and 0xff) != 0xd8) return jpeg
++        val out = ByteArrayOutputStream(jpeg.size)
++        out.write(jpeg, 0, 2)
++        var pos = 2
++        while (pos + 1 < jpeg.size) {
++            if ((jpeg[pos].toInt() and 0xff) != 0xff) {
++                out.write(jpeg, pos, jpeg.size - pos)
++                break
++            }
++            val marker = jpeg[pos + 1].toInt() and 0xff
++            if (marker == 0xda || marker == 0xd9) {
++                out.write(jpeg, pos, jpeg.size - pos)
++                break
++            }
++            if (marker in 0xd0..0xd7 || marker == 0x01) {
++                out.write(jpeg, pos, 2)
++                pos += 2
++                continue
++            }
++            if (pos + 4 > jpeg.size) {
++                out.write(jpeg, pos, jpeg.size - pos)
++                break
++            }
++            val length = ((jpeg[pos + 2].toInt() and 0xff) shl 8) or (jpeg[pos + 3].toInt() and 0xff)
++            val end = pos + 2 + length
++            if (length < 2 || end > jpeg.size) {
++                out.write(jpeg, pos, jpeg.size - pos)
++                break
++            }
++            val isPStartProtocol = marker == 0xef && startsWithAt(jpeg, pos + 4, PSTART_PROTOCOL_SIGNATURE)
++            if (!isPStartProtocol) out.write(jpeg, pos, end - pos)
++            pos = end
++        }
++        return out.toByteArray()
++    }
++
++    private fun startsWithAt(bytes: ByteArray, offset: Int, prefix: ByteArray): Boolean {
++        if (offset < 0 || offset + prefix.size > bytes.size) return false
++        for (i in prefix.indices) if (bytes[offset + i] != prefix[i]) return false
++        return true
++    }
++
++    private fun gzip(bytes: ByteArray): ByteArray {
++        val out = ByteArrayOutputStream()
++        GZIPOutputStream(out).use { it.write(bytes) }
++        return out.toByteArray()
++    }
++
++    private fun writeInt16(out: ByteArrayOutputStream, value: Int) {
++        out.write((value ushr 8) and 0xff)
++        out.write(value and 0xff)
++    }
++
++    private fun writeInt32(out: ByteArrayOutputStream, value: Int) {
++        out.write((value ushr 24) and 0xff)
++        out.write((value ushr 16) and 0xff)
++        out.write((value ushr 8) and 0xff)
++        out.write(value and 0xff)
++    }
++
+     private fun xmlEscape(value: String): String = value
+         .replace("&", "&amp;")
+         .replace("<", "&lt;")
+@@ -444,8 +730,14 @@
+         indexFile.appendText(item.toString() + "\n")
+         val all = readIndex()
+         if (all.size > MAX_INDEX_ITEMS * 2) {
+-            indexFile.writeText(all.takeLast(MAX_INDEX_ITEMS).joinToString("\n") { it.toString() } + "\n")
+-        }
++            writeIndex(all.takeLast(MAX_INDEX_ITEMS))
++        }
++    }
++
++    private fun writeIndex(items: List<JSONObject>) {
++        indexDir.mkdirs()
++        val kept = items.takeLast(MAX_INDEX_ITEMS * 2)
++        indexFile.writeText(if (kept.isEmpty()) "" else kept.joinToString("\n") { it.toString() } + "\n")
+     }
+ 
+     private fun readIndex(): List<JSONObject> {
+--- a/app/src/main/java/com/potensic/proxy/WebServer.kt
++++ b/app/src/main/java/com/potensic/proxy/WebServer.kt
+@@ -314,6 +314,7 @@
+                         else -> "live-reco"
+                     }
+                     val snapshotName = call.request.queryParameters["name"]?.take(180)
++                    val snapshotSessionId = call.request.queryParameters["session"]?.take(80)
+                     val metadata = try {
+                         val text = call.receiveText().trim()
+                         if (text.isNotEmpty()) JSONObject(text) else null
+@@ -346,6 +347,7 @@
+                                     source = snapshotSource,
+                                     library = snapshotLibrary,
+                                     metadata = metadata,
++                                    sessionId = snapshotSessionId,
+                                 )
+                             }
+                             call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
+@@ -354,6 +356,97 @@
+                         } catch (e: Exception) {
+                             call.respondText(JSONObject().put("error", e.message ?: "snapshot save failed").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
+                         }
++                    }
++                }
++
++
++                post("/api/pstart/session/finalize") {
++                    call.response.header("Access-Control-Allow-Origin", "*")
++                    try {
++                        val body = JSONObject(call.receiveText())
++                        val sessionId = body.optString("sessionId").trim().take(80)
++                        val masterImageId = body.optString("masterImageId").trim().take(128)
++                        val masterImageName = body.optString("masterImageName").trim().take(180)
++                        val requestedFileName = body.optString("fileName").trim().take(180)
++                        val protocol = body.optString("protocol")
++                        val summary = body.optJSONObject("summary") ?: JSONObject()
++                        if (sessionId.isBlank() || protocol.isBlank()) {
++                            call.respondText(
++                                JSONObject().put("error", "sessionId and protocol are required").toString(),
++                                ContentType.Application.Json,
++                                HttpStatusCode.BadRequest,
++                            )
++                            return@post
++                        }
++
++                        // The sidecar and the embedded master-image copy are intentionally
++                        // independent. Some Android scoped-storage implementations can reject a
++                        // non-media JSONL item in Pictures; that must not prevent the complete
++                        // protocol from being preserved in the STEP0 master JPEG.
++                        var protocolItem: JSONObject? = null
++                        var protocolSidecarError = ""
++                        try {
++                            protocolItem = withContext(Dispatchers.IO) {
++                                androidMedia.savePStartSessionProtocol(
++                                    sessionId = sessionId,
++                                    protocol = protocol,
++                                    requestedName = requestedFileName.takeIf { it.isNotBlank() },
++                                )
++                            }
++                        } catch (e: Exception) {
++                            protocolSidecarError = e.message ?: e.javaClass.simpleName
++                            Log.w("[PStart] Session JSONL sidecar could not be saved; preserving protocol in master image: $protocolSidecarError")
++                        }
++
++                        val protocolInfo = JSONObject(summary.toString()).apply {
++                            put("sessionId", sessionId)
++                            put("protocolFile", protocolItem?.optString("name") ?: requestedFileName.ifBlank { "PStart_${sessionId}_session.jsonl" })
++                            put("protocolRelativePath", protocolItem?.optString("relativePath") ?: "")
++                            put("protocolSha256", protocolItem?.optString("sha256") ?: "")
++                            put("protocolVerified", protocolItem?.optBoolean("verified", false) ?: false)
++                            put("protocolSidecarSaved", protocolItem != null)
++                            if (protocolSidecarError.isNotBlank()) put("protocolSidecarError", protocolSidecarError)
++                            put("masterImageName", masterImageName)
++                        }
++                        val masterItem = if (masterImageId.isNotBlank()) {
++                            withContext(Dispatchers.IO) {
++                                androidMedia.embedPStartProtocolInImage(
++                                    imageId = masterImageId,
++                                    protocol = protocol,
++                                    protocolInfo = protocolInfo,
++                                )
++                            }
++                        } else null
++
++                        if (protocolItem == null && masterItem == null) {
++                            throw IllegalStateException(
++                                "PStart protocol could neither be saved as JSONL sidecar nor embedded in the master image" +
++                                    if (protocolSidecarError.isNotBlank()) ": $protocolSidecarError" else ""
++                            )
++                        }
++
++                        call.respondText(
++                            JSONObject().apply {
++                                put("success", true)
++                                put("protocol", protocolItem ?: JSONObject().apply {
++                                    put("name", requestedFileName.ifBlank { "PStart_${sessionId}_session.jsonl" })
++                                    put("relativePath", "")
++                                    put("uri", "")
++                                    put("size", protocol.toByteArray(Charsets.UTF_8).size)
++                                    put("sha256", "")
++                                    put("verified", false)
++                                    put("saved", false)
++                                    put("error", protocolSidecarError)
++                                })
++                                if (masterItem != null) put("masterImage", masterItem)
++                            }.toString(),
++                            ContentType.Application.Json,
++                            HttpStatusCode.Created,
++                        )
++                    } catch (e: SecurityException) {
++                        call.respondText(JSONObject().put("error", e.message ?: "storage permission denied").toString(), ContentType.Application.Json, HttpStatusCode.Forbidden)
++                    } catch (e: Exception) {
++                        call.respondText(JSONObject().put("error", e.message ?: "PStart protocol finalization failed").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
+                     }
+                 }
+ 
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.977",
++  "version": "0.978",
+   "private": true,
+   "type": "module",
+   "scripts": {
+--- a/webui/package-lock.json
++++ b/webui/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.977",
++  "version": "0.978",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.977",
++      "version": "0.978",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",
+--- a/webui/src/components/settings/PrecisionStartSettings.vue
++++ b/webui/src/components/settings/PrecisionStartSettings.vue
+@@ -17,6 +17,14 @@
+           <span>{{ t('pstart.stabilization') }}</span>
+           <span class="input-unit"><input v-model.number="stabilizationSeconds" type="number" min="0" max="15" step="0.5" @change="normalize" /> s</span>
+         </label>
++        <label>
++          <span>{{ t('pstart.positionWarning') }}</span>
++          <span class="input-unit"><input v-model.number="positionWarningMeters" type="number" min="0.5" max="50" step="0.5" @change="normalize" /> m</span>
++        </label>
++        <label>
++          <span>{{ t('pstart.positionAbort') }}</span>
++          <span class="input-unit"><input v-model.number="positionAbortMeters" type="number" min="1" max="100" step="0.5" @change="normalize" /> m</span>
++        </label>
+       </div>
+ 
+       <div class="rules-box">
+@@ -24,8 +32,10 @@
+         <ul>
+           <li>{{ t('pstart.ruleNoLateral') }}</li>
+           <li>{{ t('pstart.ruleFirstPoint') }}</li>
++          <li>{{ t('pstart.rulePositionTolerance') }}</li>
+           <li>{{ t('pstart.ruleGrid') }}</li>
+           <li>{{ t('pstart.ruleImages') }}</li>
++          <li>{{ t('pstart.ruleProtocol') }}</li>
+           <li>{{ t('pstart.ruleStep0') }}</li>
+         </ul>
+       </div>
+@@ -38,12 +48,14 @@
+ import { usePrecisionStartSettings } from '../../composables/usePrecisionStartSettings'
+ 
+ const { t } = useI18n()
+-const { endHeight, heightStep, stabilizationSeconds } = usePrecisionStartSettings()
++const { endHeight, heightStep, stabilizationSeconds, positionWarningMeters, positionAbortMeters } = usePrecisionStartSettings()
+ 
+ function normalize() {
+   endHeight.value = Math.max(1, Math.min(120, Number(endHeight.value) || 20))
+   heightStep.value = Math.max(0.5, Math.min(50, Number(heightStep.value) || 5))
+   stabilizationSeconds.value = Math.max(0, Math.min(15, Number(stabilizationSeconds.value) || 2))
++  positionWarningMeters.value = Math.max(0.5, Math.min(50, Number(positionWarningMeters.value) || 3))
++  positionAbortMeters.value = Math.max(positionWarningMeters.value + 0.5, Math.min(100, Number(positionAbortMeters.value) || 6))
+ }
+ </script>
+ 
+--- a/webui/src/composables/usePrecisionStartSettings.ts
++++ b/webui/src/composables/usePrecisionStartSettings.ts
+@@ -3,15 +3,21 @@
+ const END_HEIGHT_KEY = 'potensic-pstart-end-height'
+ const HEIGHT_STEP_KEY = 'potensic-pstart-height-step'
+ const STABILIZATION_KEY = 'potensic-pstart-stabilization-seconds'
++const POSITION_WARNING_KEY = 'potensic-pstart-position-warning-meters'
++const POSITION_ABORT_KEY = 'potensic-pstart-position-abort-meters'
+ 
+ const endHeight = ref(Number(localStorage.getItem(END_HEIGHT_KEY) || '20'))
+ const heightStep = ref(Number(localStorage.getItem(HEIGHT_STEP_KEY) || '5'))
+ const stabilizationSeconds = ref(Number(localStorage.getItem(STABILIZATION_KEY) || '2'))
++const positionWarningMeters = ref(Number(localStorage.getItem(POSITION_WARNING_KEY) || '3'))
++const positionAbortMeters = ref(Number(localStorage.getItem(POSITION_ABORT_KEY) || '6'))
+ 
+ watch(endHeight, value => localStorage.setItem(END_HEIGHT_KEY, String(value)))
+ watch(heightStep, value => localStorage.setItem(HEIGHT_STEP_KEY, String(value)))
+ watch(stabilizationSeconds, value => localStorage.setItem(STABILIZATION_KEY, String(value)))
++watch(positionWarningMeters, value => localStorage.setItem(POSITION_WARNING_KEY, String(value)))
++watch(positionAbortMeters, value => localStorage.setItem(POSITION_ABORT_KEY, String(value)))
+ 
+ export function usePrecisionStartSettings() {
+-  return { endHeight, heightStep, stabilizationSeconds }
++  return { endHeight, heightStep, stabilizationSeconds, positionWarningMeters, positionAbortMeters }
+ }
+--- a/webui/src/i18n/index.ts
++++ b/webui/src/i18n/index.ts
+@@ -46,7 +46,7 @@
+     'video.render': 'Render', 'video.hwDecode': 'HW Decode', 'video.stream': 'Stream', 'video.requestIFrame': 'Request I-Frame',
+     'video.fullscreen': 'Fullscreen', 'video.fullscreenTitle': 'View video fullscreen', 'video.battery': 'Battery',
+     'system.flight': 'Flight / Calibration / Smart Modes',
+-    'pstart.tab': 'PStart', 'pstart.settingsTitle': 'Precision Start - Version 1', 'pstart.settingsHelp': 'Reference-ascent settings. Version 1 uses vertical throttle control only; no automatic pitch/roll/yaw correction.', 'pstart.endHeight': 'End height', 'pstart.heightStep': 'Height spacing', 'pstart.stabilization': 'Stabilization time', 'pstart.v1Rules': 'Version 1 rules', 'pstart.ruleNoLateral': 'No automatic pitch/roll/yaw correction during ascent.', 'pstart.ruleFirstPoint': 'First reference point: stable hover height + 0.10 m.', 'pstart.ruleGrid': 'Further points use the fixed grid calculated from 0 m; PStart never descends.', 'pstart.ruleImages': 'Two images per point: no zoom and maximum zoom; telemetry is embedded in EXIF/XMP.', 'pstart.ruleStep0': 'Step 0 has a 10 s timeout and creates documentation images that are not landing references.',
++    'pstart.tab': 'PStart', 'pstart.settingsTitle': 'Precision Start - Version 1', 'pstart.settingsHelp': 'Reference-ascent settings. Version 1 uses vertical throttle control only; no automatic pitch/roll/yaw correction.', 'pstart.endHeight': 'End height', 'pstart.heightStep': 'Height spacing', 'pstart.stabilization': 'Stabilization time', 'pstart.positionWarning': 'Position warning radius', 'pstart.positionAbort': 'Position abort radius', 'pstart.v1Rules': 'Version 1 rules', 'pstart.ruleNoLateral': 'No automatic pitch/roll/yaw correction during ascent.', 'pstart.ruleFirstPoint': 'First reference point: mean stable hover height + 0.10 m; target crossing is followed by tolerant vertical settling.', 'pstart.rulePositionTolerance': 'Horizontal GPS drift inside the warning radius does not block a height stage; only the configurable abort radius stops PStart.', 'pstart.ruleGrid': 'Further points use the fixed grid calculated from 0 m; PStart never descends.', 'pstart.ruleImages': 'Two images per point: no zoom and maximum zoom; telemetry is embedded in EXIF/XMP.', 'pstart.ruleProtocol': 'Each session writes a 5 Hz JSONL protocol beside the images; the completed protocol is additionally embedded in the first STEP0 image.', 'pstart.ruleStep0': 'Step 0 has a 10 s timeout and creates documentation images that are not landing references.',
+     'engineering.camera': 'Camera Console', 'engineering.fpv': 'Video & RF', 'engineering.sensor': 'Sensors & Calibration',
+     'engineering.rid': 'Remote ID & System', 'engineering.relay': 'Remote / Relay', 'engineering.map': 'Map', 'engineering.logs': 'Logs', 'engineering.frontend': 'Frontend',
+     'engineering.backend': 'Backend', 'engineering.hardwareTelemetry': 'Hardware Telemetry', 'engineering.waitingData': 'Waiting for data',
+@@ -89,7 +89,7 @@
+     'video.render': 'Darstellung', 'video.hwDecode': 'HW-Decoding', 'video.stream': 'Stream', 'video.requestIFrame': 'I-Frame anfordern',
+     'video.fullscreen': 'Vollbild', 'video.fullscreenTitle': 'Video im Vollbild anzeigen', 'video.battery': 'Batterie',
+     'system.flight': 'Flug / Kalibrierung / Smart Modes',
+-    'pstart.tab': 'PStart', 'pstart.settingsTitle': 'Precision Start - Version 1', 'pstart.settingsHelp': 'Einstellungen fuer den Referenzaufstieg. Version 1 steuert nur vertikal per Throttle; keine automatische Pitch-/Roll-/Yaw-Korrektur.', 'pstart.endHeight': 'Endhoehe', 'pstart.heightStep': 'Hoehenstaffelung', 'pstart.stabilization': 'Stabilisierungszeit', 'pstart.v1Rules': 'Regeln Version 1', 'pstart.ruleNoLateral': 'Kein automatischer Pitch-/Roll-/Yaw-Regeleingriff waehrend des Aufstiegs.', 'pstart.ruleFirstPoint': 'Erster Referenzpunkt: stabile Schwebehoehe + 0,10 m.', 'pstart.ruleGrid': 'Weitere Punkte folgen dem festen Raster ab 0 m; PStart senkt niemals ab.', 'pstart.ruleImages': 'Zwei Bilder pro Punkt: ohne Zoom und maximaler Zoom; Telemetrie wird in EXIF/XMP eingebettet.', 'pstart.ruleStep0': 'Schritt 0 hat 10 s Zeitlimit und erzeugt Dokumentationsbilder, die keine Landereferenzen sind.',
++    'pstart.tab': 'PStart', 'pstart.settingsTitle': 'Precision Start - Version 1', 'pstart.settingsHelp': 'Einstellungen fuer den Referenzaufstieg. Version 1 steuert nur vertikal per Throttle; keine automatische Pitch-/Roll-/Yaw-Korrektur.', 'pstart.endHeight': 'Endhoehe', 'pstart.heightStep': 'Hoehenstaffelung', 'pstart.stabilization': 'Stabilisierungszeit', 'pstart.positionWarning': 'Positions-Warnradius', 'pstart.positionAbort': 'Positions-Abbruchradius', 'pstart.v1Rules': 'Regeln Version 1', 'pstart.ruleNoLateral': 'Kein automatischer Pitch-/Roll-/Yaw-Regeleingriff waehrend des Aufstiegs.', 'pstart.ruleFirstPoint': 'Erster Referenzpunkt: gemittelte stabile Schwebehoehe + 0,10 m; nach Erreichen wird die Vertikalbewegung tolerant beruhigt.', 'pstart.rulePositionTolerance': 'Horizontale GPS-Abweichung innerhalb des Warnradius blockiert keine Hoehenstufe; erst der konfigurierbare Abbruchradius beendet PStart.', 'pstart.ruleGrid': 'Weitere Punkte folgen dem festen Raster ab 0 m; PStart senkt niemals ab.', 'pstart.ruleImages': 'Zwei Bilder pro Punkt: ohne Zoom und maximaler Zoom; Telemetrie wird in EXIF/XMP eingebettet.', 'pstart.ruleProtocol': 'Jede Session schreibt ein 5-Hz-JSONL-Protokoll neben die Bilder; nach Abschluss wird das Protokoll zusaetzlich in das erste STEP0-Bild eingebettet.', 'pstart.ruleStep0': 'Schritt 0 hat 10 s Zeitlimit und erzeugt Dokumentationsbilder, die keine Landereferenzen sind.',
+     'engineering.camera': 'Kamera-Konsole', 'engineering.fpv': 'Video & RF', 'engineering.sensor': 'Sensoren & Kalibrierung',
+     'engineering.rid': 'Remote ID & System', 'engineering.relay': 'Remote / Relay', 'engineering.map': 'Karte', 'engineering.logs': 'Logs', 'engineering.frontend': 'Frontend',
+     'engineering.backend': 'Backend', 'engineering.hardwareTelemetry': 'Hardware-Telemetrie', 'engineering.waitingData': 'Warte auf Daten',
+@@ -127,7 +127,7 @@
+     'video.render': '渲染', 'video.hwDecode': '硬件解码', 'video.stream': '视频流', 'video.requestIFrame': '请求 I 帧', 'video.fullscreen': '全屏',
+     'video.fullscreenTitle': '全屏查看视频', 'video.battery': '电量',
+     'system.flight': '飞行 / 校准 / 智能模式',
+-    'pstart.tab': '精确起飞', 'pstart.settingsTitle': '精确起飞 - 版本 1', 'pstart.settingsHelp': '参考上升设置。版本 1 仅通过油门进行垂直控制，不自动修正俯仰、横滚或偏航。', 'pstart.endHeight': '终止高度', 'pstart.heightStep': '高度间隔', 'pstart.stabilization': '稳定时间', 'pstart.v1Rules': '版本 1 规则', 'pstart.ruleNoLateral': '上升过程中不自动修正俯仰、横滚或偏航。', 'pstart.ruleFirstPoint': '第一个参考点：稳定悬停高度 + 0.10 m。', 'pstart.ruleGrid': '后续参考点使用从 0 m 计算的固定高度网格；PStart 不会下降。', 'pstart.ruleImages': '每个点拍两张图：无变焦和最大变焦；遥测写入 EXIF/XMP。', 'pstart.ruleStep0': '步骤 0 的超时为 10 秒，并生成不可用于降落参考的文档图像。',
++    'pstart.tab': '精确起飞', 'pstart.settingsTitle': '精确起飞 - 版本 1', 'pstart.settingsHelp': '参考上升设置。版本 1 仅通过油门进行垂直控制，不自动修正俯仰、横滚或偏航。', 'pstart.endHeight': '终止高度', 'pstart.heightStep': '高度间隔', 'pstart.stabilization': '稳定时间', 'pstart.positionWarning': '位置警告半径', 'pstart.positionAbort': '位置中止半径', 'pstart.v1Rules': '版本 1 规则', 'pstart.ruleNoLateral': '上升过程中不自动修正俯仰、横滚或偏航。', 'pstart.ruleFirstPoint': '第一个参考点：稳定悬停平均高度 + 0.10 m；到达目标后采用容差方式等待垂直运动稳定。', 'pstart.rulePositionTolerance': '警告半径内的水平 GPS 偏移不会阻止高度阶段；只有超过可配置的中止半径才会停止 PStart。', 'pstart.ruleGrid': '后续参考点使用从 0 m 计算的固定高度网格；PStart 不会下降。', 'pstart.ruleImages': '每个点拍两张图：无变焦和最大变焦；遥测写入 EXIF/XMP。', 'pstart.ruleProtocol': '每次会话在图像旁写入 5 Hz JSONL 协议；结束后还会将完整协议嵌入第一个 STEP0 图像。', 'pstart.ruleStep0': '步骤 0 的超时为 10 秒，并生成不可用于降落参考的文档图像。',
+     'engineering.camera': '相机控制台', 'engineering.fpv': '视频与射频', 'engineering.sensor': '传感器与校准', 'engineering.rid': '远程识别与系统',
+     'engineering.relay': '远程 / 中继', 'engineering.map': '地图', 'engineering.logs': '日志', 'engineering.frontend': '前端', 'engineering.backend': '后端', 'engineering.hardwareTelemetry': '硬件遥测', 'engineering.waitingData': '等待数据',
+     'map.settings': '地图设置', 'map.versionIndex': '版本信息', 'map.projectPackage': '项目包', 'map.androidApp': 'Android 应用', 'map.backend': '后端', 'map.webUi': 'Web UI', 'map.module': '地图模块', 'map.api': '地图 API', 'map.buildDate': '构建日期',
+--- a/webui/src/services/AndroidMediaService.ts
++++ b/webui/src/services/AndroidMediaService.ts
+@@ -65,9 +65,10 @@
+   static async savePrecisionSnapshot(
+     metadata: Record<string, unknown>,
+     fileName: string,
+-    source: 'pstart-documentation' | 'pstart-reference'
++    source: 'pstart-documentation' | 'pstart-reference',
++    sessionId: string
+   ): Promise<AndroidStoredImage> {
+-    const params = new URLSearchParams({ library: 'recognition', source, name: fileName })
++    const params = new URLSearchParams({ library: 'recognition', source, name: fileName, session: sessionId })
+     const response = await fetch(`${this.baseUrl()}/api/media/snapshot?${params.toString()}`, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+@@ -78,6 +79,30 @@
+     const saved = body as AndroidStoredImage
+     window.dispatchEvent(new CustomEvent('taf-android-media-saved', { detail: saved }))
+     return saved
++  }
++
++
++
++  static async finalizePrecisionSession(payload: {
++    sessionId: string
++    masterImageId: string
++    masterImageName: string
++    fileName: string
++    protocol: string
++    summary: Record<string, unknown>
++  }): Promise<{
++    success: boolean
++    protocol: { name: string; relativePath: string; uri: string; size: number; sha256: string; verified: boolean; saved?: boolean; error?: string }
++    masterImage?: { id: string; name: string; size: number; sha256: string; verified: boolean; protocolEmbedded: boolean; protocolChunks: number }
++  }> {
++    const response = await fetch(`${this.baseUrl()}/api/pstart/session/finalize`, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify(payload),
++    })
++    const body = await response.json().catch(() => ({}))
++    if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`)
++    return body
+   }
+ 
+   static async saveCockpitSnapshot(): Promise<AndroidStoredImage> {
+--- a/webui/src/services/PrecisionStartMetadataService.ts
++++ b/webui/src/services/PrecisionStartMetadataService.ts
+@@ -4,6 +4,7 @@
+ 
+ export type PStartImageRole = 'PSTART_DOCUMENTATION' | 'PSTART_REFERENCE'
+ export type PStartZoomRole = 'ZERO' | 'MAX'
++export type PStartQualityStatus = 'GOOD' | 'WARNING_POSITION' | 'WARNING_MOTION' | 'WARNING_POSITION_MOTION'
+ 
+ export type PStartCaptureContext = {
+   sessionId: string
+@@ -19,6 +20,9 @@
+   referenceEligible: boolean
+   referenceReason?: string
+   zoomRole: PStartZoomRole
++  positionWarningMeters: number
++  positionAbortMeters: number
++  pstartThrottleCommand: number
+ }
+ 
+ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+@@ -29,10 +33,22 @@
+     const camera = useCameraStore()
+     const now = Date.now()
+     const relativeHeight = Number(drone.telemetry.verticalDistance || 0) - Number(context.startVerticalDistance || 0)
+-    const homeOffset = this.distanceMeters(context.startLatitude, context.startLongitude, Number(drone.telemetry.latitude || 0), Number(drone.telemetry.longitude || 0))
++    const homeOffset = this.homeOffsetMeters(context.startLatitude, context.startLongitude, Number(drone.telemetry.latitude || 0), Number(drone.telemetry.longitude || 0))
++    const horizontalSpeed = Math.abs(Number(drone.telemetry.horizontalSpeed || 0))
++    const verticalSpeed = Math.abs(Number(drone.telemetry.verticalSpeed || 0))
++    const positionWarning = homeOffset != null && homeOffset > context.positionWarningMeters
++    const motionWarning = horizontalSpeed > 1.0 || verticalSpeed > 0.35
++    const qualityStatus: PStartQualityStatus = positionWarning && motionWarning
++      ? 'WARNING_POSITION_MOTION'
++      : positionWarning
++        ? 'WARNING_POSITION'
++        : motionWarning ? 'WARNING_MOTION' : 'GOOD'
++    const sessionMaster = context.stepId === 'STEP0' && context.zoomRole === 'ZERO'
++    const sessionProtocolFile = `PStart_${context.sessionId}_session.jsonl`
++    const sessionMasterImage = `PStart_${context.sessionId}_STEP0_step0_zero.jpg`
+ 
+     return {
+-      schemaVersion: 1,
++      schemaVersion: 2,
+       source: 'PSTART',
+       capture: {
+         timestampUnixMs: now,
+@@ -40,11 +56,13 @@
+       },
+       pstart: {
+         schema: 'PotensicProxy/PStart',
+-        schemaVersion: '1.0',
++        schemaVersion: '1.1',
+         sessionId: context.sessionId,
+         stepId: context.stepId,
++        stageId: context.stepId,
+         referenceIndex: context.referenceIndex,
+         targetHeight: context.targetHeight,
++        heightError: context.targetHeight == null ? null : relativeHeight - context.targetHeight,
+         startVerticalDistance: context.startVerticalDistance,
+         startLatitude: context.startLatitude,
+         startLongitude: context.startLongitude,
+@@ -52,10 +70,21 @@
+         hoverHeight: context.hoverHeight,
+         relativeHeight,
+         homeOffset,
++        positionWarningMeters: context.positionWarningMeters,
++        positionAbortMeters: context.positionAbortMeters,
++        positionQuality: homeOffset == null ? 'UNKNOWN' : homeOffset > context.positionWarningMeters ? 'WARNING_POSITION' : 'GOOD',
++        qualityStatus,
++        gpsQuality: drone.telemetry.receiveGps && drone.telemetry.gpsLocationValid && !drone.telemetry.gpsInterference ? 'VALID' : 'INVALID',
+         imageRole: context.imageRole,
+         referenceEligible: context.referenceEligible,
+         referenceReason: context.referenceReason || '',
+         zoomRole: context.zoomRole,
++        pstartThrottleCommand: context.pstartThrottleCommand,
++        sessionMaster,
++        sessionMasterImage,
++        sessionProtocolFile,
++        sessionProtocolFormat: 'JSONL',
++        sessionProtocolEmbeddedInMaster: 'APP15_CHUNKED_GZIP_ON_FINALIZE',
+       },
+       telemetry: clone(drone.telemetry),
+       camera: {
+@@ -72,6 +101,12 @@
+       },
+       controls: {
+         requested: clone(drone.userJoysticks),
++        pstart: {
++          throttleCommand: context.pstartThrottleCommand,
++          yawCommand: 0,
++          pitchCommand: 0,
++          rollCommand: 0,
++        },
+         rcHardware: clone(drone.rcHardwareJoysticks),
+         telemetryRc: {
+           throttle: drone.telemetry.rcThrottle,
+@@ -92,12 +127,12 @@
+       connection: clone(drone.connection),
+       app: {
+         version: FRONTEND_VERSION,
+-        metadataSchema: 1,
++        metadataSchema: 2,
+       },
+     }
+   }
+ 
+-  private static distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number | null {
++  static homeOffsetMeters(lat1: number, lon1: number, lat2: number, lon2: number): number | null {
+     if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return null
+     if ((lat1 === 0 && lon1 === 0) || (lat2 === 0 && lon2 === 0)) return null
+     const rad = Math.PI / 180
+--- a/webui/src/services/PrecisionStartService.ts
++++ b/webui/src/services/PrecisionStartService.ts
+@@ -11,17 +11,33 @@
+ const STEP0_STABLE_MS = 1_000
+ const TAKEOFF_HOVER_TIMEOUT_MS = 20_000
+ const ASCENT_TIMEOUT_MS = 45_000
++const ASCENT_SETTLE_TIMEOUT_MS = 4_000
++const ASCENT_SETTLE_STABLE_MS = 800
+ const GIMBAL_ATTEMPT_TIMEOUT_MS = 2_500
+ const ZOOM_TIMEOUT_MS = 3_000
+ const CONTROL_INTERVAL_MS = 80
++const PROTOCOL_SAMPLE_INTERVAL_MS = 200
++const POSITION_ABORT_STABLE_MS = 1_000
+ const MANUAL_RC_THRESHOLD = 120
+ const GIMBAL_TOLERANCE_DEG = 2
+ const HOVER_VERTICAL_SPEED_MPS = 0.25
+ const HOVER_STABLE_MS = 1_000
+ const TARGET_TOLERANCE_M = 0.05
++const TARGET_REACHED_TOLERANCE_M = 0.03
++const TARGET_SETTLE_DROP_TOLERANCE_M = 0.15
++const TARGET_SETTLE_VERTICAL_SPEED_MPS = 0.35
+ const FIRST_REFERENCE_OFFSET_M = 0.10
++const CLOSE_ASCENT_THROTTLE = 150
+ 
+ const sleep = (ms: number) => new Promise<void>(resolve => window.setTimeout(resolve, ms))
++
++type ProtocolStatus =
++  | 'COMPLETED'
++  | 'ABORTED_MANUAL'
++  | 'ABORTED_GIMBAL'
++  | 'ABORTED_TIMEOUT'
++  | 'ABORTED_SAFETY'
++  | 'ABORTED_ERROR'
+ 
+ export class PrecisionStartService {
+   private static runId = 0
+@@ -30,6 +46,16 @@
+   private static aborting = false
+   private static fallbackActive = false
+ 
++  private static protocolTimer: ReturnType<typeof setInterval> | null = null
++  private static protocolLines: string[] = []
++  private static protocolSessionId = ''
++  private static protocolMasterImageId = ''
++  private static protocolMasterImageName = ''
++  private static protocolClosed = true
++  private static protocolFinalized = true
++  private static positionWarningActive = false
++  private static positionAbortSince = 0
++
+   static isActive(): boolean {
+     return usePrecisionStartStore().state.active
+   }
+@@ -61,6 +87,16 @@
+ 
+     this.aborting = true
+     const previousPhase = pstart.state.phase
++    const previousTarget = pstart.state.currentTargetHeight
++    const status = this.abortProtocolStatus(reason, kind)
++    this.recordProtocolEvent('PSTART_ABORT', {
++      status,
++      reason,
++      phase: previousPhase,
++      targetHeight: previousTarget,
++      relativeHeight: this.relativeHeight(pstart.state.startVerticalDistance),
++    })
++
+     this.runId += 1
+     this.stopAutomaticAxes(true)
+     CameraMediaService.setZoom(1)
+@@ -69,10 +105,11 @@
+       kind === 'manual' ? 'WARN' : 'ERROR',
+       `[PStart] aborted: reason=${reason}; phase=${previousPhase}; ` +
+       `height=${this.relativeHeight(pstart.state.startVerticalDistance).toFixed(2)}m; ` +
+-      `target=${pstart.state.currentTargetHeight ?? 'n/a'}m; ` +
++      `target=${previousTarget ?? 'n/a'}m; ` +
+       `gps=${drone.telemetry.latitude.toFixed(7)},${drone.telemetry.longitude.toFixed(7)}; ` +
+       `vSpeed=${drone.telemetry.verticalSpeed.toFixed(2)}m/s`
+     )
++    void this.finalizeProtocol(status, reason)
+     window.setTimeout(() => { this.aborting = false }, 0)
+   }
+ 
+@@ -82,6 +119,7 @@
+     const id = ++this.runId
+     const sessionId = this.makeSessionId()
+     pstart.begin(sessionId)
++    this.startProtocol(sessionId)
+     drone.addLog('INFO', `[PStart] session=${sessionId} started; step0 timeout=${STEP0_TIMEOUT_MS / 1000}s`)
+ 
+     // PStart starts from neutral user axes and never injects pitch/roll/yaw in V1.
+@@ -101,6 +139,12 @@
+       pstart.state.startHeading = Number(drone.telemetry.heading || 0)
+       pstart.state.phase = 'STEP0_DOCUMENT'
+       pstart.state.status = 'Schritt 0: Voraussetzungen erfüllt - Dokumentationsbilder werden erstellt.'
++      this.recordProtocolEvent('STEP0_READY', {
++        startVerticalDistance: pstart.state.startVerticalDistance,
++        startLatitude: pstart.state.startLatitude,
++        startLongitude: pstart.state.startLongitude,
++        startHeading: pstart.state.startHeading,
++      })
+ 
+       if (!await this.ensureGimbalMinus90(id, false)) return
+       await this.capturePair(id, {
+@@ -116,13 +160,15 @@
+       pstart.state.phase = 'TAKEOFF'
+       pstart.state.stepId = 'TAKEOFF'
+       pstart.state.status = 'Schritt 1: normaler Start - kein Precision-Regeleingriff.'
++      this.recordProtocolEvent('TAKEOFF_COMMAND')
+       drone.addLog('INFO', '[PStart] Step 1: executing existing normal takeoff command without pitch/roll/yaw intervention')
+       DroneControlService.takeoff()
+ 
+       const hoverHeight = await this.waitForStableHover(id)
+       if (hoverHeight == null || !this.isCurrent(id)) return
+       pstart.state.hoverHeight = hoverHeight
+-      drone.addLog('INFO', `[PStart] stable hover height=${hoverHeight.toFixed(2)}m (relative to PStart zero)`)
++      this.recordProtocolEvent('HOVER_DETECTED', { hoverHeight })
++      drone.addLog('INFO', `[PStart] stable hover height=${hoverHeight.toFixed(2)}m (mean over stable window, relative to PStart zero)`)
+ 
+       const { endHeight, heightStep } = usePrecisionStartSettings()
+       const end = Math.max(1, Number(endHeight.value) || 20)
+@@ -135,6 +181,7 @@
+       }
+ 
+       const targets = this.buildTargets(firstReference, step, end)
++      this.recordProtocolEvent('REFERENCE_TARGETS_CALCULATED', { firstReference, endHeight: end, heightStep: step, targets })
+       drone.addLog('INFO', `[PStart] reference targets=${targets.map(v => v.toFixed(2)).join(' -> ')}m`)
+ 
+       for (let index = 0; index < targets.length; index++) {
+@@ -143,6 +190,7 @@
+         pstart.state.referenceIndex = index
+         pstart.state.stepId = `REF_${index}`
+         pstart.state.currentTargetHeight = target
++        this.recordProtocolEvent('REFERENCE_STAGE_BEGIN', { referenceIndex: index, targetHeight: target })
+ 
+         if (!await this.ascendTo(id, target)) return
+         if (!this.isCurrent(id)) return
+@@ -153,7 +201,9 @@
+         const stabilizationMs = Math.max(0, Number(usePrecisionStartSettings().stabilizationSeconds.value) || 0) * 1000
+         pstart.state.phase = 'STABILIZE'
+         pstart.state.status = `Referenz ${index + 1}: Stabilisierung bei ${target.toFixed(1)} m.`
++        this.recordProtocolEvent('STABILIZATION_STARTED', { referenceIndex: index, targetHeight: target, stabilizationMs })
+         if (!await this.delayWithAbortCheck(id, stabilizationMs)) return
++        this.recordProtocolEvent('STABILIZATION_COMPLETE', { referenceIndex: index, targetHeight: target })
+ 
+         // Final angle check directly before the two pictures. A drift triggers the second-preset logic again.
+         if (!this.gimbalIsReady()) {
+@@ -172,6 +222,11 @@
+       if (!this.isCurrent(id)) return
+       this.stopAutomaticAxes(true)
+       CameraMediaService.setZoom(1)
++      this.recordProtocolEvent('PSTART_COMPLETE', {
++        capturedImages: pstart.state.capturedImages,
++        finalHeight: this.relativeHeight(pstart.state.startVerticalDistance),
++      })
++      await this.finalizeProtocol('COMPLETED')
+       pstart.finish(`PStart abgeschlossen: ${pstart.state.capturedImages} Bilder dokumentiert. Drohne schwebt auf Endhöhe.`)
+       drone.addLog('INFO', `[PStart] completed session=${sessionId}; images=${pstart.state.capturedImages}; finalHeight=${this.relativeHeight(pstart.state.startVerticalDistance).toFixed(2)}m`)
+     } catch (error: any) {
+@@ -236,6 +291,7 @@
+     const drone = useDroneStore()
+     const deadline = Date.now() + TAKEOFF_HOVER_TIMEOUT_MS
+     let stableSince = 0
++    let heightSamples: number[] = []
+ 
+     pstart.state.phase = 'WAIT_HOVER'
+     pstart.state.status = 'Normaler Start läuft - warte auf stabilen Schwebeflug.'
+@@ -246,13 +302,23 @@
+         this.abort('manueller Steuereingriff während des normalen Starts', 'manual')
+         return null
+       }
++      if (!this.checkPositionSafety('WAIT_HOVER')) return null
++
+       const t = drone.telemetry
+       const stable = !!t.flying && !t.takingOff && !t.landing && Math.abs(Number(t.verticalSpeed || 0)) <= HOVER_VERTICAL_SPEED_MPS
+       if (stable) {
+-        if (!stableSince) stableSince = Date.now()
+-        if (Date.now() - stableSince >= HOVER_STABLE_MS) return this.relativeHeight(pstart.state.startVerticalDistance)
++        if (!stableSince) {
++          stableSince = Date.now()
++          heightSamples = []
++        }
++        heightSamples.push(this.relativeHeight(pstart.state.startVerticalDistance))
++        if (Date.now() - stableSince >= HOVER_STABLE_MS) {
++          const mean = heightSamples.reduce((sum, value) => sum + value, 0) / Math.max(1, heightSamples.length)
++          return this.roundHeight(mean)
++        }
+       } else {
+         stableSince = 0
++        heightSamples = []
+       }
+       await sleep(100)
+     }
+@@ -276,15 +342,17 @@
+     const pstart = usePrecisionStartStore()
+     const drone = useDroneStore()
+     const current = this.relativeHeight(pstart.state.startVerticalDistance)
+-    if (target <= current + TARGET_TOLERANCE_M) {
++    if (target <= current + TARGET_REACHED_TOLERANCE_M) {
+       // Never descend. If telemetry already passed the target, continue with the next stage at current altitude.
+       drone.addLog('WARN', `[PStart] target ${target.toFixed(2)}m already reached/passed at ${current.toFixed(2)}m; no descent commanded`)
++      this.recordProtocolEvent('TARGET_ALREADY_REACHED', { targetHeight: target, relativeHeight: current })
+       this.neutralThrottle()
+       return true
+     }
+ 
+     pstart.state.phase = 'ASCEND'
+     pstart.state.status = `Steige auf ${target.toFixed(1)} m - nur Throttle, kein Pitch/Roll/Yaw.`
++    this.recordProtocolEvent('ASCENT_STARTED', { targetHeight: target, startHeight: current })
+     const deadline = Date.now() + ASCENT_TIMEOUT_MS
+     this.startAutomaticAxes()
+ 
+@@ -294,18 +362,32 @@
+         this.abort('manueller Steuereingriff während des Aufstiegs', 'manual')
+         return false
+       }
++      if (!this.checkPositionSafety('ASCEND')) return false
++
+       const height = this.relativeHeight(pstart.state.startVerticalDistance)
+       const remaining = target - height
+-      if (remaining <= TARGET_TOLERANCE_M) {
++      if (remaining <= TARGET_REACHED_TOLERANCE_M) {
+         this.neutralThrottle()
++        this.recordProtocolEvent('TARGET_REACHED', { targetHeight: target, relativeHeight: height, overshoot: height - target })
+         drone.addLog('INFO', `[PStart] target ${target.toFixed(2)}m reached at ${height.toFixed(2)}m; throttle neutral`)
+-        return true
+-      }
+-
+-      // Vertical-only V1 control: softer throttle as the target approaches.
+-      const throttle = remaining > 1.0 ? 260 : remaining > 0.35 ? 160 : 90
++
++        const settled = await this.waitForPostAscentSettle(id, target)
++        if (settled === null) return false
++        if (settled) return true
++
++        this.recordProtocolEvent('ASCENT_RESUME_AFTER_DROP', {
++          targetHeight: target,
++          relativeHeight: this.relativeHeight(pstart.state.startVerticalDistance),
++        })
++        pstart.state.phase = 'ASCEND'
++      }
++
++      // Vertical-only V1 control. The close-range command deliberately stays above
++      // the previous very small value so that the first +10 cm point is not lost in
++      // a control dead zone. PStart still stops immediately once the target is reached.
++      const throttle = remaining > 1.0 ? 260 : remaining > 0.35 ? 180 : CLOSE_ASCENT_THROTTLE
+       this.setAutoThrottle(throttle)
+-      await sleep(80)
++      await sleep(CONTROL_INTERVAL_MS)
+     }
+ 
+     this.neutralThrottle()
+@@ -313,6 +395,54 @@
+     return false
+   }
+ 
++  /**
++   * After crossing a target PStart does not try to hold an exact decimetre value.
++   * It neutralizes throttle and waits for vertical motion to settle. Only a clear
++   * drop below the target band causes the climb to resume. This is intentionally
++   * tolerant of wind and quantized verticalDistance telemetry.
++   */
++  private static async waitForPostAscentSettle(id: number, target: number): Promise<boolean | null> {
++    const pstart = usePrecisionStartStore()
++    const drone = useDroneStore()
++    const deadline = Date.now() + ASCENT_SETTLE_TIMEOUT_MS
++    let stableSince = 0
++
++    while (Date.now() < deadline) {
++      if (!this.isCurrent(id)) return null
++      if (this.hardwareManualInputActive()) {
++        this.abort('manueller Steuereingriff während der Höhenberuhigung', 'manual')
++        return null
++      }
++      if (!this.checkPositionSafety('ASCENT_SETTLE')) return null
++
++      const height = this.relativeHeight(pstart.state.startVerticalDistance)
++      const verticalSpeed = Math.abs(Number(drone.telemetry.verticalSpeed || 0))
++      if (height < target - TARGET_SETTLE_DROP_TOLERANCE_M) {
++        drone.addLog('WARN', `[PStart] height dropped to ${height.toFixed(2)}m after target ${target.toFixed(2)}m; resuming vertical ascent`)
++        return false
++      }
++
++      if (verticalSpeed <= TARGET_SETTLE_VERTICAL_SPEED_MPS) {
++        if (!stableSince) stableSince = Date.now()
++        if (Date.now() - stableSince >= ASCENT_SETTLE_STABLE_MS) {
++          this.recordProtocolEvent('TARGET_SETTLED', { targetHeight: target, relativeHeight: height, verticalSpeed })
++          return true
++        }
++      } else {
++        stableSince = 0
++      }
++      await sleep(100)
++    }
++
++    const height = this.relativeHeight(pstart.state.startVerticalDistance)
++    if (height >= target - TARGET_SETTLE_DROP_TOLERANCE_M) {
++      drone.addLog('WARN', `[PStart] target ${target.toFixed(2)}m did not fully settle within ${(ASCENT_SETTLE_TIMEOUT_MS / 1000).toFixed(1)}s; continuing within tolerant height band at ${height.toFixed(2)}m`)
++      this.recordProtocolEvent('TARGET_SETTLE_TIMEOUT_ACCEPTED', { targetHeight: target, relativeHeight: height })
++      return true
++    }
++    return false
++  }
++
+   private static async ensureGimbalMinus90(id: number, airborne: boolean): Promise<boolean> {
+     const pstart = usePrecisionStartStore()
+     const drone = useDroneStore()
+@@ -322,6 +452,7 @@
+     for (let attempt = 1; attempt <= 2; attempt++) {
+       if (!this.isCurrent(id)) return false
+       const sent = DroneControlService.setGimbalPitchPreset(-90)
++      this.recordProtocolEvent('GIMBAL_PRESET', { attempt, targetPitch: -90, commandSent: sent })
+       if (!sent) DroneControlService.requestGimbalSettings()
+       const deadline = Date.now() + GIMBAL_ATTEMPT_TIMEOUT_MS
+       while (Date.now() < deadline) {
+@@ -330,12 +461,15 @@
+           this.abort('manueller Steuereingriff während der Gimbal-Ausrichtung', 'manual')
+           return false
+         }
++        if (airborne && !this.checkPositionSafety('GIMBAL')) return false
+         if (this.gimbalIsReady()) {
++          this.recordProtocolEvent('GIMBAL_CONFIRMED', { attempt, actualPitch: Number(drone.telemetry.gimbalPitch || 0) })
+           drone.addLog('INFO', `[PStart] gimbal -90° confirmed on attempt ${attempt}: ${Number(drone.telemetry.gimbalPitch || 0).toFixed(1)}°`)
+           return true
+         }
+         await sleep(100)
+       }
++      this.recordProtocolEvent('GIMBAL_PRESET_TIMEOUT', { attempt, actualPitch: Number(drone.telemetry.gimbalPitch || 0) })
+       drone.addLog('WARN', `[PStart] gimbal -90° not confirmed after preset attempt ${attempt}/2`)
+     }
+ 
+@@ -366,6 +500,7 @@
+     const drone = useDroneStore()
+     pstart.state.phase = 'CAPTURE'
+     pstart.state.stepId = context.stepId
++    this.recordProtocolEvent('CAPTURE_PAIR_STARTED', { ...context })
+ 
+     await this.setZoomAndWait(id, 1)
+     if (!this.isCurrent(id)) return
+@@ -380,6 +515,7 @@
+ 
+     // Keep the pilot/live view wide between stages.
+     CameraMediaService.setZoom(1)
++    this.recordProtocolEvent('CAPTURE_PAIR_COMPLETE', { stepId: context.stepId, zoomZero: 1, zoomMax: maxZoom })
+     drone.addLog('INFO', `[PStart] ${context.stepId} image pair completed (1.00x + ${maxZoom.toFixed(2)}x)`)
+   }
+ 
+@@ -397,6 +533,7 @@
+   ) {
+     if (!this.isCurrent(id)) return
+     const pstart = usePrecisionStartStore()
++    const settings = usePrecisionStartSettings()
+     const metadata = PrecisionStartMetadataService.build({
+       sessionId: pstart.state.sessionId,
+       stepId: context.stepId,
+@@ -411,13 +548,32 @@
+       referenceEligible: context.referenceEligible,
+       referenceReason: context.referenceReason,
+       zoomRole,
++      positionWarningMeters: Number(settings.positionWarningMeters.value),
++      positionAbortMeters: Number(settings.positionAbortMeters.value),
++      pstartThrottleCommand: this.autoThrottle,
+     })
+     const heightLabel = context.targetHeight == null ? 'step0' : `${context.targetHeight.toFixed(1).replace('.', 'p')}m`
+     const name = `PStart_${pstart.state.sessionId}_${context.stepId}_${heightLabel}_${zoomRole.toLowerCase()}.jpg`
+     const source = context.referenceEligible ? 'pstart-reference' : 'pstart-documentation'
+-    const saved = await AndroidMediaService.savePrecisionSnapshot(metadata, name, source)
++    const saved = await AndroidMediaService.savePrecisionSnapshot(metadata, name, source, pstart.state.sessionId)
+     if (!this.isCurrent(id)) return
++
++    if (context.stepId === 'STEP0' && zoomRole === 'ZERO') {
++      this.protocolMasterImageId = saved.id
++      this.protocolMasterImageName = saved.name
++    }
++
+     pstart.state.capturedImages += 1
++    this.recordProtocolEvent('IMAGE_CAPTURED', {
++      stepId: context.stepId,
++      referenceIndex: context.referenceIndex,
++      targetHeight: context.targetHeight,
++      zoomRole,
++      name: saved.name,
++      id: saved.id,
++      relativePath: saved.relativePath,
++      verified: saved.verified === true,
++    })
+     useDroneStore().addLog('INFO', `[PStart] image saved: ${saved.relativePath}/${saved.name}; verified=${saved.verified === true}`)
+   }
+ 
+@@ -428,7 +584,10 @@
+     while (Date.now() < deadline) {
+       if (!this.isCurrent(id)) return
+       const actual = Number(camera.zoomActual ?? camera.zoomTarget)
+-      if (!camera.zoomPending && Math.abs(actual - zoom) <= 0.05) return
++      if (!camera.zoomPending && Math.abs(actual - zoom) <= 0.05) {
++        this.recordProtocolEvent('ZOOM_CONFIRMED', { targetZoom: zoom, actualZoom: actual })
++        return
++      }
+       await sleep(80)
+     }
+     throw new Error(`Kamerazoom ${zoom.toFixed(2)}x wurde nicht bestätigt`)
+@@ -461,8 +620,8 @@
+         drone.addLog('INFO', `[PStart fallback] configured flight height ${end.toFixed(1)}m reached; throttle neutral`)
+         return
+       }
+-      this.setAutoThrottle(remaining > 1 ? 260 : 120)
+-      await sleep(80)
++      this.setAutoThrottle(remaining > 1 ? 260 : 150)
++      await sleep(CONTROL_INTERVAL_MS)
+     }
+     this.fallbackActive = false
+     this.stopAutomaticAxes(true)
+@@ -494,16 +653,20 @@
+   }
+ 
+   private static setAutoThrottle(value: number) {
+-    this.autoThrottle = Math.max(-1000, Math.min(1000, Math.round(value)))
++    const next = Math.max(-1000, Math.min(1000, Math.round(value)))
++    const changed = next !== this.autoThrottle
++    this.autoThrottle = next
+     const drone = useDroneStore()
+     drone.userJoysticks.throttle = this.autoThrottle
+     drone.userJoysticks.yaw = 0
+     drone.userJoysticks.pitch = 0
+     drone.userJoysticks.roll = 0
+     DroneControlService.sendJoysticks()
++    if (changed) this.recordProtocolEvent('THROTTLE_COMMAND', { command: this.autoThrottle })
+   }
+ 
+   private static neutralThrottle() {
++    const changed = this.autoThrottle !== 0
+     this.autoThrottle = 0
+     const drone = useDroneStore()
+     drone.userJoysticks.throttle = 0
+@@ -511,6 +674,7 @@
+     drone.userJoysticks.pitch = 0
+     drone.userJoysticks.roll = 0
+     DroneControlService.sendJoysticks()
++    if (changed) this.recordProtocolEvent('THROTTLE_NEUTRAL', { command: 0 })
+   }
+ 
+   private static stopAutomaticAxes(sendNeutral: boolean) {
+@@ -518,8 +682,8 @@
+       clearInterval(this.axisTimer)
+       this.axisTimer = null
+     }
+-    this.autoThrottle = 0
+     if (sendNeutral) this.neutralThrottle()
++    else this.autoThrottle = 0
+   }
+ 
+   private static async delayWithAbortCheck(id: number, ms: number): Promise<boolean> {
+@@ -530,9 +694,251 @@
+         this.abort('manueller Steuereingriff während der Stabilisierung', 'manual')
+         return false
+       }
++      if (!this.checkPositionSafety('STABILIZE')) return false
+       await sleep(Math.min(100, Math.max(1, deadline - Date.now())))
+     }
+     return this.isCurrent(id)
++  }
++
++  /**
++   * Horizontal GPS drift does not gate normal reference acquisition inside the
++   * warning radius. A larger configurable warning radius marks quality only; the
++   * separate abort radius is the safety boundary.
++   */
++  private static checkPositionSafety(stage: string): boolean {
++    const pstart = usePrecisionStartStore()
++    if (!pstart.state.startLatitude || !pstart.state.startLongitude) return true
++
++    const drone = useDroneStore()
++    const settings = usePrecisionStartSettings()
++    const warning = Math.max(0.5, Number(settings.positionWarningMeters.value) || 3)
++    const abort = Math.max(warning + 0.5, Number(settings.positionAbortMeters.value) || 6)
++    const offset = PrecisionStartMetadataService.homeOffsetMeters(
++      pstart.state.startLatitude,
++      pstart.state.startLongitude,
++      Number(drone.telemetry.latitude || 0),
++      Number(drone.telemetry.longitude || 0),
++    )
++    if (offset == null) return true
++
++    if (offset > abort) {
++      if (!this.positionAbortSince) {
++        this.positionAbortSince = Date.now()
++        this.recordProtocolEvent('POSITION_ABORT_PENDING', { stage, homeOffset: offset, abortMeters: abort, requiredStableMs: POSITION_ABORT_STABLE_MS })
++      }
++      if (Date.now() - this.positionAbortSince >= POSITION_ABORT_STABLE_MS) {
++        this.recordProtocolEvent('POSITION_ABORT_LIMIT', { stage, homeOffset: offset, abortMeters: abort, exceededForMs: Date.now() - this.positionAbortSince })
++        this.abort(`GPS-Positionsabweichung ${offset.toFixed(1)} m überschreitet Abbruchgrenze ${abort.toFixed(1)} m länger als ${(POSITION_ABORT_STABLE_MS / 1000).toFixed(1)} s`)
++        return false
++      }
++    } else {
++      this.positionAbortSince = 0
++    }
++
++    if (offset > warning && !this.positionWarningActive) {
++      this.positionWarningActive = true
++      this.recordProtocolEvent('POSITION_WARNING', { stage, homeOffset: offset, warningMeters: warning, abortMeters: abort })
++      drone.addLog('WARN', `[PStart] position warning: homeOffset=${offset.toFixed(1)}m > ${warning.toFixed(1)}m; PStart continues until abort limit ${abort.toFixed(1)}m`)
++    } else if (offset <= warning && this.positionWarningActive) {
++      this.positionWarningActive = false
++      this.recordProtocolEvent('POSITION_RECOVERED', { stage, homeOffset: offset, warningMeters: warning })
++      drone.addLog('INFO', `[PStart] position recovered inside warning radius: homeOffset=${offset.toFixed(1)}m`)
++    }
++    return true
++  }
++
++  private static startProtocol(sessionId: string) {
++    this.stopProtocolSampling()
++    this.protocolLines = []
++    this.protocolSessionId = sessionId
++    this.protocolMasterImageId = ''
++    this.protocolMasterImageName = ''
++    this.protocolClosed = false
++    this.protocolFinalized = false
++    this.positionWarningActive = false
++    this.positionAbortSince = 0
++
++    const settings = usePrecisionStartSettings()
++    this.recordProtocolEvent('SESSION_START', {
++      schema: 'PotensicProxy/PStartSession',
++      schemaVersion: '1.0',
++      settings: {
++        endHeight: Number(settings.endHeight.value),
++        heightStep: Number(settings.heightStep.value),
++        stabilizationSeconds: Number(settings.stabilizationSeconds.value),
++        positionWarningMeters: Number(settings.positionWarningMeters.value),
++        positionAbortMeters: Number(settings.positionAbortMeters.value),
++        firstReferenceOffsetMeters: FIRST_REFERENCE_OFFSET_M,
++        protocolSampleIntervalMs: PROTOCOL_SAMPLE_INTERVAL_MS,
++      },
++    })
++    this.protocolTimer = setInterval(() => this.recordProtocolTelemetry(), PROTOCOL_SAMPLE_INTERVAL_MS)
++    this.recordProtocolTelemetry()
++  }
++
++  private static stopProtocolSampling() {
++    if (this.protocolTimer) {
++      clearInterval(this.protocolTimer)
++      this.protocolTimer = null
++    }
++  }
++
++  private static recordProtocolTelemetry() {
++    if (this.protocolClosed || !this.protocolSessionId) return
++    const pstart = usePrecisionStartStore()
++    const drone = useDroneStore()
++    const t = drone.telemetry
++    const settings = usePrecisionStartSettings()
++    const homeOffset = PrecisionStartMetadataService.homeOffsetMeters(
++      pstart.state.startLatitude,
++      pstart.state.startLongitude,
++      Number(t.latitude || 0),
++      Number(t.longitude || 0),
++    )
++    const warning = Number(settings.positionWarningMeters.value) || 3
++    const abort = Number(settings.positionAbortMeters.value) || 6
++    const positionQuality = homeOffset == null
++      ? 'UNKNOWN'
++      : homeOffset > abort
++        ? 'ABORT_LIMIT'
++        : homeOffset > warning ? 'WARNING_POSITION' : 'GOOD'
++
++    this.protocolLines.push(JSON.stringify({
++      schemaVersion: 1,
++      recordType: 'telemetry',
++      timestampUnixMs: Date.now(),
++      timestampIso: new Date().toISOString(),
++      sessionId: this.protocolSessionId,
++      phase: pstart.state.phase,
++      stepId: pstart.state.stepId,
++      referenceIndex: pstart.state.referenceIndex,
++      targetHeight: pstart.state.currentTargetHeight,
++      verticalDistance: Number(t.verticalDistance || 0),
++      pstartHeight: this.relativeHeight(pstart.state.startVerticalDistance),
++      verticalSpeed: Number(t.verticalSpeed || 0),
++      horizontalSpeed: Number(t.horizontalSpeed || 0),
++      latitude: Number(t.latitude || 0),
++      longitude: Number(t.longitude || 0),
++      homeOffset,
++      positionQuality,
++      gps: {
++        receiveGps: !!t.receiveGps,
++        gpsLocationValid: !!t.gpsLocationValid,
++        gpsInterference: !!t.gpsInterference,
++        gpsAccuracy: Number((t as any).gpsAccuracy || 0),
++        satellites: Number(t.satellites || 0),
++      },
++      tofHeight: Number(t.tofHeight ?? -1),
++      heading: Number(t.heading || 0),
++      pitch: Number(t.pitch || 0),
++      roll: Number(t.roll || 0),
++      gimbalPitch: Number(t.gimbalPitch || 0),
++      rcHardware: { ...drone.rcHardwareJoysticks },
++      pstartControl: {
++        throttleCommand: this.autoThrottle,
++        yawCommand: 0,
++        pitchCommand: 0,
++        rollCommand: 0,
++      },
++      flightState: {
++        flying: !!t.flying,
++        takingOff: !!t.takingOff,
++        landing: !!t.landing,
++        returning: !!t.returning,
++      },
++    }))
++  }
++
++  private static recordProtocolEvent(event: string, details: Record<string, unknown> = {}) {
++    if (this.protocolClosed || !this.protocolSessionId) return
++    const pstart = usePrecisionStartStore()
++    const drone = useDroneStore()
++    this.protocolLines.push(JSON.stringify({
++      schemaVersion: 1,
++      recordType: 'event',
++      event,
++      timestampUnixMs: Date.now(),
++      timestampIso: new Date().toISOString(),
++      sessionId: this.protocolSessionId,
++      phase: pstart.state.phase,
++      stepId: pstart.state.stepId,
++      referenceIndex: pstart.state.referenceIndex,
++      targetHeight: pstart.state.currentTargetHeight,
++      pstartHeight: this.relativeHeight(pstart.state.startVerticalDistance),
++      verticalSpeed: Number(drone.telemetry.verticalSpeed || 0),
++      homeOffset: PrecisionStartMetadataService.homeOffsetMeters(
++        pstart.state.startLatitude,
++        pstart.state.startLongitude,
++        Number(drone.telemetry.latitude || 0),
++        Number(drone.telemetry.longitude || 0),
++      ),
++      ...details,
++    }))
++  }
++
++  private static async finalizeProtocol(status: ProtocolStatus, abortReason = '') {
++    if (this.protocolFinalized || !this.protocolSessionId) return
++
++    this.stopProtocolSampling()
++    const pstart = usePrecisionStartStore()
++    const sessionId = this.protocolSessionId
++    const masterImageId = this.protocolMasterImageId
++    const masterImageName = this.protocolMasterImageName
++    const fileName = `PStart_${sessionId}_session.jsonl`
++
++    this.recordProtocolEvent('SESSION_END', {
++      status,
++      abortReason,
++      capturedImages: pstart.state.capturedImages,
++      finalHeight: this.relativeHeight(pstart.state.startVerticalDistance),
++      masterImageName,
++      protocolFile: fileName,
++    })
++    this.protocolClosed = true
++    this.protocolFinalized = true
++
++    const lines = [...this.protocolLines]
++    const protocol = `${lines.join('\n')}\n`
++    try {
++      const result = await AndroidMediaService.finalizePrecisionSession({
++        sessionId,
++        masterImageId,
++        masterImageName,
++        fileName,
++        protocol,
++        summary: {
++          schema: 'PotensicProxy/PStartSessionSummary',
++          schemaVersion: 1,
++          status,
++          abortReason,
++          recordCount: lines.length,
++          capturedImages: pstart.state.capturedImages,
++          hoverHeight: pstart.state.hoverHeight,
++          finalHeight: this.relativeHeight(pstart.state.startVerticalDistance),
++          endedAtUnixMs: Date.now(),
++          endedAtIso: new Date().toISOString(),
++        },
++      })
++      const sidecarSaved = result.protocol.saved !== false && !!result.protocol.uri
++      const embedded = result.masterImage?.protocolEmbedded === true
++      useDroneStore().addLog(
++        sidecarSaved ? 'INFO' : 'WARN',
++        `[PStart] session protocol finalized: sidecar=${sidecarSaved ? `${result.protocol.relativePath}/${result.protocol.name}` : 'not saved'}; ` +
++        `verified=${result.protocol.verified === true}; embeddedInMaster=${embedded}` +
++        (!sidecarSaved && result.protocol.error ? `; sidecarError=${result.protocol.error}` : '')
++      )
++    } catch (error: any) {
++      useDroneStore().addLog('ERROR', `[PStart] session protocol finalization failed: ${error?.message || String(error)}`)
++    }
++  }
++
++  private static abortProtocolStatus(reason: string, kind: 'manual' | 'error'): ProtocolStatus {
++    if (kind === 'manual') return 'ABORTED_MANUAL'
++    const normalized = reason.toLowerCase()
++    if (normalized.includes('gimbal')) return 'ABORTED_GIMBAL'
++    if (normalized.includes('timeout') || normalized.includes('innerhalb') || normalized.includes('zielhöhe')) return 'ABORTED_TIMEOUT'
++    if (normalized.includes('gps') || normalized.includes('akku') || normalized.includes('verbindung') || normalized.includes('sensor') || normalized.includes('sicher')) return 'ABORTED_SAFETY'
++    return 'ABORTED_ERROR'
+   }
+ 
+   private static isCurrent(id: number): boolean {
