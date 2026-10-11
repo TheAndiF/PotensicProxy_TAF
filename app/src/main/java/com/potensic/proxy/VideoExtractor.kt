@@ -20,6 +20,8 @@ import java.util.zip.CRC32
 class VideoExtractor {
 
     @Volatile var captureManager: TransportCaptureManager? = null
+    /** Called once for each structurally valid ATOM homepoint receive telegram. */
+    @Volatile var onHomePointReceived: (() -> Unit)? = null
     @Volatile private var protocolProfile: DroneProfileManager.Profile? = null
     private var atomFrameBuffer = ByteArray(0)
     private var atomFrameIsKey = false
@@ -271,6 +273,21 @@ class VideoExtractor {
         captureManager?.recordFePacket(feType, packet, payload)
         if (feType != 0x06) {
             if (payload.size > 6) TelemetryParser.parse(feType, payload, protocolProfile?.id)
+            // Acknowledge only ATOM FE 0x21 / inner 0x0005 telegrams with valid
+            // inner length and checksum. The original PotensicPro ACKs reception
+            // independently of the isSyncHome bit and coordinate availability.
+            if (feType == 0x21 && protocolProfile?.id == "ATOM" && payload.size >= 16 &&
+                payload[0] == 0xFF.toByte() && (payload[1] == 0xFD.toByte() || payload[1] == 0xFE.toByte())) {
+                val innerLen = (payload[2].toInt() and 0xFF) or ((payload[3].toInt() and 0xFF) shl 8)
+                val cmd = (payload[4].toInt() and 0xFF) or ((payload[5].toInt() and 0xFF) shl 8)
+                // 3 bytes fixed (short+checksum), >=9 home payload bytes.
+                if (cmd == 0x0005 && innerLen >= 12 && payload.size == innerLen + 4) {
+                    var check = 0
+                    for (n in 2 until payload.size - 1) check = check xor (payload[n].toInt() and 0xFF)
+                    if (check == (payload.last().toInt() and 0xFF)) onHomePointReceived?.invoke()
+                    else Log.w("[Homepoint] RX checksum invalid; ACK suppressed")
+                }
+            }
             return
         }
 

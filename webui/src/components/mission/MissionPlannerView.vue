@@ -141,7 +141,7 @@ function unworld(x:number,y:number,z:number){return geoPoint(x,y,z)}
 function screenPoint(lat:number,lon:number){return projectScreen(lat,lon,center.latitude,center.longitude,zoom.value,size.value.w,size.value.h)}
 const waypointScreen=computed(()=>mission.value.waypoints.map(wp=>({...screenPoint(wp.latitude,wp.longitude),wp})))
 const droneScreen=computed(()=>validGps()?screenPoint(store.telemetry.latitude,store.telemetry.longitude):null)
-const homeScreen=computed(()=>{const lat=store.telemetry.homeLatitude,lon=store.telemetry.homeLongitude;return store.telemetry.homeSynced&&typeof lat==='number'&&typeof lon==='number'?screenPoint(lat,lon):null})
+const homeScreen=computed(()=>{const lat=store.telemetry.homeLatitude,lon=store.telemetry.homeLongitude;return store.telemetry.homePointValid&&typeof lat==='number'&&typeof lon==='number'?screenPoint(lat,lon):null})
 function onWheel(e:WheelEvent){zoom.value=Math.max(1,Math.min(19,zoom.value+(e.deltaY<0?1:-1)))}
 function beginPan(e:MouseEvent){if(e.button!==0)return;panning=true;panMoved=false;panStart={x:e.clientX,y:e.clientY};panWorld=world(center.longitude,center.latitude,zoom.value)}
 function movePan(e:MouseEvent){if(!panning)return;const dx=e.clientX-panStart.x,dy=e.clientY-panStart.y;if(Math.abs(dx)+Math.abs(dy)>4)panMoved=true;const c=unworld(panWorld.x-dx,panWorld.y-dy,zoom.value);center.latitude=c.latitude;center.longitude=c.longitude}

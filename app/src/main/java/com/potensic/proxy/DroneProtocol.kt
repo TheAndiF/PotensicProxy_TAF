@@ -79,6 +79,12 @@ object DroneProtocol {
         return wrapFE(buildInnerCommand(0xD7.toByte(), deviceHash), 0x15)
     }
 
+    /** PotensicPro SendHomeRevData acknowledgment (not a set/request operation).
+     * APP_TO_FLIGHT FE 0x14, function 0x0005, exactly one payload byte 0x01.
+     */
+    fun buildHomePointAck(): ByteArray =
+        wrapFE(buildInnerCommandWithShort(0x0005, byteArrayOf(0x01)), 0x14)
+
     // === Flight actions ===
     // PotensicPro SendCtrlData: function 0x0014 over APP_TO_FLIGHT / FE type 0x14.
     // Payload is always 32 bytes. Only command (+2, uint16 LE) and

@@ -76,6 +76,11 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
 
         transportCapture = TransportCaptureManager(filesDir)
         videoExtractor.captureManager = transportCapture
+        videoExtractor.onHomePointReceived = {
+            val ack = DroneProtocol.buildHomePointAck()
+            Log.i("[Homepoint] TX ACK FE=0x14 function=0x0005 payload=01")
+            sendDirectAny(ack)
+        }
         droneProfileManager = DroneProfileManager(applicationContext)
         videoExtractor.setProtocolProfile(droneProfileManager.current())
         preferredLiveViewH265 = droneProfileManager.current().preferredCodec == "h265"

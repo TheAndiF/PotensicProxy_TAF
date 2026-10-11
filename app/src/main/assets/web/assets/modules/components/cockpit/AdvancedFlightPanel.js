@@ -270,7 +270,7 @@ function render(_ctx, _cache, $props, $setup, $data, $options) {
         _createElementVNode("div", _hoisted_19, [
             _cache[32] || (_cache[32] = _createElementVNode("div", { class: "ui-subtitle" }, "Find My Drone / geofence status", -1 /* CACHED */)),
             _createElementVNode("div", _hoisted_20, "Drone: " + _toDisplayString($setup.coord($setup.t.latitude, $setup.t.longitude)), 1 /* TEXT */),
-            _createElementVNode("div", _hoisted_21, "Home: " + _toDisplayString($setup.t.homeSynced ? $setup.coord($setup.t.homeLatitude || 0, $setup.t.homeLongitude || 0) : 'not synced'), 1 /* TEXT */),
+            _createElementVNode("div", _hoisted_21, "Home: " + _toDisplayString($setup.t.homePointValid ? $setup.coord($setup.t.homeLatitude || 0, $setup.t.homeLongitude || 0) : 'not synced'), 1 /* TEXT */),
             _createElementVNode("div", _hoisted_22, "Zone: height limit " + _toDisplayString($setup.t.noFlyHeightLimit || 0) + ", distance " + _toDisplayString($setup.t.noFlyDistance || 0), 1 /* TEXT */),
             _createElementVNode("div", _hoisted_23, [
                 _createElementVNode("button", {

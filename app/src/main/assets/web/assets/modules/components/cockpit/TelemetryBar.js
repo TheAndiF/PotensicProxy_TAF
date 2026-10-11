@@ -118,6 +118,12 @@ function render(_ctx, _cache, $props, $setup, $data, $options) {
             _createElementVNode("span", _hoisted_20, _toDisplayString($setup.t('telemetry.satellites')), 1 /* TEXT */),
             _createElementVNode("span", _hoisted_21, _toDisplayString($setup.store.telemetry.satellites || 0), 1 /* TEXT */)
         ]),
+        _createElementVNode("div", { class: "hud-item homepoint" }, [
+            _createElementVNode("span", { class: "lbl" }, "Homepoint"),
+            _createElementVNode("span", {
+                class: _normalizeClass(["val", $setup.store.telemetry.homePointValid ? 'battery-ok' : 'battery-unknown'])
+            }, _toDisplayString($setup.store.telemetry.homePointValid ? '✓' : '–'), 3 /* TEXT, CLASS */)
+        ]),
         _createElementVNode("div", _hoisted_22, [
             _createElementVNode("span", _hoisted_23, _toDisplayString($setup.t('telemetry.heading')), 1 /* TEXT */),
             _createElementVNode("span", _hoisted_24, _toDisplayString($setup.store.telemetry.heading || 0) + "°", 1 /* TEXT */)

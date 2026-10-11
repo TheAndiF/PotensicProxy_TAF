@@ -56,6 +56,9 @@ export const useDroneStore = defineStore('drone', () => {
         homeLatitude: 0,
         homeLongitude: 0,
         homeSynced: false,
+        homePointValid: false,
+        homeAltitude: null,
+        homeHeading: null,
         windSpeed: 0,
         remainedFlyTime: 0,
         gpsUtcTime: 0,
@@ -208,6 +211,7 @@ export const useDroneStore = defineStore('drone', () => {
             logs.value.splice(0, logs.value.length - LOG_BUFFER_LIMIT);
         }
     }
+    let lastFlightPacketAt = 0;
     function addPacket(packet) {
         if (packet.dir === 'RX') {
             streamStats.packetsRx++;
@@ -220,6 +224,29 @@ export const useDroneStore = defineStore('drone', () => {
             streamStats.bytesTx += packet.len;
         }
         if (packet.telemetry) {
+            if (packet.telemetry.latitude !== undefined && packet.telemetry.longitude !== undefined)
+                lastFlightPacketAt = Date.now();
+            if (packet.telemetry.homePointValid !== undefined) {
+                const next = packet.telemetry;
+                const changed = telemetry.homePointValid !== next.homePointValid ||
+                    telemetry.homeLatitude !== next.homeLatitude || telemetry.homeLongitude !== next.homeLongitude;
+                if (!next.homePointValid) {
+                    telemetry.homeAltitude = null;
+                    telemetry.homeHeading = null;
+                }
+                else if (changed || telemetry.homeAltitude == null || telemetry.homeHeading == null) {
+                    const lat = next.homeLatitude;
+                    const lon = next.homeLongitude;
+                    const nearHome = typeof lat === 'number' && typeof lon === 'number' &&
+                        Math.abs(telemetry.latitude - lat) <= 0.000045 &&
+                        Math.abs((telemetry.longitude - lon) * Math.cos(lat * Math.PI / 180)) <= 0.000045;
+                    const safe = nearHome && (Date.now() - lastFlightPacketAt) < 2000 && telemetry.satellites >= 6 && !telemetry.flying &&
+                        Math.abs(telemetry.verticalDistance) <= 1.5 && Number.isFinite(telemetry.altitude) &&
+                        Number.isInteger(telemetry.heading) && telemetry.heading >= 0 && telemetry.heading < 360;
+                    telemetry.homeAltitude = changed ? (safe ? telemetry.altitude : null) : (telemetry.homeAltitude ?? (safe ? telemetry.altitude : null));
+                    telemetry.homeHeading = changed ? (safe ? telemetry.heading : null) : (telemetry.homeHeading ?? (safe ? telemetry.heading : null));
+                }
+            }
             Object.assign(telemetry, packet.telemetry);
             if (packet.telemetry.gimbalStateValid !== undefined ||
                 packet.telemetry.gimbalPitch !== undefined ||

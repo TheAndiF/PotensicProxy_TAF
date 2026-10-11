@@ -23,7 +23,8 @@ export interface TelemetryData {
   roll: number
   homeLatitude?: number
   homeLongitude?: number
-  homeSynced?: boolean
+  homeSynced?: boolean // raw protocol bit
+  homePointValid?: boolean // independently validated coordinates
   homeAltitude?: number | null
   homeHeading?: number | null
   windSpeed?: number

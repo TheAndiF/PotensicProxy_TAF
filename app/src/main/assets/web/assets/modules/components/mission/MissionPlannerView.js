@@ -37,7 +37,7 @@ const __sfc__ = /*@__PURE__*/ _defineComponent({
         function screenPoint(lat, lon) { return projectScreen(lat, lon, center.latitude, center.longitude, zoom.value, size.value.w, size.value.h); }
         const waypointScreen = computed(() => mission.value.waypoints.map(wp => ({ ...screenPoint(wp.latitude, wp.longitude), wp })));
         const droneScreen = computed(() => validGps() ? screenPoint(store.telemetry.latitude, store.telemetry.longitude) : null);
-        const homeScreen = computed(() => { const lat = store.telemetry.homeLatitude, lon = store.telemetry.homeLongitude; return store.telemetry.homeSynced && typeof lat === 'number' && typeof lon === 'number' ? screenPoint(lat, lon) : null; });
+        const homeScreen = computed(() => { const lat = store.telemetry.homeLatitude, lon = store.telemetry.homeLongitude; return store.telemetry.homePointValid && typeof lat === 'number' && typeof lon === 'number' ? screenPoint(lat, lon) : null; });
         function onWheel(e) { zoom.value = Math.max(1, Math.min(19, zoom.value + (e.deltaY < 0 ? 1 : -1))); }
         function beginPan(e) { if (e.button !== 0)
             return; panning = true; panMoved = false; panStart = { x: e.clientX, y: e.clientY }; panWorld = world(center.longitude, center.latitude, zoom.value); }

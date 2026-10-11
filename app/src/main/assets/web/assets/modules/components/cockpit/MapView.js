@@ -40,7 +40,7 @@ const __sfc__ = /*@__PURE__*/ _defineComponent({
         const homePoint = computed(() => {
             const lat = store.telemetry.homeLatitude;
             const lon = store.telemetry.homeLongitude;
-            if (!store.telemetry.homeSynced || !Number.isFinite(lat) || !Number.isFinite(lon) || lat == null || lon == null)
+            if (!store.telemetry.homePointValid || !Number.isFinite(lat) || !Number.isFinite(lon) || lat == null || lon == null)
                 return null;
             if (lat < -90 || lat > 90 || lon < -180 || lon > 180 || (lat === 0 && lon === 0))
                 return null;

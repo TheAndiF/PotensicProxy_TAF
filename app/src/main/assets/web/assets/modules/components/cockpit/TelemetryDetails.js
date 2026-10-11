@@ -6,6 +6,9 @@ const __sfc__ = /*@__PURE__*/ _defineComponent({
     setup(__props, { expose: __expose }) {
         __expose();
         const store = useDroneStore();
+        function homeCoord(value) { return store.telemetry.homePointValid && validNumber(value) ? Number(value).toFixed(7) + '°' : '--'; }
+        function homeMeters(value) { return store.telemetry.homePointValid && value != null && Number.isFinite(value) ? `${value.toFixed(2)} m` : '--'; }
+        function homeDegrees(value) { return store.telemetry.homePointValid && value != null && Number.isFinite(value) ? `${value}°` : '--'; }
         function validNumber(value) {
             return value != null && Number.isFinite(value);
         }
@@ -23,7 +26,7 @@ const __sfc__ = /*@__PURE__*/ _defineComponent({
             const value = store.telemetry.tofHeight;
             return validNumber(value) ? `${Number(value)} (raw)` : '--';
         });
-        const __returned__ = { store, validNumber, meters, speed, volts, degrees, percent, batteryClass, tofText };
+        const __returned__ = { store, homeCoord, homeMeters, homeDegrees, validNumber, meters, speed, volts, degrees, percent, batteryClass, tofText };
         Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true });
         return __returned__;
     }
@@ -94,6 +97,25 @@ function render(_ctx, _cache, $props, $setup, $data, $options) {
             _createElementVNode("div", _hoisted_13, [
                 _cache[11] || (_cache[11] = _createElementVNode("span", null, "Controller-Spannung", -1 /* CACHED */)),
                 _createElementVNode("strong", null, _toDisplayString($setup.volts($setup.store.telemetry.remoterVoltage)), 1 /* TEXT */)
+            ])
+        ]),
+        _createElementVNode("div", { class: "homepoint-title" }, "Homepoint — " + _toDisplayString($setup.store.telemetry.homePointValid ? 'Koordinaten vorhanden' : 'keine gültigen Koordinaten') + " (Sync-Bit: " + _toDisplayString($setup.store.telemetry.homeSynced ? '1' : '0') + ")", 1 /* TEXT */),
+        _createElementVNode("div", { class: "telemetry-grid" }, [
+            _createElementVNode("div", { class: "telemetry-row" }, [
+                _createElementVNode("span", null, "Home Latitude"),
+                _createElementVNode("strong", null, _toDisplayString($setup.homeCoord($setup.store.telemetry.homeLatitude)), 1 /* TEXT */)
+            ]),
+            _createElementVNode("div", { class: "telemetry-row" }, [
+                _createElementVNode("span", null, "Home Longitude"),
+                _createElementVNode("strong", null, _toDisplayString($setup.homeCoord($setup.store.telemetry.homeLongitude)), 1 /* TEXT */)
+            ]),
+            _createElementVNode("div", { class: "telemetry-row" }, [
+                _createElementVNode("span", null, "Home Altitude"),
+                _createElementVNode("strong", null, _toDisplayString($setup.homeMeters($setup.store.telemetry.homeAltitude)), 1 /* TEXT */)
+            ]),
+            _createElementVNode("div", { class: "telemetry-row" }, [
+                _createElementVNode("span", null, "Home Heading"),
+                _createElementVNode("strong", null, _toDisplayString($setup.homeDegrees($setup.store.telemetry.homeHeading)), 1 /* TEXT */)
             ])
         ]),
         _cache[12] || (_cache[12] = _createElementVNode("p", { class: "telemetry-note" }, [

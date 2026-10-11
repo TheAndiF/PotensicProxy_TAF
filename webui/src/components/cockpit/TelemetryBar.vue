@@ -8,7 +8,7 @@
     <div class="hud-item"><span class="lbl">{{ t('telemetry.verticalSpeed') }}</span><span class="val">{{ store.telemetry.verticalSpeed?.toFixed(1) || 0 }}m/s</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.horizontalDistance') }}</span><span class="val">{{ store.telemetry.horizontalDistance?.toFixed(1) || 0 }}m</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.satellites') }}</span><span class="val">{{ store.telemetry.satellites || 0 }}</span></div>
-    <div class="hud-item"><span class="lbl">Homepoint</span><span class="val" :class="store.telemetry.homeSynced ? 'battery-ok' : 'battery-unknown'">{{ store.telemetry.homeSynced ? '✓' : '–' }}</span></div>
+    <div class="hud-item homepoint"><span class="lbl">Homepoint</span><span class="val" :class="store.telemetry.homePointValid ? 'battery-ok' : 'battery-unknown'">{{ store.telemetry.homePointValid ? '✓' : '–' }}</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.heading') }}</span><span class="val">{{ store.telemetry.heading || 0 }}°</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.pitch') }}</span><span class="val">{{ store.telemetry.pitch || 0 }}°</span></div>
     <div class="hud-item"><span class="lbl">{{ t('telemetry.roll') }}</span><span class="val">{{ store.telemetry.roll || 0 }}°</span></div>
@@ -72,5 +72,5 @@ const controllerBatteryClass = computed(() => {
 }
 .hud-item{display:flex;gap:5px;align-items:center;white-space:nowrap}
 .lbl{color:#c3ccd8}.val{color:#fff;font-weight:700}.battery-ok{color:var(--ui-success,#52d273)}.battery-low{color:var(--ui-danger,#ff496d)}.battery-unknown{color:#c3ccd8}.power{padding-right:3px}
-@media (max-width:760px){.hud-bar{gap:5px 9px;padding:5px 8px}.hud-item:nth-child(n+9){display:none}}
+@media (max-width:760px){.hud-bar{gap:5px 9px;padding:5px 8px}.hud-item:nth-child(n+9):not(.homepoint){display:none}}
 </style>

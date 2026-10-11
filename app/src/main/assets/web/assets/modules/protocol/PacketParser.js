@@ -117,15 +117,19 @@ export class PacketParser {
                         const homeLongitude = view.getInt32(dataOffset, true) / 1e7;
                         const homeLatitude = view.getInt32(dataOffset + 4, true) / 1e7;
                         const homeSynced = (bytes[dataOffset + 8] & 0x01) !== 0;
+                        const homePointValid = Number.isFinite(homeLatitude) && Number.isFinite(homeLongitude) &&
+                            homeLatitude !== 0 && homeLongitude !== 0 &&
+                            Math.abs(homeLatitude) <= 90 && Math.abs(homeLongitude) <= 180;
                         res.category = 'telemetry';
                         res.categoryLabel = 'ATOM Home Point';
-                        res.telemetry = { homeLongitude, homeLatitude, homeSynced };
+                        res.telemetry = { homeLongitude, homeLatitude, homeSynced, homePointValid };
                         res.details = {
                             'Home longitude': homeLongitude.toFixed(7),
                             'Home latitude': homeLatitude.toFixed(7),
-                            'Home synchronized': homeSynced ? 'Yes' : 'No'
+                            'Home coordinates valid': homePointValid ? 'Yes' : 'No',
+                            'Home raw sync bit': homeSynced ? '1' : '0'
                         };
-                        res.summary = `ATOM Home Point (0x0005): ${homeLatitude.toFixed(6)}, ${homeLongitude.toFixed(6)}, synced=${homeSynced}`;
+                        res.summary = `ATOM Home Point (0x0005): ${homeLatitude.toFixed(6)}, ${homeLongitude.toFixed(6)}, valid=${homePointValid}, rawSync=${homeSynced}`;
                         return res;
                     }
                 }

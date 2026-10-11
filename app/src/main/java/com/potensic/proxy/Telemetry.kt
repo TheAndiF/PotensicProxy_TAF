@@ -123,7 +123,8 @@ data class TelemetryData(
     // Confirmed ATOM Home Point (0x0005)
     val homeLongitude: Double = 0.0,
     val homeLatitude: Double = 0.0,
-    val homeSynced: Boolean = false,
+    val homeSynced: Boolean = false, // raw PotensicPro isSyncHome bit, not coordinate validity
+    val homePointValid: Boolean = false, // received plausible firmware coordinates
     // Supplementary snapshots tied to the same 0x0005 homepoint lifecycle.
     val homeAltitude: Float? = null,
     val homeHeading: Int? = null,
@@ -242,6 +243,7 @@ data class TelemetryData(
         put("homeLongitude", homeLongitude)
         put("homeLatitude", homeLatitude)
         put("homeSynced", homeSynced)
+        put("homePointValid", homePointValid)
         put("homeAltitude", homeAltitude ?: JSONObject.NULL)
         put("homeHeading", homeHeading ?: JSONObject.NULL)
         put("batteryType", batteryType)
@@ -509,28 +511,40 @@ object TelemetryParser {
         )
     }
 
-    /** Confirmed ATOM 0x0005 Home Point layout. */
+    /**
+     * PotensicPro ATOM 0x0005 Home Point: coordinates are independently usable
+     * even when the raw isSyncHome flag is false.  Never fake firmware sync.
+     * Supplementary altitude/heading share the coordinate replacement lifecycle.
+     */
     private fun parseAtomHomePoint(payload: ByteArray, i: Int, dataLen: Int) {
         if (dataLen < 9) return
         val longitude = readIntLE(payload, i) / 1.0E7
         val latitude = readIntLE(payload, i + 4) / 1.0E7
         val synced = ((payload[i + 8].toInt() and 0xFF) and 0x01) != 0
-        val changed = !latest.homeSynced || latest.homeLongitude != longitude || latest.homeLatitude != latitude
-        // Never substitute airborne altitude / heading for ground homepoint measurements.
-        // Supplemental readings are captured only at the homepoint while on the ground.
-        val nearHome = kotlin.math.abs(latest.latitude - latitude) <= 0.000045 &&
+        val valid = latitude.isFinite() && longitude.isFinite() &&
+            latitude != 0.0 && longitude != 0.0 &&
+            latitude in -90.0..90.0 && longitude in -180.0..180.0
+        val changed = latest.homePointValid != valid ||
+            latest.homeLongitude != longitude || latest.homeLatitude != latitude
+        // Ground capture only: no airborne altitude/heading may be used as a
+        // homepoint snapshot. Do not clear snapshots on a raw sync-bit flip.
+        val nearHome = valid &&
+            kotlin.math.abs(latest.latitude - latitude) <= 0.000045 &&
             kotlin.math.abs((latest.longitude - longitude) * kotlin.math.cos(Math.toRadians(latitude))) <= 0.000045
-        val canCapture = synced && nearHome && (System.currentTimeMillis() - lastFlightInfoAt) in 0L..2000L && latest.satellites >= 6 &&
-            !latest.flying && kotlin.math.abs(latest.verticalDistance) <= 1.5f &&
+        val canCapture = nearHome && (System.currentTimeMillis() - lastFlightInfoAt) in 0L..2000L &&
+            latest.satellites >= 6 && !latest.flying &&
+            kotlin.math.abs(latest.verticalDistance) <= 1.5f &&
             latest.altitude.isFinite() && latest.heading in 0..359
         latest = latest.copy(
             homeLongitude = longitude,
             homeLatitude = latitude,
             homeSynced = synced,
-            homeAltitude = if (!synced) null else if (changed) { if (canCapture) latest.altitude else null } else (latest.homeAltitude ?: if (canCapture) latest.altitude else null),
-            homeHeading = if (!synced) null else if (changed) { if (canCapture) latest.heading else null } else (latest.homeHeading ?: if (canCapture) latest.heading else null),
+            homePointValid = valid,
+            homeAltitude = if (!valid) null else if (changed) { if (canCapture) latest.altitude else null } else (latest.homeAltitude ?: if (canCapture) latest.altitude else null),
+            homeHeading = if (!valid) null else if (changed) { if (canCapture) latest.heading else null } else (latest.homeHeading ?: if (canCapture) latest.heading else null),
             timestamp = System.currentTimeMillis(),
         )
+        Log.i("[Homepoint] RX valid=$valid rawSync=$synced lat=${"%.7f".format(java.util.Locale.US, latitude)} lon=${"%.7f".format(java.util.Locale.US, longitude)} changed=$changed")
     }
 
     /**

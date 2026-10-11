@@ -13,7 +13,7 @@
     <div class="telemetry-row"><span>Drohnen-Spannung</span><strong>{{ volts(store.telemetry.flightVoltage) }}</strong></div>
     <div class="telemetry-row"><span>Controller-Spannung</span><strong>{{ volts(store.telemetry.remoterVoltage) }}</strong></div>
   </div>
-  <div class="homepoint-title">Homepoint — {{ store.telemetry.homeSynced ? 'synchronisiert' : 'nicht synchronisiert' }}</div>
+  <div class="homepoint-title">Homepoint — {{ store.telemetry.homePointValid ? 'Koordinaten vorhanden' : 'keine gültigen Koordinaten' }} (Sync-Bit: {{ store.telemetry.homeSynced ? '1' : '0' }})</div>
   <div class="telemetry-grid">
     <div class="telemetry-row"><span>Home Latitude</span><strong>{{ homeCoord(store.telemetry.homeLatitude) }}</strong></div>
     <div class="telemetry-row"><span>Home Longitude</span><strong>{{ homeCoord(store.telemetry.homeLongitude) }}</strong></div>
@@ -32,9 +32,9 @@ import { useDroneStore } from '../../stores/useDroneStore'
 
 const store = useDroneStore()
 
-function homeCoord(value: number | undefined) { return store.telemetry.homeSynced && validNumber(value) ? Number(value).toFixed(7) + '°' : '--' }
-function homeMeters(value: number | null | undefined) { return store.telemetry.homeSynced && value != null && Number.isFinite(value) ? `${value.toFixed(2)} m` : '--' }
-function homeDegrees(value: number | null | undefined) { return store.telemetry.homeSynced && value != null && Number.isFinite(value) ? `${value}°` : '--' }
+function homeCoord(value: number | undefined) { return store.telemetry.homePointValid && validNumber(value) ? Number(value).toFixed(7) + '°' : '--' }
+function homeMeters(value: number | null | undefined) { return store.telemetry.homePointValid && value != null && Number.isFinite(value) ? `${value.toFixed(2)} m` : '--' }
+function homeDegrees(value: number | null | undefined) { return store.telemetry.homePointValid && value != null && Number.isFinite(value) ? `${value}°` : '--' }
 function validNumber(value: number | undefined) {
   return value != null && Number.isFinite(value)
 }

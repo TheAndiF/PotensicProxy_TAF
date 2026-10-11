@@ -1643,3 +1643,8 @@
   min-height: 0;
 }
 
+
+/* Homepoint extension for the embedded, prebuilt fallback UI. */
+.homepoint-title{margin:12px 1px 8px;font-size:10px;font-weight:700;color:var(--ui-text)}
+
+@media(max-width:760px){.hud-bar .hud-item.homepoint{display:flex!important}}

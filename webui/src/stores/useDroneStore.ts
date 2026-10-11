@@ -62,6 +62,7 @@ export const useDroneStore = defineStore('drone', () => {
     homeLatitude: 0,
     homeLongitude: 0,
     homeSynced: false,
+    homePointValid: false,
     homeAltitude: null,
     homeHeading: null,
     windSpeed: 0,
@@ -241,10 +242,11 @@ export const useDroneStore = defineStore('drone', () => {
 
     if (packet.telemetry) {
       if (packet.telemetry.latitude !== undefined && packet.telemetry.longitude !== undefined) lastFlightPacketAt = Date.now()
-      if (packet.telemetry.homeSynced !== undefined) {
+      if (packet.telemetry.homePointValid !== undefined) {
         const next = packet.telemetry
-        const changed = !telemetry.homeSynced || telemetry.homeLatitude !== next.homeLatitude || telemetry.homeLongitude !== next.homeLongitude
-        if (!next.homeSynced) {
+        const changed = telemetry.homePointValid !== next.homePointValid ||
+          telemetry.homeLatitude !== next.homeLatitude || telemetry.homeLongitude !== next.homeLongitude
+        if (!next.homePointValid) {
           telemetry.homeAltitude = null
           telemetry.homeHeading = null
         } else if (changed || telemetry.homeAltitude == null || telemetry.homeHeading == null) {

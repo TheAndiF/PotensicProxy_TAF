@@ -60,7 +60,7 @@
     <div class="section">
       <div class="ui-subtitle">Find My Drone / geofence status</div>
       <div class="position-row">Drone: {{ coord(t.latitude, t.longitude) }}</div>
-      <div class="position-row">Home: {{ t.homeSynced ? coord(t.homeLatitude || 0, t.homeLongitude || 0) : 'not synced' }}</div>
+      <div class="position-row">Home: {{ t.homePointValid ? coord(t.homeLatitude || 0, t.homeLongitude || 0) : 'not synced' }}</div>
       <div class="position-row">Zone: height limit {{ t.noFlyHeightLimit || 0 }}, distance {{ t.noFlyDistance || 0 }}</div>
       <div class="button-row">
         <button class="taf-btn taf-btn--compact" @click="DroneControlService.setFindDroneBeep(true)">🔊 Beep on</button>
