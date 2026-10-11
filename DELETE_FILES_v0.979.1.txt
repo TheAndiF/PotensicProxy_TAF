@@ -1,0 +1,3 @@
+PotensicProxy_TAF v0.979.1 - delete these obsolete runtime files when applying the change-only ZIP:
+webui/public/assets/taf-pairing-runtime-v0.968.js
+app/src/main/assets/web/assets/taf-pairing-runtime-v0.968.js

@@ -26,6 +26,16 @@ if (!fs.existsSync(indexPath)) {
 
 if (!fs.existsSync(runtimePath)) fail(`Missing runtime asset: ${runtimePath}`)
 
+// Reject obsolete runtimes in the Vite public source directory as well.
+// Vite copies public/ verbatim into the embedded Android assets on every build.
+const publicAssetsDir = path.join(webui, 'public', 'assets')
+if (fs.existsSync(publicAssetsDir)) {
+  for (const name of fs.readdirSync(publicAssetsDir)) {
+    const match = /^taf-pairing-runtime-v(.+)\.js$/.exec(name)
+    if (match && match[1] !== version) fail(`Stale pairing runtime in Vite public source: ${name}`)
+  }
+}
+
 const assetsDir = path.join(embedded, 'assets')
 if (fs.existsSync(assetsDir)) {
   for (const name of fs.readdirSync(assetsDir)) {

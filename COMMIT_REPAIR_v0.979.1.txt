@@ -1,0 +1,17 @@
+BL_Remove obsolete pairing runtime from WebUI build
+
+Date: 2026-10-11
+
+Summary:
+- Removed the obsolete v0.968 pairing runtime from Vite public assets and Android embedded assets.
+- Kept the v0.979 pairing runtime and the current PStart functionality unchanged.
+- Added a preflight check for stale pairing runtime files in Vite public assets.
+- Confirmed the embedded-version verifier passes against the corrected packaged assets.
+- Local full rebuild could not be completed because the bundled Node dependencies are incomplete and the offline npm cache lacks required packages; rerun the GitHub Actions build to confirm the Android APK.
+
+Changed files:
+- webui/public/assets/taf-pairing-runtime-v0.968.js (deleted)
+- app/src/main/assets/web/assets/taf-pairing-runtime-v0.968.js (deleted)
+- webui/scripts/verify-embedded-version.mjs
+- DOCUMENTATION/2026-10-11 - PotensicProxy_TAF - Reparaturbericht - Pairing-Runtime-und-CI-Versionstest - v0.979.1.pdf (added)
+- DOCUMENTATION/2026-10-11 - PotensicProxy_TAF - Reparaturbericht - Pairing-Runtime-und-CI-Versionstest - v0.979.1.docx (added)
