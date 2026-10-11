@@ -1,0 +1,12 @@
+PotensicProxy_TAF v0.979 - files to delete when applying the change-only package over v0.978
+Delete these paths before/after copying the changed files. The full code package already contains the correct clean state.
+
+app/src/main/assets/web/assets/index-C6xULv8J.css
+app/src/main/assets/web/assets/index-CYPjJfmR.js
+app/src/main/assets/web/assets/index-CbiV8CkK.js
+app/src/main/assets/web/assets/index-CoyQoprq.css
+app/src/main/assets/web/assets/index-DhmO4BQc.css
+app/src/main/assets/web/assets/index-e7UMeFUb.js
+app/src/main/assets/web/assets/taf-pairing-runtime-v0.968.js
+app/src/main/assets/web/vite.svg
+webui/public/assets/taf-pairing-runtime-v0.968.js

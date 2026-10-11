@@ -74,6 +74,10 @@ jobs:
           npm ci
           npm run build
 
+      - name: Verify embedded WebUI version sync
+        working-directory: webui
+        run: npm run verify:embedded
+
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 

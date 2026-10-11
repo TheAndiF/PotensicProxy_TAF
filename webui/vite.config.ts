@@ -16,6 +16,6 @@ export default defineConfig({
   },
   build: {
     outDir: '../app/src/main/assets/web',
-    emptyOutDir: false
+    emptyOutDir: true
   }
 })
