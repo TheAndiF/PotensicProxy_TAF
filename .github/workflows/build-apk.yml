@@ -68,11 +68,17 @@ jobs:
       - name: Remove checked-in WebUI build output
         run: rm -rf app/src/main/assets/web
 
+      - name: Install WebUI dependencies
+        working-directory: webui
+        run: npm ci
+
+      - name: Remove stale pairing runtime sources
+        working-directory: webui
+        run: npm run prepare:pairing-runtime
+
       - name: Build WebUI from source
         working-directory: webui
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
 
       - name: Verify embedded WebUI version sync
         working-directory: webui

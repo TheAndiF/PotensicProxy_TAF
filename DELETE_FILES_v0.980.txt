@@ -1,0 +1,9 @@
+Delete these stale files if they still exist before applying/committing v0.980:
+
+webui/public/assets/taf-pairing-runtime-v0.968.js
+webui/public/assets/taf-pairing-runtime-v0.979.js
+app/src/main/assets/web/assets/taf-pairing-runtime-v0.968.js
+app/src/main/assets/web/assets/taf-pairing-runtime-v0.979.js
+
+Note: The official v0.980 `npm run build` also removes every stale
+`webui/public/assets/taf-pairing-runtime-v*.js` automatically before Vite runs.

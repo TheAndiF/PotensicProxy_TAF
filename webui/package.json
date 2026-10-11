@@ -1,13 +1,14 @@
 {
   "name": "potensic-proxy-webui",
-  "version": "0.979",
+  "version": "0.980",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc && vite build",
+    "build": "node scripts/prepare-pairing-runtime.mjs && vue-tsc && vite build",
     "preview": "vite preview",
-    "verify:embedded": "node scripts/verify-embedded-version.mjs"
+    "verify:embedded": "node scripts/verify-embedded-version.mjs",
+    "prepare:pairing-runtime": "node scripts/prepare-pairing-runtime.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

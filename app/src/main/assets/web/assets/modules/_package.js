@@ -1,1 +1,1 @@
-export default {"version":"0.979","name":"potensic-proxy-webui"};
+export default {"version":"0.980","name":"potensic-proxy-webui"};

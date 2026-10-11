@@ -1,3 +1,3 @@
 Embedded frontend generated from webui/src
-Version: 0.979
+Version: 0.980
 Mode: browser-native ESM fallback build (no Rollup native binary required)

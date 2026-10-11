@@ -11,6 +11,8 @@ const embedded = path.join(project, 'app', 'src', 'main', 'assets', 'web')
 const indexPath = path.join(embedded, 'index.html')
 const runtimeName = `taf-pairing-runtime-v${version}.js`
 const runtimePath = path.join(embedded, 'assets', runtimeName)
+const publicAssets = path.join(webui, 'public', 'assets')
+const publicRuntimePath = path.join(publicAssets, runtimeName)
 
 function fail(message) {
   console.error(`[embedded-version] ${message}`)
@@ -25,14 +27,12 @@ if (!fs.existsSync(indexPath)) {
 }
 
 if (!fs.existsSync(runtimePath)) fail(`Missing runtime asset: ${runtimePath}`)
+if (!fs.existsSync(publicRuntimePath)) fail(`Missing runtime source: ${publicRuntimePath}`)
 
-// Reject obsolete runtimes in the Vite public source directory as well.
-// Vite copies public/ verbatim into the embedded Android assets on every build.
-const publicAssetsDir = path.join(webui, 'public', 'assets')
-if (fs.existsSync(publicAssetsDir)) {
-  for (const name of fs.readdirSync(publicAssetsDir)) {
+if (fs.existsSync(publicAssets)) {
+  for (const name of fs.readdirSync(publicAssets)) {
     const match = /^taf-pairing-runtime-v(.+)\.js$/.exec(name)
-    if (match && match[1] !== version) fail(`Stale pairing runtime in Vite public source: ${name}`)
+    if (match && match[1] !== version) fail(`Stale public pairing runtime found: ${name}`)
   }
 }
 
