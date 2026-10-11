@@ -62,6 +62,8 @@ export const useDroneStore = defineStore('drone', () => {
     homeLatitude: 0,
     homeLongitude: 0,
     homeSynced: false,
+    homeAltitude: null,
+    homeHeading: null,
     windSpeed: 0,
     remainedFlyTime: 0,
     gpsUtcTime: 0,
@@ -211,6 +213,8 @@ export const useDroneStore = defineStore('drone', () => {
     return [...pendingPackets].reverse().concat(packets.value).slice(0, PACKET_BUFFER_LIMIT)
   }
 
+  let lastFlightPacketAt = 0
+
   // Actions
   function addLog(level: 'INFO' | 'WARN' | 'ERROR', message: string) {
     logs.value.push({
@@ -236,6 +240,27 @@ export const useDroneStore = defineStore('drone', () => {
     }
 
     if (packet.telemetry) {
+      if (packet.telemetry.latitude !== undefined && packet.telemetry.longitude !== undefined) lastFlightPacketAt = Date.now()
+      if (packet.telemetry.homeSynced !== undefined) {
+        const next = packet.telemetry
+        const changed = !telemetry.homeSynced || telemetry.homeLatitude !== next.homeLatitude || telemetry.homeLongitude !== next.homeLongitude
+        if (!next.homeSynced) {
+          telemetry.homeAltitude = null
+          telemetry.homeHeading = null
+        } else if (changed || telemetry.homeAltitude == null || telemetry.homeHeading == null) {
+          const lat = next.homeLatitude
+          const lon = next.homeLongitude
+          const nearHome = typeof lat === 'number' && typeof lon === 'number' &&
+            Math.abs(telemetry.latitude - lat) <= 0.000045 &&
+            Math.abs((telemetry.longitude - lon) * Math.cos(lat * Math.PI / 180)) <= 0.000045
+          const safe = nearHome && (Date.now() - lastFlightPacketAt) < 2000 && telemetry.satellites >= 6 && !telemetry.flying &&
+            Math.abs(telemetry.verticalDistance) <= 1.5 &&
+            Number.isFinite(telemetry.altitude) && Number.isInteger(telemetry.heading) &&
+            telemetry.heading >= 0 && telemetry.heading < 360
+          telemetry.homeAltitude = changed ? (safe ? telemetry.altitude : null) : (telemetry.homeAltitude ?? (safe ? telemetry.altitude : null))
+          telemetry.homeHeading = changed ? (safe ? telemetry.heading : null) : (telemetry.homeHeading ?? (safe ? telemetry.heading : null))
+        }
+      }
       Object.assign(telemetry, packet.telemetry)
       if (packet.telemetry.gimbalStateValid !== undefined ||
           packet.telemetry.gimbalPitch !== undefined ||

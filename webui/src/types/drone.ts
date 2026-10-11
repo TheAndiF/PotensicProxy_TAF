@@ -24,6 +24,8 @@ export interface TelemetryData {
   homeLatitude?: number
   homeLongitude?: number
   homeSynced?: boolean
+  homeAltitude?: number | null
+  homeHeading?: number | null
   windSpeed?: number
   remainedFlyTime?: number
   gpsUtcTime?: number

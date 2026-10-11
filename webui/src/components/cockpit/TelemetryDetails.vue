@@ -13,6 +13,13 @@
     <div class="telemetry-row"><span>Drohnen-Spannung</span><strong>{{ volts(store.telemetry.flightVoltage) }}</strong></div>
     <div class="telemetry-row"><span>Controller-Spannung</span><strong>{{ volts(store.telemetry.remoterVoltage) }}</strong></div>
   </div>
+  <div class="homepoint-title">Homepoint — {{ store.telemetry.homeSynced ? 'synchronisiert' : 'nicht synchronisiert' }}</div>
+  <div class="telemetry-grid">
+    <div class="telemetry-row"><span>Home Latitude</span><strong>{{ homeCoord(store.telemetry.homeLatitude) }}</strong></div>
+    <div class="telemetry-row"><span>Home Longitude</span><strong>{{ homeCoord(store.telemetry.homeLongitude) }}</strong></div>
+    <div class="telemetry-row"><span>Home Altitude</span><strong>{{ homeMeters(store.telemetry.homeAltitude) }}</strong></div>
+    <div class="telemetry-row"><span>Home Heading</span><strong>{{ homeDegrees(store.telemetry.homeHeading) }}</strong></div>
+  </div>
   <p class="telemetry-note">
     Die Cockpit-Höhe entspricht wie in der Potensic-App <code>verticalDistance</code>. Das separate
     Altitude-Feld und TOF werden nur als zusätzliche Telemetrie angezeigt und nicht als Cockpit-Höhe verwendet.
@@ -25,6 +32,9 @@ import { useDroneStore } from '../../stores/useDroneStore'
 
 const store = useDroneStore()
 
+function homeCoord(value: number | undefined) { return store.telemetry.homeSynced && validNumber(value) ? Number(value).toFixed(7) + '°' : '--' }
+function homeMeters(value: number | null | undefined) { return store.telemetry.homeSynced && value != null && Number.isFinite(value) ? `${value.toFixed(2)} m` : '--' }
+function homeDegrees(value: number | null | undefined) { return store.telemetry.homeSynced && value != null && Number.isFinite(value) ? `${value}°` : '--' }
 function validNumber(value: number | undefined) {
   return value != null && Number.isFinite(value)
 }
@@ -45,6 +55,7 @@ const tofText = computed(() => {
 </script>
 
 <style scoped>
+.homepoint-title{margin:12px 1px 8px;font-size:10px;font-weight:700;color:var(--ui-text)}
 .telemetry-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 8px}
 .telemetry-row{min-width:0;display:flex;justify-content:space-between;gap:8px;padding:7px 8px;border:1px solid var(--ui-border-control);border-radius:5px;background:var(--ui-bg-control-strong);font-size:9px;font-family:var(--mono)}
 .telemetry-row span{color:var(--text-muted)}.telemetry-row strong{color:var(--ui-text);text-align:right}.battery-ok{color:var(--ui-success,#52d273)!important}.battery-low{color:var(--ui-danger,#ff496d)!important}.battery-unknown{color:var(--text-muted)!important}

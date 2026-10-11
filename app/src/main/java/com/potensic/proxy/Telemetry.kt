@@ -124,6 +124,9 @@ data class TelemetryData(
     val homeLongitude: Double = 0.0,
     val homeLatitude: Double = 0.0,
     val homeSynced: Boolean = false,
+    // Supplementary snapshots tied to the same 0x0005 homepoint lifecycle.
+    val homeAltitude: Float? = null,
+    val homeHeading: Int? = null,
     // Confirmed ATOM Battery block (0x0001). Units that are not confirmed stay raw.
     val batteryType: Int = 0,
     val cellVoltage1: Float = 0f,
@@ -239,6 +242,8 @@ data class TelemetryData(
         put("homeLongitude", homeLongitude)
         put("homeLatitude", homeLatitude)
         put("homeSynced", homeSynced)
+        put("homeAltitude", homeAltitude ?: JSONObject.NULL)
+        put("homeHeading", homeHeading ?: JSONObject.NULL)
         put("batteryType", batteryType)
         put("cellVoltage1", cellVoltage1)
         put("cellVoltage2", cellVoltage2)
@@ -285,6 +290,7 @@ object TelemetryParser {
     @Volatile private var btnC1: Boolean = false
     @Volatile private var btnC2: Boolean = false
 
+    @Volatile private var lastFlightInfoAt: Long = 0L
     private var logCount = 0
     private var rcLogCount = 0
 
@@ -397,6 +403,7 @@ object TelemetryParser {
             btnRecord = btnRecord, btnPhoto = btnPhoto, btnRTH = btnRTH, btnC1 = btnC1, btnC2 = btnC2,
             timestamp = System.currentTimeMillis(),
         )
+        lastFlightInfoAt = System.currentTimeMillis()
         latest = tel
         return tel
     }
@@ -505,10 +512,23 @@ object TelemetryParser {
     /** Confirmed ATOM 0x0005 Home Point layout. */
     private fun parseAtomHomePoint(payload: ByteArray, i: Int, dataLen: Int) {
         if (dataLen < 9) return
+        val longitude = readIntLE(payload, i) / 1.0E7
+        val latitude = readIntLE(payload, i + 4) / 1.0E7
+        val synced = ((payload[i + 8].toInt() and 0xFF) and 0x01) != 0
+        val changed = !latest.homeSynced || latest.homeLongitude != longitude || latest.homeLatitude != latitude
+        // Never substitute airborne altitude / heading for ground homepoint measurements.
+        // Supplemental readings are captured only at the homepoint while on the ground.
+        val nearHome = kotlin.math.abs(latest.latitude - latitude) <= 0.000045 &&
+            kotlin.math.abs((latest.longitude - longitude) * kotlin.math.cos(Math.toRadians(latitude))) <= 0.000045
+        val canCapture = synced && nearHome && (System.currentTimeMillis() - lastFlightInfoAt) in 0L..2000L && latest.satellites >= 6 &&
+            !latest.flying && kotlin.math.abs(latest.verticalDistance) <= 1.5f &&
+            latest.altitude.isFinite() && latest.heading in 0..359
         latest = latest.copy(
-            homeLongitude = readIntLE(payload, i) / 1.0E7,
-            homeLatitude = readIntLE(payload, i + 4) / 1.0E7,
-            homeSynced = ((payload[i + 8].toInt() and 0xFF) and 0x01) != 0,
+            homeLongitude = longitude,
+            homeLatitude = latitude,
+            homeSynced = synced,
+            homeAltitude = if (!synced) null else if (changed) { if (canCapture) latest.altitude else null } else (latest.homeAltitude ?: if (canCapture) latest.altitude else null),
+            homeHeading = if (!synced) null else if (changed) { if (canCapture) latest.heading else null } else (latest.homeHeading ?: if (canCapture) latest.heading else null),
             timestamp = System.currentTimeMillis(),
         )
     }
