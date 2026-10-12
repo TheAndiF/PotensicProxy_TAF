@@ -381,6 +381,58 @@ class WebServer(
                 }
 
 
+                // Native Android 10 SAF offline JPEG folder interface; user grants permission on device.
+                post("/api/pstart/saf/select") {
+                    try { PStartSafStorage.request(appContext); call.respondText(PStartSafStorage.status(appContext).toString(), ContentType.Application.Json) }
+                    catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.Conflict) }
+                }
+                get("/api/pstart/saf/status") { call.respondText(PStartSafStorage.status(appContext).toString(), ContentType.Application.Json) }
+                get("/api/pstart/saf/files") {
+                    try { call.respondText(withContext(Dispatchers.IO) { PStartSafStorage.list(appContext).toString() }, ContentType.Application.Json) }
+                    catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
+                }
+                get("/api/pstart/saf/image") {
+                    try {
+                        val name = call.request.queryParameters["name"] ?: ""
+                        val bytes = withContext(Dispatchers.IO) { PStartSafStorage.read(appContext, name) }
+                        call.respondBytes(bytes, ContentType.Image.JPEG)
+                    } catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
+                }
+                post("/api/pstart/saf/artifact") {
+                    try {
+                        val name = call.request.queryParameters["name"] ?: ""
+                        val bytes = call.receiveStream().use { it.readBytes() }
+                        call.respondText(withContext(Dispatchers.IO) { PStartSafStorage.write(appContext, name, bytes).toString() }, ContentType.Application.Json)
+                    } catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
+                }
+
+                // CPU-heavy offline detector. Never issues flight commands.
+                post("/api/pstart/analysis/opencv") {
+                    try {
+                        val body = call.receiveStream().use { it.readBytes() }
+                        val result = withContext(Dispatchers.Default) { PStartOpenCvAnalyzer.inspect(body) }
+                        call.respondText(result.toString(), ContentType.Application.Json)
+                    } catch (e: Exception) {
+                        Log.w("[PStartOpenCV] Marker analysis failed: ${e.message}")
+                        call.respondText(JSONObject().put("error", e.message ?: "OpenCV failed").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
+                }
+
+                // Analysis outputs are additive, scoped to the session and hash-verified by MediaStore.
+                post("/api/pstart/analysis/artifact") {
+                    call.response.header("Access-Control-Allow-Origin", "*")
+                    val sessionId = call.request.queryParameters["session"] ?: ""
+                    val name = call.request.queryParameters["name"] ?: ""
+                    try {
+                        val bytes = call.receiveStream().use { it.readBytes() }
+                        val saved = withContext(Dispatchers.IO) { androidMedia.savePStartAnalysisArtifact(sessionId, name, bytes) }
+                        call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
+                    } catch (e: Exception) {
+                        Log.w("[PStartAnalysis] artifact save failed session=$sessionId name=$name: ${e.message}")
+                        call.respondText(JSONObject().put("error", e.message ?: "artifact failed").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
+                }
+
                 post("/api/pstart/session/finalize") {
                     call.response.header("Access-Control-Allow-Origin", "*")
                     try {

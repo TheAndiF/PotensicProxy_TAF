@@ -27,6 +27,27 @@
         </label>
       </div>
 
+      <div class="rules-box" style="margin-bottom:14px">
+        <strong>PStart – Referenzauswertung (experimentell)</strong>
+        <p>Automatisch nach PStart oder offline über einen JPEG-Ordner. Schreibzugriff speichert JSON, JSONL-Logs und JPEG-Kopien mit Analyse-XMP direkt im Rohdatenordner. Die einfache Ordnerauswahl ist nur lesend. Die native Android-SAF-Ordnerfreigabe erfolgt auf dem Handy; danach kann der Ordner direkt ausgewertet und beschrieben werden. Keine Flugfreigabe.</p>
+        <input type="file" accept="image/jpeg" multiple webkitdirectory directory @change="folderChosen" aria-label="Offline-Ordner auswählen" />
+        <button type="button" :disabled="busy" @click="requestSaf">Android-Ordner freigeben (SAF)</button>
+        <button type="button" :disabled="busy" @click="analyzeSaf">Android-Ordner auswerten und speichern</button>
+        <button type="button" :disabled="busy" @click="analyzeWritable">Ordner mit Schreibzugriff auswerten</button>
+        <button type="button" :disabled="busy" @click="analyzeLast">Letzte gespeicherte Sitzung auswerten</button>
+        <button type="button" @click="PStartPostProcessingService.exportLog()">Diagnoselog exportieren</button>
+        <button type="button" :disabled="!analysis.profile" @click="exportResult">Referenzprofil als JSON exportieren</button>
+        <p aria-live="polite">{{ analysis.state }} – {{ analysis.completed }}/{{ analysis.total }} – {{ analysis.message }}</p>
+        <p v-if="errorText">{{ errorText }}</p>
+        <template v-if="analysis.profile">
+          <p><b>PLanding:</b> {{ analysis.profile.landingReadiness.status }} – keine automatische Steuerungsfreigabe</p>
+          <div v-for="ref in analysis.profile.references" :key="ref.imageId" style="border-top:1px solid #888;padding:5px 0">
+            {{ ref.imagePath }} | {{ ref.targetHeightM ?? '?' }} m | {{ ref.zoomRole }} | {{ ref.status }}
+            | Zentrum: {{ ref.centerPx ? ref.centerPx.join(', ') + ' px' : 'unbekannt' }}
+            <small v-if="ref.warnings.length"> – {{ ref.warnings.join('; ') }}</small>
+          </div>
+        </template>
+      </div>
       <div class="rules-box">
         <strong>{{ t('pstart.v1Rules') }}</strong>
         <ul>
@@ -45,10 +66,43 @@
 
 <script setup lang="ts">
 import { useI18n } from '../../i18n'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { PStartPostProcessingService, type PStartProgress } from '../../services/PStartPostProcessingService'
+import { AndroidMediaService } from '../../services/AndroidMediaService'
 import { usePrecisionStartSettings } from '../../composables/usePrecisionStartSettings'
 
 const { t } = useI18n()
 const { endHeight, heightStep, stabilizationSeconds, positionWarningMeters, positionAbortMeters } = usePrecisionStartSettings()
+
+const analysis = ref<PStartProgress>(PStartPostProcessingService.progress)
+const errorText = ref('')
+const busy = computed(() => !['WAITING','COMPLETED','COMPLETED_WITH_WARNINGS','FAILED'].includes(analysis.value.state))
+let unsubscribe: (() => void) | null = null
+onMounted(() => {
+  try { const saved = localStorage.getItem('taf.pstart.analysis.latest'); if (saved && !analysis.value.profile) analysis.value = { state: 'COMPLETED_WITH_WARNINGS', completed: 0, total: 0, message: 'Letztes lokal gespeichertes Ergebnis', profile: JSON.parse(saved) } } catch { /* optional storage */ }
+  unsubscribe = PStartPostProcessingService.subscribe(v => { if (v.profile || v.state !== 'WAITING') analysis.value = v })
+})
+onUnmounted(() => { unsubscribe?.() })
+async function folderChosen(event: Event) {
+  const files = (event.target as HTMLInputElement).files
+  if (!files?.length) return
+  errorText.value = ''
+  try { await PStartPostProcessingService.analyzeFolder(files) } catch (e) { errorText.value = String(e) }
+}
+async function analyzeLast() {
+  errorText.value = ''
+  try {
+    const images = await AndroidMediaService.listImages('recognition')
+    const latest = images.filter(i => /^PStart_.+?_(STEP0|REF_\d+)_.*\.jpe?g$/i.test(i.name)).sort((a,b) => b.createdAt - a.createdAt)[0]
+    const match = latest?.name.match(/^PStart_(.+?)_(?:STEP0|REF_\d+)_/i)
+    if (!match) throw new Error('Keine PStart-Aufnahmen gefunden')
+    await PStartPostProcessingService.analyzeSavedSession(match[1])
+  } catch (e) { errorText.value = String(e) }
+}
+async function requestSaf() { errorText.value = ""; try { await PStartPostProcessingService.requestAndroidFolder() } catch (e) { errorText.value = String(e) } }
+async function analyzeSaf() { errorText.value = ""; try { await PStartPostProcessingService.analyzeAndroidFolder() } catch (e) { errorText.value = String(e) } }
+async function analyzeWritable() { errorText.value = ''; try { await PStartPostProcessingService.analyzeWritableFolder() } catch (e) { errorText.value = String(e) } }
+function exportResult() { if (analysis.value.profile) PStartPostProcessingService.exportProfile(analysis.value.profile) }
 
 function normalize() {
   endHeight.value = Math.max(1, Math.min(120, Number(endHeight.value) || 20))

@@ -64,6 +64,7 @@ android {
 }
 
 dependencies {
+    implementation("org.opencv:opencv:4.10.0")
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")

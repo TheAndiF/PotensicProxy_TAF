@@ -1,3 +1,4 @@
+import { PStartPostProcessingService } from './PStartPostProcessingService'
 import { AndroidMediaService } from './AndroidMediaService'
 import { CameraMediaService } from './CameraMediaService'
 import { DroneControlService } from './DroneControlService'
@@ -228,6 +229,9 @@ export class PrecisionStartService {
       })
       await this.finalizeProtocol('COMPLETED')
       pstart.finish(`PStart abgeschlossen: ${pstart.state.capturedImages} Bilder dokumentiert. Drohne schwebt auf Endhöhe.`)
+      void PStartPostProcessingService.analyzeSavedSession(sessionId).catch(error => {
+        drone.addLog('WARN', `[PStart analysis] ${String(error)}`)
+      })
       drone.addLog('INFO', `[PStart] completed session=${sessionId}; images=${pstart.state.capturedImages}; finalHeight=${this.relativeHeight(pstart.state.startVerticalDistance).toFixed(2)}m`)
     } catch (error: any) {
       if (this.isCurrent(id)) this.abort(error?.message || String(error))

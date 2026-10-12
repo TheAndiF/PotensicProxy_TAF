@@ -38,6 +38,8 @@
                 android:resource="@xml/usb_accessory_filter" />
         </activity>
 
+        <activity android:name=".PStartFolderPickerActivity" android:exported="false" />
+
         <activity
             android:name=".VideoActivity"
             android:exported="true"

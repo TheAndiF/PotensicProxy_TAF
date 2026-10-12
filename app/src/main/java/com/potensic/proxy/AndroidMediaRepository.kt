@@ -368,6 +368,49 @@ class AndroidMediaRepository(
         return updated
     }
 
+
+    /** Stores analysis outputs in the exact PStart session directory; never overwrites an original. */
+    @Synchronized
+    fun savePStartAnalysisArtifact(sessionId: String, name: String, bytes: ByteArray): JSONObject {
+        require(sessionId.isNotBlank()) { "session id missing" }
+        require(bytes.isNotEmpty() && bytes.size <= 25_000_000) { "artifact empty or too large" }
+        require(Regex("[A-Za-z0-9._-]{1,180}").matches(name)) { "invalid artifact filename" }
+        require(name.contains("_analysis_", ignoreCase = true)) { "analysis artifact name required" }
+        ensureLegacyWritePermission()
+        val relativeDir = pstartRelativeDir(sessionId)
+        val mime = when {
+            name.endsWith(".jpg", true) || name.endsWith(".jpeg", true) -> "image/jpeg"
+            name.endsWith(".json", true) -> "application/json"
+            name.endsWith(".jsonl", true) -> "application/x-ndjson"
+            name.endsWith(".xmp", true) -> "application/rdf+xml"
+            else -> throw IllegalArgumentException("unsupported extension")
+        }
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, mime)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relativeDir)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), relativeDir.removePrefix("Pictures/")).apply { mkdirs() }
+                @Suppress("DEPRECATION")
+                put(MediaStore.MediaColumns.DATA, File(dir, name).absolutePath)
+            }
+        }
+        val resolver = context.contentResolver
+        val collection = if (mime == "image/jpeg") MediaStore.Images.Media.EXTERNAL_CONTENT_URI else MediaStore.Files.getContentUri("external")
+        val uri = resolver.insert(collection, values) ?: throw IllegalStateException("MediaStore rejected artifact")
+        try {
+            resolver.openOutputStream(uri, "w")?.use { it.write(bytes) } ?: error("could not open artifact")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+            val stored = resolver.openInputStream(uri)?.use { it.readBytes() }
+            if (stored == null || !stored.contentEquals(bytes)) error("artifact verification failed")
+        } catch (e: Exception) { try { resolver.delete(uri, null, null) } catch (_: Exception) {} ; throw e }
+        return JSONObject().put("name", name).put("uri", uri.toString()).put("relativePath", relativeDir)
+            .put("sha256", sha256(bytes)).put("size", bytes.size).put("verified", true)
+    }
+
     @Synchronized
     fun listImages(library: String? = null): JSONArray {
         val normalized = library?.takeIf { it.isNotBlank() }?.let(::normalizeLibrary)
