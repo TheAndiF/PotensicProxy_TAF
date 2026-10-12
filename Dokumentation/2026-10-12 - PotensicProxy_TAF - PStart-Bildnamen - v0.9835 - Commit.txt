@@ -1,0 +1,17 @@
+BS_Standardize PStart image file names
+
+Date: 2026-10-12
+Version: 0.9835 (versionName unchanged; versionCode 60 unchanged)
+
+Summary:
+- Apply REF00/REF01/... image names, two-digit meter heights and min/max zoom suffixes.
+- Align master-image metadata and reference IDs with exported names.
+- Preserve internal STEP0 workflow and verified MAX snapshot before MIN reset.
+- Keep embedded JavaScript modules synchronized with TypeScript source.
+- Verify TypeScript and embedded JS syntax. Full Vite/Android build was not completed.
+
+Changed files:
+- webui/src/services/PrecisionStartService.ts
+- webui/src/services/PrecisionStartMetadataService.ts
+- app/src/main/assets/web/assets/modules/services/PrecisionStartService.js
+- app/src/main/assets/web/assets/modules/services/PrecisionStartMetadataService.js

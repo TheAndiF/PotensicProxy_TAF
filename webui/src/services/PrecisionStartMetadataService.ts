@@ -45,7 +45,8 @@ export class PrecisionStartMetadataService {
         : motionWarning ? 'WARNING_MOTION' : 'GOOD'
     const sessionMaster = context.stepId === 'STEP0' && context.zoomRole === 'ZERO'
     const sessionProtocolFile = `PStart_${context.sessionId}_session.jsonl`
-    const sessionMasterImage = `PStart_${context.sessionId}_STEP0_step0_zero.jpg`
+    const sessionMasterImage = `PStart_${context.sessionId}_REF00_00p0m_min.jpg`
+    const referenceLabel = `REF${String(context.referenceIndex + 1).padStart(2, '0')}`
 
     return {
       schemaVersion: 2,
@@ -58,9 +59,9 @@ export class PrecisionStartMetadataService {
         schema: 'PotensicProxy/PStart',
         schemaVersion: '1.1',
         sessionId: context.sessionId,
-        stepId: context.stepId,
+        stepId: referenceLabel,
         stageId: context.stepId,
-        referenceIndex: context.referenceIndex,
+        referenceIndex: context.referenceIndex + 1,
         targetHeight: context.targetHeight,
         heightError: context.targetHeight == null ? null : relativeHeight - context.targetHeight,
         startVerticalDistance: context.startVerticalDistance,

@@ -511,10 +511,13 @@ export class PrecisionStartService {
     await this.setZoomAndWait(id, maxZoom)
     if (!this.isCurrent(id)) return
     pstart.state.status = `${context.stepId}: Bild 2/2 mit maximalem Zoom wird dokumentiert.`
+    // The awaited snapshot requires a newly decoded frame and verified MediaStore copy.
+    // Do not return to MIN before the MAX JPEG exists and is verified.
     await this.captureOne(id, context, 'MAX')
-
-    // Keep the pilot/live view wide between stages.
-    CameraMediaService.setZoom(1)
+    if (!this.isCurrent(id)) return
+    this.recordProtocolEvent('MAX_IMAGE_SAVED_BEFORE_ZOOM_RESET', { stepId: context.stepId })
+    // Keep the pilot/live view wide between stages, only after verified MAX save.
+    await this.setZoomAndWait(id, 1)
     this.recordProtocolEvent('CAPTURE_PAIR_COMPLETE', { stepId: context.stepId, zoomZero: 1, zoomMax: maxZoom })
     drone.addLog('INFO', `[PStart] ${context.stepId} image pair completed (1.00x + ${maxZoom.toFixed(2)}x)`)
   }
@@ -552,8 +555,13 @@ export class PrecisionStartService {
       positionAbortMeters: Number(settings.positionAbortMeters.value),
       pstartThrottleCommand: this.autoThrottle,
     })
-    const heightLabel = context.targetHeight == null ? 'step0' : `${context.targetHeight.toFixed(1).replace('.', 'p')}m`
-    const name = `PStart_${pstart.state.sessionId}_${context.stepId}_${heightLabel}_${zoomRole.toLowerCase()}.jpg`
+    // REF00 is the pre-takeoff documentation pair. The first airborne reference is REF01.
+    const referenceNumber = context.referenceIndex + 1
+    const referenceLabel = `REF${String(referenceNumber).padStart(2, '0')}`
+    const heightMeters = context.targetHeight ?? 0
+    const heightLabel = `${heightMeters.toFixed(1).padStart(4, '0').replace('.', 'p')}m`
+    const zoomLabel = zoomRole === 'ZERO' ? 'min' : 'max'
+    const name = `PStart_${pstart.state.sessionId}_${referenceLabel}_${heightLabel}_${zoomLabel}.jpg`
     const source = context.referenceEligible ? 'pstart-reference' : 'pstart-documentation'
     const saved = await AndroidMediaService.savePrecisionSnapshot(metadata, name, source, pstart.state.sessionId)
     if (!this.isCurrent(id)) return
