@@ -56,6 +56,8 @@ class WebServer(
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
     private val wsClients = CopyOnWriteArrayList<DefaultWebSocketSession>()
     private val usbWsClients = CopyOnWriteArrayList<DefaultWebSocketSession>()
+    private val outputSettings = StreamOutputSettings(appContext)
+    private val outputServer = StreamOutputServer(videoDecoder, outputSettings)
     private val mapBackend = MapBackend(filesDir)
     private val missionBackend = MissionBackend(filesDir)
     private val androidMedia = AndroidMediaRepository(appContext, filesDir)
@@ -68,6 +70,25 @@ class WebServer(
             install(WebSockets)
             routing {
                 installWebUiRoutes(assetLoader)
+
+                get("/output-settings") {
+                    call.response.header("Cache-Control", "no-store")
+                    call.respondText("""<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PotensicProxy_TAF - Videoausgabe</title><style>body{font:16px system-ui;background:#151a20;color:#f2f5f9;margin:2rem auto;max-width:620px;padding:0 1rem}label{display:block;padding:10px;border-bottom:1px solid #36404a}input{margin-right:12px}button,a{display:inline-block;margin:15px 8px 0 0;padding:10px 15px;border:0;border-radius:6px;background:#138b75;color:white;text-decoration:none}small{color:#bdc6cf}</style></head><body><h2>PotensicProxy_TAF - Videoausgabe</h2><p>Alle Funktionen sind einzeln deaktivierbar. Die virtuelle Android-Webcam ist hier nur für ein späteres Modul vorgesehen.</p><div id="choices"></div><button onclick="save()">Speichern</button><button onclick="clearAll()">Alle abwählen</button><a href="/" >Steuerung</a><a id="stream" target="_blank" rel="noopener">Video auf 9091</a><p id="status"></p><script>const names={streamEnabled:'Videoausgabe auf Port 9091',webcamEnabled:'Virtuelle Webcam (Adapter noch nicht vorhanden)',mapPip:'Karte als PiP',showPosition:'GPS-Position',showHeading:'Flugrichtung',showAltitude:'Flughöhe',showBattery:'Akkustand'};const keys=Object.keys(names);document.getElementById('stream').href=location.protocol+'//'+location.hostname+':9091/';async function load(){try{let a=await(await fetch('/api/output/config')).json();document.getElementById('choices').innerHTML=keys.map(k=>'<label><input type="checkbox" id="'+k+'" '+(a[k]?'checked':'')+'>'+names[k]+'</label>').join('')}catch(e){document.getElementById('status').textContent=e.message}}function clearAll(){keys.forEach(k=>document.getElementById(k).checked=false)}async function save(){try{let o={};keys.forEach(k=>o[k]=document.getElementById(k).checked);let r=await fetch('/api/output/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});if(!r.ok)throw Error(await r.text());document.getElementById('status').textContent='Gespeichert'}catch(e){document.getElementById('status').textContent=e.message}}load()</script></body></html>""", ContentType.Text.Html)
+                }
+                get("/api/output/config") {
+                    call.respondText(outputSettings.get().toString(), ContentType.Application.Json)
+                }
+                post("/api/output/config") {
+                    try {
+                        val updated = outputSettings.update(JSONObject(call.receiveText()))
+                        if (outputSettings.streamEnabled()) outputServer.start() else outputServer.stop()
+                        call.respondText(updated.toString(), ContentType.Application.Json)
+                    } catch (e: IllegalArgumentException) {
+                        call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", "Output server unavailable: ${e.message}").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
+                    }
+                }
 
                 // Version index. Kept in the backend so the UI can show the version of the actually connected package.
                 get("/api/version") {
@@ -1144,6 +1165,9 @@ class WebServer(
             }
         }
         server!!.start(wait = false)
+        if (outputSettings.streamEnabled()) {
+            try { outputServer.start() } catch (e: Exception) { Log.e("[WebServer] Stream output startup failed", e) }
+        }
         Log.i("[WebServer] Started on 0.0.0.0:$port (LAN-accessible while Android network permits)")
     }
 
@@ -1203,6 +1227,7 @@ class WebServer(
     }
 
     fun stop() {
+        outputServer.stop()
         server?.stop(500, 1000)
         server = null
         wsClients.clear()

@@ -4,6 +4,7 @@
     <div class="debug-header">
       <div class="tab-selectors">
         <el-radio-group v-model="debugStore.activeSubTab" size="small">
+          <el-radio-button value="view">🖥️ Ansicht</el-radio-button>
           <el-radio-button value="flight">✈️ {{ t('system.flight') }}</el-radio-button>
           <el-radio-button value="pstart">🎯 {{ t('pstart.tab') }}</el-radio-button>
           <el-radio-button value="camera">📷 {{ t('engineering.camera') }}</el-radio-button>
@@ -30,10 +31,18 @@
 
     <DroneProfilePanel />
     <LanguagePanel />
-    <DisplaySettingsPanel />
 
     <!-- Main Content Area -->
     <div class="debug-body">
+      <!-- System > Ansicht: alle Anzeige- und Stream-Einstellungen an einem Ort -->
+      <div v-show="debugStore.activeSubTab === 'view'" class="sub-tab-pane view-settings-pane">
+        <DisplaySettingsPanel />
+        <section class="view-stream-settings">
+          <h3>Videoausgabe und virtuelle Webcam</h3>
+          <StreamOutputSettings />
+        </section>
+      </div>
+
       <!-- ================= System: flight limits, smart modes and calibration ================= -->
       <div v-show="debugStore.activeSubTab === 'flight'" class="sub-tab-pane system-flight-pane">
         <AdvancedFlightPanel />
@@ -683,6 +692,7 @@ import LogConsole from '../logs/LogConsole.vue'
 import DroneProfilePanel from './DroneProfilePanel.vue'
 import LanguagePanel from './LanguagePanel.vue'
 import DisplaySettingsPanel from './DisplaySettingsPanel.vue'
+import StreamOutputSettings from '../header/StreamOutputSettings.vue'
 import { useI18n } from '../../i18n'
 import { MapService } from '../../services/MapService'
 import { FRONTEND_VERSION } from '../../version'
@@ -1609,3 +1619,9 @@ function onQueryRemoteId() {
 </style>
 
 
+
+<style scoped>
+.view-settings-pane{overflow-y:auto;padding:16px;box-sizing:border-box}
+.view-stream-settings{max-width:780px;margin:16px auto;padding:18px;border:1px solid var(--border);border-radius:8px;background:var(--card-bg)}
+.view-stream-settings h3{margin:0 0 14px;font-size:16px;color:var(--ui-text)}
+</style>
