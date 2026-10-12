@@ -13,12 +13,16 @@ const runtimeName = `taf-pairing-runtime-v${version}.js`
 const runtimePath = path.join(embedded, 'assets', runtimeName)
 const publicAssets = path.join(webui, 'public', 'assets')
 const publicRuntimePath = path.join(publicAssets, runtimeName)
+const sourceIndexPath = path.join(webui, 'index.html')
+
 
 function fail(message) {
   console.error(`[embedded-version] ${message}`)
   process.exitCode = 1
 }
 
+const sourceIndex = fs.readFileSync(sourceIndexPath, 'utf8')
+if (!sourceIndex.includes(`/assets/${runtimeName}`)) fail(`Source index.html does not reference ${runtimeName}`)
 if (!fs.existsSync(indexPath)) {
   fail(`Missing embedded index: ${indexPath}`)
 } else {

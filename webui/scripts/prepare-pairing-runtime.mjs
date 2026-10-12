@@ -10,6 +10,9 @@ const publicAssets = path.join(webui, 'public', 'assets')
 const expectedName = `taf-pairing-runtime-v${version}.js`
 const expectedPath = path.join(publicAssets, expectedName)
 const runtimePattern = /^taf-pairing-runtime-v(.+)\.js$/
+const indexPath = path.join(webui, 'index.html')
+const runtimeTagPattern = /(<script\b[^>]*\bsrc=["']\/assets\/)taf-pairing-runtime-v[^"']+\.js(["'][^>]*><\/script>)/g
+
 
 if (!fs.existsSync(publicAssets)) {
   console.error(`[pairing-runtime] Missing public assets directory: ${publicAssets}`)
@@ -33,6 +36,22 @@ const runtime = fs.readFileSync(expectedPath, 'utf8')
 if (!runtime.includes(`const VERSION = '${version}'`) || !runtime.includes(`data-taf-pairing-runtime="${version}"`)) {
   console.error(`[pairing-runtime] ${expectedName} does not identify itself as v${version}`)
   process.exit(1)
+}
+
+// Keep the HTML entrypoint in sync with the versioned runtime source before Vite copies assets.
+const indexHtml = fs.readFileSync(indexPath, 'utf8')
+let matched = 0
+const updatedIndex = indexHtml.replace(runtimeTagPattern, (_all, prefix, suffix) => {
+  matched++
+  return `${prefix}${expectedName}${suffix}`
+})
+if (matched !== 1) {
+  console.error(`[pairing-runtime] Expected exactly one versioned runtime script in webui/index.html, found ${matched}`)
+  process.exit(1)
+}
+if (updatedIndex !== indexHtml) {
+  fs.writeFileSync(indexPath, updatedIndex)
+  console.log(`[pairing-runtime] Synchronized index.html -> ${expectedName}`)
 }
 
 if (removed.length) {

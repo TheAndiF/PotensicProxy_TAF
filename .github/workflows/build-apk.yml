@@ -76,6 +76,12 @@ jobs:
         working-directory: webui
         run: npm run prepare:pairing-runtime
 
+      - name: Verify source pairing runtime reference
+        working-directory: webui
+        run: |
+          node scripts/prepare-pairing-runtime.mjs
+          node -e "const fs=require('fs'); const v=require('./package.json').version; const html=fs.readFileSync('index.html','utf8'); if(!html.includes('taf-pairing-runtime-v'+v+'.js')) process.exit(1)"
+
       - name: Build WebUI from source
         working-directory: webui
         run: npm run build
