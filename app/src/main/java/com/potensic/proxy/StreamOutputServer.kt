@@ -9,6 +9,10 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 import org.json.JSONObject
 
 /** Read-only video output. No flight controls, no WebSockets and no writes. */
@@ -44,6 +48,30 @@ class StreamOutputServer(private val decoder: VideoDecoder, private val settings
                         }
                     }
                 }
+                // Same-origin, read-only status proxy. No browser cross-port requests.
+                get("/telemetry") {
+                    if (!settings.streamEnabled()) { call.respond(HttpStatusCode.ServiceUnavailable); return@get }
+                    call.response.header("Cache-Control", "no-store")
+                    val result = withContext(Dispatchers.IO) { readRemote("http://127.0.0.1:9090/api/status") }
+                    if (result == null) call.respond(HttpStatusCode.ServiceUnavailable)
+                    else call.respondBytes(result, ContentType.Application.Json)
+                }
+                get("/tiles/{z}/{x}/{y}") {
+                    if (!settings.streamEnabled()) { call.respond(HttpStatusCode.ServiceUnavailable); return@get }
+                    val z = call.parameters["z"]?.toIntOrNull()
+                    val x = call.parameters["x"]?.toIntOrNull()
+                    val y = call.parameters["y"]?.toIntOrNull()
+                    if (z == null || z !in 0..19 || x == null || y == null || x < 0 || y < 0 || x >= (1 shl z) || y >= (1 shl z)) {
+                        call.respond(HttpStatusCode.BadRequest); return@get
+                    }
+                    val mode = settings.get().optString("mapProvider", "main")
+                    val url = if (mode == "osm") "https://tile.openstreetmap.org/$z/$x/$y.png"
+                        else "http://127.0.0.1:9090/api/map/tiles/$z/$x/$y"
+                    val bytes = withContext(Dispatchers.IO) { readRemote(url) }
+                    call.response.header("Cache-Control", "no-store")
+                    if (bytes == null) call.respond(HttpStatusCode.NotFound)
+                    else call.respondBytes(bytes, ContentType.Image.PNG)
+                }
                 get("/settings") {
                     if (!settings.streamEnabled()) { call.respond(HttpStatusCode.ServiceUnavailable); return@get }
                     call.response.header("Cache-Control", "no-store")
@@ -54,6 +82,15 @@ class StreamOutputServer(private val decoder: VideoDecoder, private val settings
     }
     @Synchronized fun stop() { server?.stop(500, 1000); server = null }
 
+    private fun readRemote(address: String): ByteArray? = try {
+        val connection = URL(address).openConnection() as HttpURLConnection
+        connection.connectTimeout = 2500
+        connection.readTimeout = 3500
+        connection.setRequestProperty("User-Agent", "PotensicProxy-AdditionalStream/0.9834")
+        try { if (connection.responseCode == 200) connection.inputStream.use { it.readBytes() } else null }
+        finally { connection.disconnect() }
+    } catch (_: Exception) { null }
+
     companion object {
         private val VIEWER_HTML = """<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>
         *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden}#video{width:100vw;height:100vh;object-fit:contain;display:block}
@@ -62,20 +99,45 @@ class StreamOutputServer(private val decoder: VideoDecoder, private val settings
         #hud{display:none;position:absolute;bottom:2%;left:2%;font:16px sans-serif;color:white;text-shadow:0 1px 4px black}
         </style></head><body><img id="video" src="/stream.mjpg"><div id="map"><div id="tiles"></div><span id="center">+</span></div><div id="hud"></div>
         <script>
-        const control=location.protocol+'//'+location.hostname+':9090';let cfg={};
-        async function refresh(){try{cfg=await(await fetch('/settings',{cache:'no-store'})).json();document.getElementById('map').style.display=cfg.mapPip?'block':'none';
-        const r=await fetch(control+'/api/status',{cache:'no-store'});if(!r.ok)return;const j=await r.json();const s=j.state||{};
-        const pick=(...keys)=>{for(const key of keys){if(s[key]!==undefined)return s[key]}return null};
-        const lat=Number(pick('latitude','lat')),lon=Number(pick('longitude','lon'));
-        if(cfg.mapPip&&Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=85&&Math.abs(lon)<=180&&(lat!==0||lon!==0)){
-          const z=15, n=2**z, tx=Math.floor((lon+180)/360*n),ty=Math.floor((1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*n);let html='';
-          for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const x=(tx+dx+n)%n,y=ty+dy;if(y<0||y>=n)continue;html+='<img style="left:'+((dx+1)*100/3)+'%;top:'+((dy+1)*100/3)+'%" src="'+control+'/api/map/tiles/'+z+'/'+x+'/'+y+'">'}
-          document.getElementById('tiles').innerHTML=html;
+        let cfg={}, lastTileKey='';
+        const hud=document.getElementById('hud'),map=document.getElementById('map'),tiles=document.getElementById('tiles');
+        const fmt=(v,d=1)=>v===null||v===undefined||!Number.isFinite(Number(v))?'–':Number(v).toFixed(d);
+        async function refresh(){
+          try {
+            const c=await fetch('/settings',{cache:'no-store'});if(!c.ok)throw Error('settings '+c.status);cfg=await c.json();
+            map.style.display=cfg.mapPip?'block':'none';
+            const r=await fetch('/telemetry',{cache:'no-store'});if(!r.ok)throw Error('telemetry '+r.status);
+            const j=await r.json(),s=j.state||{};
+            const pick=(...keys)=>{for(const key of keys){if(s[key]!==undefined&&s[key]!==null)return s[key]}return null};
+            const lat=Number(pick('latitude','lat')),lon=Number(pick('longitude','lon'));
+            if(cfg.mapPip){
+              if(Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=85&&Math.abs(lon)<=180&&(lat!==0||lon!==0)){
+                const z=15,n=2**z,tx=Math.floor((lon+180)/360*n),ty=Math.floor((1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*n);
+                const tileKey=[cfg.mapProvider,tx,ty,z].join(':');
+                if(tileKey!==lastTileKey){let html='';for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+                  const x=(tx+dx+n)%n,y=ty+dy;if(y<0||y>=n)continue;
+                  html+='<img style="left:'+((dx+1)*100/3)+'%;top:'+((dy+1)*100/3)+'%" src="/tiles/'+z+'/'+x+'/'+y+'">';
+                }tiles.innerHTML=html;lastTileKey=tileKey;}
+              }else{tiles.textContent='GPS-Position nicht verfügbar';lastTileKey='';}
+            }
+            const rows=[];
+            const add=(key,label,value)=>{if(cfg[key])rows.push(label+': '+value)};
+            add('showPosition','GPS',Number.isFinite(lat)&&Number.isFinite(lon)?lat.toFixed(6)+', '+lon.toFixed(6):'–');
+            add('showHeading','Kurs',fmt(pick('heading'),0)+'°');
+            add('showAltitude','Höhe',fmt(pick('altitude'))+' m');
+            add('showBattery','Akku',fmt(pick('battery'),0)+' %');
+            add('showPhoneBattery','Handy',fmt(j.phoneBatteryPercent,0)+' %');
+            add('showControllerBattery','Fernsteuerung',fmt(pick('remoterVoltage'))+' V');
+            add('showDroneBattery','Drohne',fmt(pick('battery'),0)+' %');
+            add('showHorizontalSpeed','Horizontal',fmt(pick('horizontalSpeed'))+' m/s');
+            add('showVerticalSpeed','Vertikal',fmt(pick('verticalSpeed'))+' m/s');
+            add('showHorizontalDistance','Entfernung',fmt(pick('horizontalDistance'))+' m');
+            add('showSatellites','Satelliten',fmt(pick('satellites'),0));
+            add('showHomepoint','Homepoint',s.homePointValid===true?'✓':s.homePointValid===false?'–':'unbekannt');
+            add('showPitch','Nick',fmt(pick('pitch'),0)+'°');add('showRoll','Roll',fmt(pick('roll'),0)+'°');
+            hud.textContent=rows.join('  |  ');hud.style.display=rows.length?'block':'none';
+          }catch(e){ if(cfg.mapPip)tiles.textContent='Karte / Status nicht erreichbar';hud.style.display='none';}
         }
-        const bits=[];if(cfg.showPosition)bits.push('GPS: '+(Number.isFinite(lat)?lat.toFixed(6):'–')+', '+(Number.isFinite(lon)?lon.toFixed(6):'–'));
-        if(cfg.showHeading)bits.push('Kurs: '+(pick('heading')??'–')+'°');if(cfg.showAltitude)bits.push('Höhe: '+(pick('altitude')??'–')+' m');if(cfg.showBattery)bits.push('Akku: '+(pick('battery')??'–')+' %');
-        const hud=document.getElementById('hud');hud.textContent=bits.join('  |  ');hud.style.display=bits.length?'block':'none';
-        }catch(e){/* Keep video independent of telemetry/network errors */}}
         refresh();setInterval(refresh,3000);
         </script></body></html>"""
     }

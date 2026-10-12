@@ -1,6 +1,6 @@
 {
   "name": "potensic-proxy-webui",
-  "version": "0.9833",
+  "version": "0.9834",
   "private": true,
   "type": "module",
   "scripts": {
