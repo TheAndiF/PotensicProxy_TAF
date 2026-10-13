@@ -503,7 +503,18 @@ class WebServer(
                     }
                 }
 
-                // PPort: immutable model folders, newest model can be previewed without control access.
+                get("/api/storage/project/health") {
+                    try {
+                        val result = withContext(Dispatchers.IO) { PStartSafStorage.ensureProjectStructure(appContext) }
+                        call.respondText(result.toString(), ContentType.Application.Json)
+                    } catch (e: Exception) {
+                        Log.e("[ProjectStorage] structure initialization failed", e)
+                        call.respondText(JSONObject().put("ready", false).put("error", e.message).toString(),
+                            ContentType.Application.Json, HttpStatusCode.ServiceUnavailable)
+                    }
+                }
+
+                // PPort: SAF-backed session folders, replaceable per session, newest model can be previewed without control access.
                 post("/api/pport/models/{id}") {
                     try {
                         val id = call.parameters["id"] ?: ""

@@ -209,7 +209,8 @@ class AndroidMediaRepository(
     fun savePStartAnalysisArtifact(sessionId: String, name: String, bytes: ByteArray): JSONObject {
         require(sessionId.isNotBlank()) { "session id missing" }
         require(bytes.isNotEmpty() && bytes.size <= 25_000_000) { "artifact empty or too large" }
-        require(Regex("[A-Za-z0-9._-]{1,180}").matches(name) && name.contains("_analysis_", true)) { "invalid analysis filename" }
+        require(Regex("[A-Za-z0-9._-]{1,180}").matches(name) && (name.contains("_analysis_", true) ||
+            name.matches(Regex("marker_(model|pattern|scale|quality|weighting)_analysis[.](json|png)")))) { "invalid analysis filename" }
         val mime = when {
             name.endsWith(".jpg", true) || name.endsWith(".jpeg", true) -> "image/jpeg"
             name.endsWith(".png", true) -> "image/png"

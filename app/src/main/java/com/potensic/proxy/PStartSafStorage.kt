@@ -20,7 +20,7 @@ object PStartSafStorage {
     fun status(context: Context): JSONObject {
         val uri = tree(context)
         return JSONObject().put("state", if (uri != null) "READY" else if (state == "READY") "NOT_SELECTED" else state)
-            .put("folder", "PotensicProxy")
+            .put("folder", "Potensic Proxy")
             .put("treeUri", uri?.toString() ?: JSONObject.NULL)
     }
     private fun tree(context: Context): Uri? {
@@ -48,7 +48,7 @@ object PStartSafStorage {
         val flags = intentFlags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         require(flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0 && flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0) { "Read/write access required" }
         val name = selectedDisplayName(context, uri)
-        require(name == "PotensicProxy") { "Selected folder '$name'; expected PotensicProxy" }
+        require(name == "Potensic Proxy" || name == "PotensicProxy") { "Selected folder '$name'; expected Potensic Proxy" }
         // Where the standard external-storage provider exposes a path-like ID, also
         // enforce the intended parent. Other providers use opaque IDs and cannot be
         // verified by interpreting their IDs as paths; never pretend otherwise.
@@ -59,9 +59,9 @@ object PStartSafStorage {
         // Accept ONLY this provider and these two exact target IDs; a matching
         // display name alone must not grant access to an unrelated location.
         val correctLocation = uri.authority == "com.android.externalstorage.documents" &&
-            (id == "primary:Documents/PotensicProxy" || id == "home:PotensicProxy")
+            (id == "primary:Documents/Potensic Proxy" || id == "home:Potensic Proxy" || id == "primary:Documents/PotensicProxy" || id == "home:PotensicProxy")
         require(correctLocation) {
-            "Please select internal storage/Documents/PotensicProxy (selected provider=${uri.authority}, ID=$id, displayName=$name)"
+            "Please select internal storage/Documents/Potensic Proxy (selected provider=${uri.authority}, ID=$id, displayName=$name)"
         }
         Log.i("PStartSAF", "Selected location verified: provider=${uri.authority}, id=$id, name=$name")
         context.contentResolver.takePersistableUriPermission(uri, flags)
@@ -86,6 +86,7 @@ object PStartSafStorage {
         }
         context.getSharedPreferences("pstart_saf", Context.MODE_PRIVATE).edit().putString(KEY, uri.toString()).apply()
         state = "READY"
+        ensureProjectStructure(context)
         Log.i("PStartSAF", "SAF permission verified for folder=$name uri=$uri")
     }
 
@@ -98,6 +99,55 @@ object PStartSafStorage {
     }
     /** A single user-granted PotensicProxy tree for every persistent Android export. */
     fun requireRoot(context: Context): Uri = root(context)
+
+    /** Idempotent public directory initialization under the SAF-granted Documents folder. */
+    @Synchronized fun ensureProjectStructure(context: Context): JSONObject {
+        val directories = listOf("Auto/PStart", "Auto/PLand", "Auto/PPort",
+            "RECO/Bilder", "Exporte/Bilder", "Exporte/Videos", "Exporte/Berichte",
+            "Missionen/Exporte", "Flugprotokolle", "Diagnose/App", "Diagnose/Kamera",
+            "Diagnose/Verbindung", "Diagnose/Mitschnitte", "Einstellungen", "Backups")
+        val resolver = context.contentResolver
+        val grant = tree(context) ?: throw SecurityException("Documents/Potensic Proxy SAF permission missing")
+        for (path in directories) {
+            var parent = root(context)
+            for (name in path.split('/')) {
+                parent = findChild(context, grant, parent, name, DocumentsContract.Document.MIME_TYPE_DIR)
+                    ?: DocumentsContract.createDocument(resolver, parent, DocumentsContract.Document.MIME_TYPE_DIR, name)
+                    ?: error("Cannot create directory $path at $name")
+            }
+        }
+        Log.i("PStartSAF", "Project folder tree checked: ${directories.size} paths")
+        return JSONObject().put("ready", true).put("directories", directories.size)
+            .put("location", "Documents/Potensic Proxy").put("storageHotfix", "v0.9845.2")
+    }
+
+    /** Read known PPort model assets using the exact same SAF grant as PStart. */
+    fun readProjectFile(context: Context, path: String, name: String): ByteArray {
+        require(path.split('/').all(::safe) && safe(name)) { "Invalid project read path" }
+        val grant = tree(context) ?: throw SecurityException("SAF permission missing")
+        var parent = root(context)
+        for (segment in path.split('/')) parent = findChild(context, grant, parent, segment, DocumentsContract.Document.MIME_TYPE_DIR)
+            ?: error("Directory missing: $path")
+        val file = findChild(context, grant, parent, name, null) ?: error("Missing project file: $path/$name")
+        return context.contentResolver.openInputStream(file)?.use { it.readBytes() }
+            ?: error("Cannot read project file: $path/$name")
+    }
+
+    fun projectSubfolders(context: Context, path: String): List<String> {
+        require(path.split('/').all(::safe)) { "Invalid folder path" }
+        val grant = tree(context) ?: return emptyList()
+        var parent = root(context)
+        for (part in path.split('/')) parent = findChild(context, grant, parent, part, DocumentsContract.Document.MIME_TYPE_DIR)
+            ?: return emptyList()
+        val query = DocumentsContract.buildChildDocumentsUriUsingTree(grant, DocumentsContract.getDocumentId(parent))
+        val result = mutableListOf<String>()
+        context.contentResolver.query(query, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+            while (cursor.moveToNext()) if (cursor.getString(1) == DocumentsContract.Document.MIME_TYPE_DIR)
+                result.add(cursor.getString(0))
+        }
+        return result
+    }
 
     fun putFile(context: Context, path: String, filename: String, mime: String, bytes: ByteArray): JSONObject {
         require(path.split('/').all { safe(it) } && path.isNotEmpty()) { "Invalid storage path" }
@@ -112,7 +162,8 @@ object PStartSafStorage {
         }
         val existing = findChild(context, grant, directory, filename, null)
         // Only designated analysis outputs may be replaced; captured photos and source XMP stay immutable.
-        val replaceable = filename.contains("_analysis_", ignoreCase = true) &&
+        val replaceable = (filename.contains("_analysis_", ignoreCase = true) ||
+            path.startsWith("Auto/PPort/")) &&
             (filename.endsWith(".png", true) || filename.endsWith(".json", true) ||
              filename.endsWith(".jsonl", true) || filename.endsWith(".xmp", true) ||
              filename.endsWith(".jpg", true))
@@ -141,7 +192,7 @@ object PStartSafStorage {
             backup?.let { if (!DocumentsContract.deleteDocument(resolver, it)) Log.w("PStartSAF", "Previous artifact backup not removed: $filename") }
             backup = null
             return JSONObject().put("uri", result.toString()).put("name", filename)
-                .put("relativePath", "Documents/PotensicProxy/$path")
+                .put("relativePath", "Documents/Potensic Proxy/$path")
                 .put("size", bytes.size).put("replaced", existing != null)
                 .put("sha256", MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) })
                 .put("verified", true)

@@ -222,6 +222,7 @@ export class PStartPostProcessingService {
         this.emit({ state: 'CHECKING_IMAGES', completed: refs.length, total: items.length, message: item.name })
         await new Promise(resolve => setTimeout(resolve, 0))
       }
+      this.record('INFO','HOTFIX_VERSION','', 'PStart model publishing hotfix v0.9845.2')
       // A single ascent is one dataset. Select its strongest eligible close image;
       // never transfer pixel positions between altitudes or zoom roles.
       const series = this.evaluateSeries(refs)
@@ -231,6 +232,8 @@ export class PStartPostProcessingService {
       const ranked = pendingCopies.filter(c => c.ref.status === 'candidate' && c.ref.outerCornersPx?.length === 4)
         .sort((a,b) => Number(a.ref.candidateAmbiguous) - Number(b.ref.candidateAmbiguous) ||
           (b.ref.patternScore ?? 0) - (a.ref.patternScore ?? 0))
+      let modelPublished = false
+      let modelFailure = ''
       if (save && ranked.length) {
         const chosen = ranked[0]
         try {
@@ -299,8 +302,9 @@ export class PStartPostProcessingService {
               const copy = await fetch('/api/pport/models/'+encodeURIComponent(sessionId),{method:'POST',
                 headers:{'Content-Type':'application/json'},body:JSON.stringify({files})})
               if (!copy.ok) throw new Error(await copy.text())
+              modelPublished = true
               this.record('INFO','PPORT_MODEL_COPY',chosen.name,'Stored as unverified candidate; PLand must display warning')
-            } catch(e) { this.record('ERROR','PPORT_MODEL_COPY',chosen.name,String(e)) }
+            } catch(e) { modelFailure = String(e); this.record('ERROR','PPORT_MODEL_COPY',chosen.name,modelFailure) }
           }
           delete output.pngBase64
           if (typeof output.diagnosticPngBase64 === 'string') {
@@ -316,8 +320,8 @@ export class PStartPostProcessingService {
           this.record('INFO','REFERENCE_NORMALIZED',chosen.name,JSON.stringify(output))
           if (output.orientationStatus !== 'orientation_candidate')
             this.record('WARN','ORIENTATION_AMBIGUOUS',chosen.name,String(output.cornerSeparation))
-        } catch(e) { this.record('ERROR','REFERENCE_NORMALIZATION',chosen.name,String(e)) }
-      } else this.record('WARN','REFERENCE_NORMALIZATION','', 'No suitable candidate or writable session folder')
+        } catch(e) { modelFailure = String(e); this.record('ERROR','REFERENCE_NORMALIZATION',chosen.name,modelFailure) }
+      } else { modelFailure = 'No suitable candidate or writable session folder'; this.record('WARN','REFERENCE_NORMALIZATION','',modelFailure) }
       if (save) {
         for (const copy of pendingCopies) {
           try {
@@ -334,8 +338,9 @@ export class PStartPostProcessingService {
       const errors = refs.filter(r => r.status === 'error').length
       const valid = refs.filter(r => r.status === 'candidate').length
       this.record('INFO', 'OPTICAL_SUMMARY', '', JSON.stringify({ metadataOnly: refs.filter(r => r.status === 'metadata_only').length, optical: refs.filter(r => r.status !== 'metadata_only').length, candidates: valid }))
-      const profile: PStartProfile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: errors === refs.length || !refs.length ? 'failed' : 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series }
+      const profile: PStartProfile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: errors === refs.length || !refs.length ? 'failed' : !modelPublished ? 'completed_with_save_errors' : 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series }
       try { localStorage.setItem('taf.pstart.analysis.latest', JSON.stringify(profile)) } catch { /* storage optional */ }
+      if (!modelPublished) this.record('ERROR','MODEL_DELIVERY',sessionId,modelFailure || 'PPort model not confirmed')
       this.record('INFO', 'COMPLETE', '', `${refs.length} images; ${valid} candidates; anchor=${series.anchorImageId || "none"}`)
       if (save) {
         for (const [name, data, mime] of [
