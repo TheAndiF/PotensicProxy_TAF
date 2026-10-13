@@ -160,6 +160,67 @@ object PStartSafStorage {
         return sessions.maxByOrNull { it.first }?.second ?: root
     }
 
+    /** List existing PStart session folders; browser only chooses IDs, never local PC files. */
+    fun sessions(context: Context): JSONObject {
+        val grant = tree(context) ?: throw SecurityException("PotensicProxy SAF access missing")
+        val auto = findChild(context, grant, root(context), "Auto", DocumentsContract.Document.MIME_TYPE_DIR)
+        val pstart = auto?.let { findChild(context, grant, it, "PStart", DocumentsContract.Document.MIME_TYPE_DIR) }
+        val result = JSONArray()
+        if (pstart != null) {
+            val childUri = DocumentsContract.buildChildDocumentsUriUsingTree(grant, DocumentsContract.getDocumentId(pstart))
+            context.contentResolver.query(childUri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val name = cursor.getString(1) ?: continue
+                    if (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR && safe(name)) result.put(name)
+                }
+            }
+        }
+        return JSONObject().put("sessions", result)
+    }
+
+    private fun sessionDirectory(context: Context, sessionId: String): Uri {
+        require(safe(sessionId)) { "Invalid session" }
+        val grant = tree(context) ?: throw SecurityException("PotensicProxy SAF access missing")
+        val auto = findChild(context, grant, root(context), "Auto", DocumentsContract.Document.MIME_TYPE_DIR)
+            ?: throw IllegalArgumentException("Auto not found")
+        val pstart = findChild(context, grant, auto, "PStart", DocumentsContract.Document.MIME_TYPE_DIR)
+            ?: throw IllegalArgumentException("PStart not found")
+        return findChild(context, grant, pstart, sessionId, DocumentsContract.Document.MIME_TYPE_DIR)
+            ?: throw IllegalArgumentException("PStart session not found: $sessionId")
+    }
+
+    private fun sessionChildren(context: Context, sessionId: String): List<Pair<String, Uri>> {
+        val grant = tree(context) ?: throw SecurityException("PotensicProxy SAF access missing")
+        val folder = sessionDirectory(context, sessionId)
+        val childUri = DocumentsContract.buildChildDocumentsUriUsingTree(grant, DocumentsContract.getDocumentId(folder))
+        val found = mutableListOf<Pair<String, Uri>>()
+        context.contentResolver.query(childUri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { c ->
+            while (c.moveToNext()) if (c.getString(2) != DocumentsContract.Document.MIME_TYPE_DIR) {
+                val name = c.getString(1) ?: continue
+                if (safe(name)) found.add(name to DocumentsContract.buildDocumentUriUsingTree(grant, c.getString(0)))
+            }
+        }
+        return found
+    }
+
+    fun sessionImages(context: Context, sessionId: String): JSONObject {
+        val files = JSONArray()
+        sessionChildren(context, sessionId).filter { (name, _) -> name.endsWith(".jpg", true) || name.endsWith(".jpeg", true) }
+            .filterNot { (name, _) -> name.contains("_analysis_", true) }.sortedBy { it.first }
+            .forEach { files.put(it.first) }
+        return JSONObject().put("session", sessionId).put("files", files)
+    }
+
+    fun readSessionImage(context: Context, sessionId: String, name: String): ByteArray {
+        require(safe(name) && (name.endsWith(".jpg", true) || name.endsWith(".jpeg", true)) && !name.contains("_analysis_", true)) { "Invalid image" }
+        val file = sessionChildren(context, sessionId).firstOrNull { it.first == name }?.second
+            ?: throw IllegalArgumentException("Image not found in session")
+        return context.contentResolver.openInputStream(file)?.use { it.readBytes() }
+            ?: throw IllegalStateException("Cannot read image")
+    }
+
     private fun children(context: Context): List<Pair<String, Uri>> {
         val base = latestPStartDirectory(context)
         val tree = tree(context)!!

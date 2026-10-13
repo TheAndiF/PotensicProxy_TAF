@@ -107,15 +107,36 @@ export class PStartPostProcessingService {
   static subscribe(cb: (value: PStartProgress) => void): () => void { this.subscribers.add(cb); cb(this.progress); return () => { this.subscribers.delete(cb) } }
   private static emit(value: PStartProgress) { this.progress = value; this.subscribers.forEach(cb => cb(value)) }
 
+  /** Both triggers use the same SAF-backed analysis workflow, without a PC browser picker. */
+  static async listAndroidSessions(): Promise<string[]> {
+    const response = await fetch('/api/pstart/sessions', { cache: 'no-store' })
+    if (!response.ok) throw new Error('Android sessions: ' + await response.text())
+    const data = await response.json() as { sessions: string[] }
+    return data.sessions.sort().reverse()
+  }
+  static async analyzeAndroidSession(sessionId: string): Promise<PStartProfile> {
+    if (!/^[A-Za-z0-9_.-]{1,190}$/.test(sessionId) || sessionId.includes('..')) throw new Error('Invalid session')
+    const response = await fetch(`/api/pstart/sessions/${encodeURIComponent(sessionId)}/images`, { cache: 'no-store' })
+    if (!response.ok) throw new Error('Android session: ' + await response.text())
+    const data = await response.json() as { files: string[] }
+    return this.run(sessionId, data.files.map(name => ({ name, load: async () => {
+      const image = await fetch(`/api/pstart/sessions/${encodeURIComponent(sessionId)}/image?` + new URLSearchParams({ name }), { cache: 'no-store' })
+      if (!image.ok) throw new Error(`Android JPEG ${name}: ${await image.text()}`)
+      return image.blob()
+    } })), (name, blob) => this.saveAndroid(sessionId, name, blob))
+  }
+  private static async sha256(bytes: ArrayBuffer): Promise<string> {
+    // Android computes the digest; browser crypto.subtle is unavailable over HTTP LAN.
+    const response = await fetch('/api/pstart/analysis/sha256', { method: 'POST', body: bytes })
+    if (!response.ok) throw new Error('SHA-256 Android: ' + await response.text())
+    const data = await response.json() as { sha256: string }
+    if (!/^[a-f0-9]{64}$/.test(data.sha256)) throw new Error('Invalid SHA-256 response')
+    return data.sha256
+  }
+
   /** Automatic mode reads only images belonging to the completed session. Never sends flight commands. */
   static async analyzeSavedSession(sessionId: string): Promise<PStartProfile> {
-    const images = await AndroidMediaService.listImages('recognition')
-    const selected = images.filter(i => i.name.startsWith(`PStart_${sessionId}_`) && /\.jpe?g$/i.test(i.name) && !/_analysis_/i.test(i.name))
-    return this.run(sessionId, selected.map(i => ({ name: i.name, load: async () => {
-      const response = await fetch(AndroidMediaService.imageUrl(i.id), { cache: 'no-store' })
-      if (!response.ok) throw new Error(`JPEG HTTP ${response.status}`)
-      return response.blob()
-    } })), (name, blob) => this.saveAndroid(sessionId, name, blob))
+    return this.analyzeAndroidSession(sessionId)
   }
 
   /** The browser's directory selector works offline, with no filesystem permission outside the chosen files. */
@@ -149,8 +170,7 @@ export class PStartPostProcessingService {
           const blob = await item.load()
           const bytes = await blob.arrayBuffer()
           if (bytes.byteLength < 4 || new DataView(bytes).getUint16(0) !== 0xffd8) throw new Error('Ungültiger JPEG-Header')
-          const digest = await crypto.subtle.digest('SHA-256', bytes)
-          ref.imageSha256 = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('')
+          ref.imageSha256 = await this.sha256(bytes)
           if (seen.has(ref.imageSha256)) { warnings.push('Duplikat (SHA-256)'); this.record('WARN', 'DUPLICATE', item.name, ref.imageSha256); continue }
           seen.add(ref.imageSha256)
           this.record('INFO', 'JPEG_CHECK', item.name, `bytes=${bytes.byteLength}; sha256=${ref.imageSha256}`)
@@ -215,8 +235,9 @@ export class PStartPostProcessingService {
           }
         }
       }
+      const errors = refs.filter(r => r.status === 'error').length
       const valid = refs.filter(r => r.status === 'candidate' && /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath) && r.zoomRole !== 'MAX').length
-      const profile: PStartProfile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: valid && series.anchorImageId ? 'LIMITED' : 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series }
+      const profile: PStartProfile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: errors === refs.length || !refs.length ? 'failed' : 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: valid && series.anchorImageId ? 'LIMITED' : 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series }
       try { localStorage.setItem('taf.pstart.analysis.latest', JSON.stringify(profile)) } catch { /* storage optional */ }
       this.record('INFO', 'COMPLETE', '', `${refs.length} images; ${valid} candidates; anchor=${series.anchorImageId || "none"}`)
       if (save) {
@@ -230,7 +251,7 @@ export class PStartPostProcessingService {
       } else {
         this.record('WARN', 'READ_ONLY_FOLDER', '', 'Browser file input has no directory write permission; export manually or use writable-folder mode')
       }
-      this.emit({ state: profile.analysisStatus !== 'completed' || refs.some(r => r.warnings.length) ? 'COMPLETED_WITH_WARNINGS' : 'COMPLETED', completed: refs.length, total: items.length, message: `${valid} Kreuz-Kandidaten; keine Flugfreigabe`, profile })
+      this.emit({ state: profile.analysisStatus === 'failed' ? 'FAILED' : profile.analysisStatus !== 'completed' || errors || refs.some(r => r.warnings.length) ? 'COMPLETED_WITH_WARNINGS' : 'COMPLETED', completed: refs.length, total: items.length, message: `${refs.length - errors} erfolgreich gelesen, ${errors} Fehler; ${valid} Kreuz-Kandidaten; keine Flugfreigabe`, profile })
       return profile
     } catch (e) {
       this.record('ERROR', 'RUN', '', String(e))

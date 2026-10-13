@@ -427,6 +427,33 @@ class WebServer(
                     } catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
                 }
 
+                // Shared SAF PStart session source for manual and automatic analysis.
+                get("/api/pstart/sessions") {
+                    try { call.respondText(withContext(Dispatchers.IO) { PStartSafStorage.sessions(appContext).toString() }, ContentType.Application.Json) }
+                    catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
+                }
+                get("/api/pstart/sessions/{session}/images") {
+                    try {
+                        val session = call.parameters["session"] ?: ""
+                        call.respondText(withContext(Dispatchers.IO) { PStartSafStorage.sessionImages(appContext, session).toString() }, ContentType.Application.Json)
+                    } catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
+                }
+                get("/api/pstart/sessions/{session}/image") {
+                    try {
+                        val session = call.parameters["session"] ?: ""
+                        val name = call.request.queryParameters["name"] ?: ""
+                        call.respondBytes(withContext(Dispatchers.IO) { PStartSafStorage.readSessionImage(appContext, session, name) }, ContentType.Image.JPEG)
+                    } catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
+                }
+                post("/api/pstart/analysis/sha256") {
+                    try {
+                        val bytes = call.receiveStream().use { it.readBytes() }
+                        require(bytes.size in 4..30_000_000) { "Invalid image size" }
+                        val hash = withContext(Dispatchers.Default) { java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) } }
+                        call.respondText(JSONObject().put("sha256", hash).toString(), ContentType.Application.Json)
+                    } catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
+                }
+
                 // CPU-heavy offline detector. Never issues flight commands.
                 post("/api/pstart/analysis/opencv") {
                     try {
