@@ -323,6 +323,13 @@ class WebServer(
                     }
                 }
 
+                // Server-clock frame barrier: acquired only AFTER zoom confirmation.
+                get("/api/media/frame-marker") {
+                    call.response.header("Access-Control-Allow-Origin", "*")
+                    val marker = videoDecoder.jpegSnapshot()?.second ?: 0L
+                    call.respondText(JSONObject().put("lastJpegMs", marker).toString(), ContentType.Application.Json)
+                }
+
                 post("/api/media/snapshot") {
                     call.response.header("Access-Control-Allow-Origin", "*")
                     val requestedLibrary = call.request.queryParameters["library"]?.lowercase()
@@ -342,20 +349,30 @@ class WebServer(
                     } catch (_: Exception) {
                         null
                     }
-                    var jpeg = videoDecoder.lastJpeg
-                    if (jpeg == null) {
-                        ProxyService.instance?.activateLiveView()
-                        var waitedMs = 0
-                        while (jpeg == null && waitedMs < 2000) {
-                            delay(100)
-                            waitedMs += 100
-                            jpeg = videoDecoder.lastJpeg
+                    val isPStart = snapshotSource == "pstart-reference" || snapshotSource == "pstart-documentation"
+                    val afterMs = call.request.queryParameters["afterFrameMs"]?.toLongOrNull()
+                    // PStart must explicitly pass a server-side marker taken after zoom confirmation.
+                    val invalidBarrier = isPStart && (afterMs == null || afterMs < 0L)
+                    if (!invalidBarrier && videoDecoder.jpegSnapshot() == null) ProxyService.instance?.activateLiveView()
+                    // Require a genuinely newer decoded frame and allow the video pipeline to settle.
+                    val minimumFrameTime = if (isPStart) afterMs!! + 250L else 0L
+                    var freshFrame: Pair<ByteArray, Long>? = null
+                    if (!invalidBarrier) {
+                        var attempts = 0
+                        while (freshFrame == null && attempts < 30) {
+                            val candidate = videoDecoder.jpegSnapshot()
+                            if (candidate != null && (!isPStart || candidate.second > minimumFrameTime)) {
+                                freshFrame = candidate
+                            } else {
+                                delay(100)
+                                attempts++
+                            }
                         }
                     }
-                    val frame = jpeg
+                    val frame = freshFrame?.first
                     if (frame == null) {
                         call.respondText(
-                            JSONObject().put("error", "No decoded video frame is available").toString(),
+                            JSONObject().put("error", if (invalidBarrier) "PStart frame marker missing" else "No fresh decoded video frame within timeout").toString(),
                             ContentType.Application.Json,
                             HttpStatusCode.ServiceUnavailable,
                         )
@@ -371,7 +388,11 @@ class WebServer(
                                     sessionId = snapshotSessionId,
                                 )
                             }
-                            call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
+                            if (isPStart && saved.optBoolean("verified", false) != true) {
+                                call.respondText(JSONObject().put("error", "PStart JPEG save not verified").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
+                            } else {
+                                call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
+                            }
                         } catch (e: SecurityException) {
                             call.respondText(JSONObject().put("error", e.message ?: "storage permission denied").toString(), ContentType.Application.Json, HttpStatusCode.Forbidden)
                         } catch (e: Exception) {

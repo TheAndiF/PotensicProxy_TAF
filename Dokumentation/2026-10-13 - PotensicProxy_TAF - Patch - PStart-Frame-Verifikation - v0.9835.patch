@@ -1,0 +1,687 @@
+--- a/app/src/main/java/com/potensic/proxy/VideoDecoder.kt
++++ b/app/src/main/java/com/potensic/proxy/VideoDecoder.kt
+@@ -24,6 +24,10 @@
+     @Volatile var lastJpeg: ByteArray? = null; private set
+     @Volatile var lastJpegTime: Long = 0; private set
+     @Volatile var publishFrame: Boolean = true
++
++    // A consistent JPEG/time pair avoids reading a newer timestamp with an older frame.
++    @Synchronized fun jpegSnapshot(): Pair<ByteArray, Long>? =
++        lastJpeg?.let { Pair(it, lastJpegTime) }
+ 
+     companion object {
+         const val MAX_JPEG_QUEUE = 2 // minimal queue for low latency
+@@ -138,8 +142,10 @@
+                     if (jpeg != null) {
+                         val count = framesDecoded.incrementAndGet()
+                         if (publishFrame) {
+-                            lastJpeg = jpeg
+-                            lastJpegTime = System.currentTimeMillis()
++                            synchronized(this) {
++                                lastJpeg = jpeg
++                                lastJpegTime = System.currentTimeMillis()
++                            }
+                             while (jpegQueue.size >= MAX_JPEG_QUEUE) jpegQueue.poll()
+                             jpegQueue.offer(jpeg)
+                         }
+--- a/app/src/main/java/com/potensic/proxy/WebServer.kt
++++ b/app/src/main/java/com/potensic/proxy/WebServer.kt
+@@ -323,6 +323,13 @@
+                     }
+                 }
+ 
++                // Server-clock frame barrier: acquired only AFTER zoom confirmation.
++                get("/api/media/frame-marker") {
++                    call.response.header("Access-Control-Allow-Origin", "*")
++                    val marker = videoDecoder.jpegSnapshot()?.second ?: 0L
++                    call.respondText(JSONObject().put("lastJpegMs", marker).toString(), ContentType.Application.Json)
++                }
++
+                 post("/api/media/snapshot") {
+                     call.response.header("Access-Control-Allow-Origin", "*")
+                     val requestedLibrary = call.request.queryParameters["library"]?.lowercase()
+@@ -342,20 +349,30 @@
+                     } catch (_: Exception) {
+                         null
+                     }
+-                    var jpeg = videoDecoder.lastJpeg
+-                    if (jpeg == null) {
+-                        ProxyService.instance?.activateLiveView()
+-                        var waitedMs = 0
+-                        while (jpeg == null && waitedMs < 2000) {
+-                            delay(100)
+-                            waitedMs += 100
+-                            jpeg = videoDecoder.lastJpeg
+-                        }
+-                    }
+-                    val frame = jpeg
++                    val isPStart = snapshotSource == "pstart-reference" || snapshotSource == "pstart-documentation"
++                    val afterMs = call.request.queryParameters["afterFrameMs"]?.toLongOrNull()
++                    // PStart must explicitly pass a server-side marker taken after zoom confirmation.
++                    val invalidBarrier = isPStart && (afterMs == null || afterMs < 0L)
++                    if (!invalidBarrier && videoDecoder.jpegSnapshot() == null) ProxyService.instance?.activateLiveView()
++                    // Require a genuinely newer decoded frame and allow the video pipeline to settle.
++                    val minimumFrameTime = if (isPStart) afterMs!! + 250L else 0L
++                    var freshFrame: Pair<ByteArray, Long>? = null
++                    if (!invalidBarrier) {
++                        var attempts = 0
++                        while (freshFrame == null && attempts < 30) {
++                            val candidate = videoDecoder.jpegSnapshot()
++                            if (candidate != null && (!isPStart || candidate.second > minimumFrameTime)) {
++                                freshFrame = candidate
++                            } else {
++                                delay(100)
++                                attempts++
++                            }
++                        }
++                    }
++                    val frame = freshFrame?.first
+                     if (frame == null) {
+                         call.respondText(
+-                            JSONObject().put("error", "No decoded video frame is available").toString(),
++                            JSONObject().put("error", if (invalidBarrier) "PStart frame marker missing" else "No fresh decoded video frame within timeout").toString(),
+                             ContentType.Application.Json,
+                             HttpStatusCode.ServiceUnavailable,
+                         )
+@@ -371,7 +388,11 @@
+                                     sessionId = snapshotSessionId,
+                                 )
+                             }
+-                            call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
++                            if (isPStart && saved.optBoolean("verified", false) != true) {
++                                call.respondText(JSONObject().put("error", "PStart JPEG save not verified").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
++                            } else {
++                                call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
++                            }
+                         } catch (e: SecurityException) {
+                             call.respondText(JSONObject().put("error", e.message ?: "storage permission denied").toString(), ContentType.Application.Json, HttpStatusCode.Forbidden)
+                         } catch (e: Exception) {
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 59
+-        versionName = "0.9834"
++        versionCode = 60
++        versionName = "0.9835"
+     }
+ 
+     signingConfigs {
+--- a/webui/src/services/AndroidMediaService.ts
++++ b/webui/src/services/AndroidMediaService.ts
+@@ -62,13 +62,22 @@
+   }
+ 
+ 
++  static async getFrameMarker(): Promise<number> {
++    const response = await fetch(`${this.baseUrl()}/api/media/frame-marker`, { cache: 'no-store' })
++    const body = await response.json().catch(() => ({}))
++    if (!response.ok || !Number.isFinite(Number(body.lastJpegMs))) throw new Error('PStart frame marker unavailable')
++    return Number(body.lastJpegMs)
++  }
++
+   static async savePrecisionSnapshot(
+     metadata: Record<string, unknown>,
+     fileName: string,
+     source: 'pstart-documentation' | 'pstart-reference',
+-    sessionId: string
++    sessionId: string,
++    afterFrameMs: number
+   ): Promise<AndroidStoredImage> {
+-    const params = new URLSearchParams({ library: 'recognition', source, name: fileName, session: sessionId })
++    if (!Number.isFinite(afterFrameMs) || afterFrameMs < 0) throw new Error('Invalid PStart frame marker')
++    const params = new URLSearchParams({ library: 'recognition', source, name: fileName, session: sessionId, afterFrameMs: String(afterFrameMs) })
+     const response = await fetch(`${this.baseUrl()}/api/media/snapshot?${params.toString()}`, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+@@ -77,6 +86,9 @@
+     const body = await response.json().catch(() => ({}))
+     if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`)
+     const saved = body as AndroidStoredImage
++    if (saved.verified !== true || !saved.id || !saved.name || !saved.sha256) {
++      throw new Error(`PStart image save not verified: ${fileName}`)
++    }
+     window.dispatchEvent(new CustomEvent('taf-android-media-saved', { detail: saved }))
+     return saved
+   }
+--- a/webui/src/services/PrecisionStartService.ts
++++ b/webui/src/services/PrecisionStartService.ts
+@@ -508,16 +508,18 @@
+ 
+     await this.setZoomAndWait(id, 1)
+     if (!this.isCurrent(id)) return
++    const minFrameMarker = await AndroidMediaService.getFrameMarker()
+     pstart.state.status = `${context.stepId}: Bild 1/2 ohne Zoom wird dokumentiert.`
+-    await this.captureOne(id, context, 'ZERO')
++    await this.captureOne(id, context, 'ZERO', minFrameMarker)
+ 
+     const maxZoom = Math.max(1, Number(camera.zoomMax || 1))
+     await this.setZoomAndWait(id, maxZoom)
+     if (!this.isCurrent(id)) return
++    const maxFrameMarker = await AndroidMediaService.getFrameMarker()
+     pstart.state.status = `${context.stepId}: Bild 2/2 mit maximalem Zoom wird dokumentiert.`
+     // The awaited snapshot requires a newly decoded frame and verified MediaStore copy.
+     // Do not return to MIN before the MAX JPEG exists and is verified.
+-    await this.captureOne(id, context, 'MAX')
++    await this.captureOne(id, context, 'MAX', maxFrameMarker)
+     if (!this.isCurrent(id)) return
+     this.recordProtocolEvent('MAX_IMAGE_SAVED_BEFORE_ZOOM_RESET', { stepId: context.stepId })
+     // Keep the pilot/live view wide between stages, only after verified MAX save.
+@@ -537,6 +539,7 @@
+       referenceReason?: string
+     },
+     zoomRole: 'ZERO' | 'MAX',
++    frameMarker: number,
+   ) {
+     if (!this.isCurrent(id)) return
+     const pstart = usePrecisionStartStore()
+@@ -567,7 +570,8 @@
+     const zoomLabel = zoomRole === 'ZERO' ? 'min' : 'max'
+     const name = `PStart_${pstart.state.sessionId}_${referenceLabel}_${heightLabel}_${zoomLabel}.jpg`
+     const source = context.referenceEligible ? 'pstart-reference' : 'pstart-documentation'
+-    const saved = await AndroidMediaService.savePrecisionSnapshot(metadata, name, source, pstart.state.sessionId)
++    const saved = await AndroidMediaService.savePrecisionSnapshot(metadata, name, source, pstart.state.sessionId, frameMarker)
++    if (saved.verified !== true) throw new Error(`PStart ${name}: JPEG verification failed`)
+     if (!this.isCurrent(id)) return
+ 
+     if (context.stepId === 'STEP0' && zoomRole === 'ZERO') {
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.9834",
++  "version": "0.9835",
+   "private": true,
+   "type": "module",
+   "scripts": {
+--- a/webui/package-lock.json
++++ b/webui/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.9834",
++  "version": "0.9835",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "potensic-proxy-webui",
+-      "version": "0.9834",
++      "version": "0.9835",
+       "dependencies": {
+         "@element-plus/icons-vue": "^2.3.2",
+         "@vueuse/core": "^14.4.0",
+@@ -567,9 +567,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -682,9 +679,6 @@
+         "arm"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -699,9 +693,6 @@
+         "arm"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -716,9 +707,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -733,9 +721,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -750,9 +735,6 @@
+         "loong64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -767,9 +749,6 @@
+         "loong64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -784,9 +763,6 @@
+         "ppc64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -801,9 +777,6 @@
+         "ppc64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -818,9 +791,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -835,9 +805,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -852,9 +819,6 @@
+         "s390x"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -869,9 +833,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -886,9 +847,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+--- a/webui/index.html
++++ b/webui/index.html
+@@ -5,7 +5,7 @@
+     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚁</text></svg>">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+     <title>Potensic Proxy - TAF</title>
+-    <script defer src="/assets/taf-pairing-runtime-v0.9834.js"></script>
++    <script defer src="/assets/taf-pairing-runtime-v0.9835.js"></script>
+   </head>
+   <body>
+     <div id="app"></div>
+--- a/webui/public/assets/taf-pairing-runtime-v0.9835.js
++++ b/webui/public/assets/taf-pairing-runtime-v0.9835.js
+@@ -0,0 +1,157 @@
++(() => {
++  'use strict'
++
++  const VERSION = '0.9835'
++  const CARD_SELECTOR = '[data-taf-pairing-runtime="0.9835"]'
++  const NATIVE_PAIRING_SELECTOR = '.pairing-card:not(.taf-runtime-pairing-card)'
++  let pollTimer = null
++
++  function patchFrontendVersionBadge() {
++    const candidates = document.querySelectorAll('.version-badge, .el-tag')
++    for (const el of candidates) {
++      const text = (el.textContent || '').trim()
++      if (!/frontend/i.test(text)) continue
++      const replaced = text.replace(/v\d+\.\d+(?:\.\d+)?/i, `v${VERSION}`)
++      if (replaced !== text) el.textContent = replaced
++    }
++    document.documentElement.dataset.tafEmbeddedFrontend = VERSION
++  }
++
++  function ensureStyles() {
++    if (document.getElementById('taf-pairing-runtime-style')) return
++    const style = document.createElement('style')
++    style.id = 'taf-pairing-runtime-style'
++    style.textContent = `
++      .taf-runtime-pairing-card { border-color: rgba(64, 158, 255, .65) !important; }
++      .taf-pairing-runtime-badge { display:inline-flex; align-items:center; min-height:22px; padding:0 9px; border-radius:4px; font-size:12px; font-weight:700; color:#fff; background:#909399; }
++      .taf-pairing-runtime-badge[data-state="waiting"], .taf-pairing-runtime-badge[data-state="pairing"] { background:#e6a23c; }
++      .taf-pairing-runtime-badge[data-state="success"] { background:#67c23a; }
++      .taf-pairing-runtime-badge[data-state="failed"], .taf-pairing-runtime-badge[data-state="timeout"] { background:#f56c6c; }
++      .taf-pairing-runtime-message { margin:8px 0 10px; padding:8px 10px; border:1px solid rgba(144,147,153,.3); border-radius:4px; font-size:12px; line-height:1.45; word-break:break-word; }
++      .taf-pairing-runtime-actions { display:flex; gap:8px; flex-wrap:wrap; }
++      .taf-pairing-runtime-note { margin-top:7px; opacity:.72; font-size:11px; line-height:1.4; }
++    `
++    document.head.appendChild(style)
++  }
++
++  function stateLabel(state) {
++    return String(state || 'idle').toUpperCase()
++  }
++
++  function getRuntimeCard() {
++    return document.querySelector(CARD_SELECTOR)
++  }
++
++  function renderPairing(state, message, rawHex) {
++    const card = getRuntimeCard()
++    if (!card) return
++    const normalized = String(state || 'idle').toLowerCase()
++    const badge = card.querySelector('[data-taf-pairing-badge]')
++    const msg = card.querySelector('[data-taf-pairing-message]')
++    const start = card.querySelector('[data-taf-pairing-start]')
++    if (badge) {
++      badge.dataset.state = normalized
++      badge.textContent = stateLabel(normalized)
++    }
++    if (msg) {
++      msg.textContent = message || 'No pairing session started'
++      msg.title = rawHex || ''
++    }
++    if (start) {
++      const busy = normalized === 'waiting' || normalized === 'pairing'
++      start.disabled = busy
++      start.textContent = busy ? 'Pairing in progress…' : '🔗 Re-pair Controller / Aircraft'
++    }
++  }
++
++  async function pollStatus() {
++    if (!getRuntimeCard()) return
++    try {
++      const response = await fetch(`/api/status?_tafPairing=${Date.now()}`, { cache: 'no-store' })
++      if (!response.ok) throw new Error(`HTTP ${response.status}`)
++      const data = await response.json()
++      if (data && data.pairing) {
++        renderPairing(data.pairing.state, data.pairing.lastMessage, data.pairing.resultRawHex)
++      }
++    } catch (_) {
++      // Keep the last known status. The normal application connection indicator already exposes backend outages.
++    }
++  }
++
++  async function startPairing() {
++    const ok = window.confirm(
++      'Start ATOM controller / aircraft pairing?\n\n' +
++      'The controller will enter MiniPair mode. Afterwards put the aircraft into frequency-pairing mode using its power button.'
++    )
++    if (!ok) return
++
++    renderPairing('waiting', 'Sending pairing command to the controller…')
++    try {
++      const response = await fetch('/api/cmd/pair', { method: 'POST', cache: 'no-store' })
++      const text = await response.text()
++      if (!response.ok) throw new Error(text || `HTTP ${response.status}`)
++      renderPairing('waiting', 'Pairing command sent; waiting for controller pairing mode')
++      await pollStatus()
++    } catch (error) {
++      renderPairing('failed', `Could not start pairing: ${error instanceof Error ? error.message : String(error)}`)
++    }
++  }
++
++  async function resetPairing() {
++    try {
++      await fetch('/api/cmd/pair/reset', { method: 'POST', cache: 'no-store' })
++    } catch (_) {}
++    renderPairing('idle', 'No pairing session started')
++  }
++
++  function ensurePairingCard() {
++    patchFrontendVersionBadge()
++
++    // A freshly rebuilt Vue bundle already contains the native pairing panel.
++    // In that case this compatibility bridge deliberately stays out of the UI.
++    if (document.querySelector(NATIVE_PAIRING_SELECTOR)) {
++      const runtime = getRuntimeCard()
++      if (runtime) runtime.remove()
++      return
++    }
++
++    if (getRuntimeCard()) return
++    const panel = document.querySelector('.fpv-pane .fpv-controls-col .panel-box')
++    if (!panel) return
++
++    ensureStyles()
++    const card = document.createElement('div')
++    card.className = 'action-card highlight-card pairing-card taf-runtime-pairing-card'
++    card.dataset.tafPairingRuntime = VERSION
++    card.innerHTML = `
++      <div class="act-header">
++        <span class="act-name">ATOM Controller / Aircraft Pairing</span>
++        <span class="taf-pairing-runtime-badge" data-taf-pairing-badge data-state="idle">IDLE</span>
++      </div>
++      <p class="act-desc">
++        Starts the PotensicPro MiniPair sequence (FE 0x16 / function 0x18). After starting, put the aircraft into frequency-pairing mode using its power button.
++      </p>
++      <div class="taf-pairing-runtime-message" data-taf-pairing-message>No pairing session started</div>
++      <div class="taf-pairing-runtime-actions">
++        <button type="button" class="el-button el-button--primary el-button--small" data-taf-pairing-start>🔗 Re-pair Controller / Aircraft</button>
++        <button type="button" class="el-button el-button--small is-plain" data-taf-pairing-reset>Reset Status</button>
++      </div>
++      <div class="taf-pairing-runtime-note">Status and result are monitored by the Android backend from 0x1715 / 0x1718 and are written to the Live Log.</div>
++    `
++
++    const title = panel.querySelector('.box-title')
++    if (title && title.parentElement === panel) title.insertAdjacentElement('afterend', card)
++    else panel.prepend(card)
++
++    card.querySelector('[data-taf-pairing-start]')?.addEventListener('click', startPairing)
++    card.querySelector('[data-taf-pairing-reset]')?.addEventListener('click', resetPairing)
++
++    if (!pollTimer) pollTimer = window.setInterval(pollStatus, 1000)
++    pollStatus()
++  }
++
++  const observer = new MutationObserver(() => ensurePairingCard())
++  observer.observe(document.documentElement, { childList: true, subtree: true })
++  window.addEventListener('load', ensurePairingCard, { once: true })
++  ensurePairingCard()
++})()
+--- a/webui/public/assets/taf-pairing-runtime-v0.9834.js
++++ /dev/null
+@@ -1,157 +0,0 @@
+-(() => {
+-  'use strict'
+-
+-  const VERSION = '0.9834'
+-  const CARD_SELECTOR = '[data-taf-pairing-runtime="0.9834"]'
+-  const NATIVE_PAIRING_SELECTOR = '.pairing-card:not(.taf-runtime-pairing-card)'
+-  let pollTimer = null
+-
+-  function patchFrontendVersionBadge() {
+-    const candidates = document.querySelectorAll('.version-badge, .el-tag')
+-    for (const el of candidates) {
+-      const text = (el.textContent || '').trim()
+-      if (!/frontend/i.test(text)) continue
+-      const replaced = text.replace(/v\d+\.\d+(?:\.\d+)?/i, `v${VERSION}`)
+-      if (replaced !== text) el.textContent = replaced
+-    }
+-    document.documentElement.dataset.tafEmbeddedFrontend = VERSION
+-  }
+-
+-  function ensureStyles() {
+-    if (document.getElementById('taf-pairing-runtime-style')) return
+-    const style = document.createElement('style')
+-    style.id = 'taf-pairing-runtime-style'
+-    style.textContent = `
+-      .taf-runtime-pairing-card { border-color: rgba(64, 158, 255, .65) !important; }
+-      .taf-pairing-runtime-badge { display:inline-flex; align-items:center; min-height:22px; padding:0 9px; border-radius:4px; font-size:12px; font-weight:700; color:#fff; background:#909399; }
+-      .taf-pairing-runtime-badge[data-state="waiting"], .taf-pairing-runtime-badge[data-state="pairing"] { background:#e6a23c; }
+-      .taf-pairing-runtime-badge[data-state="success"] { background:#67c23a; }
+-      .taf-pairing-runtime-badge[data-state="failed"], .taf-pairing-runtime-badge[data-state="timeout"] { background:#f56c6c; }
+-      .taf-pairing-runtime-message { margin:8px 0 10px; padding:8px 10px; border:1px solid rgba(144,147,153,.3); border-radius:4px; font-size:12px; line-height:1.45; word-break:break-word; }
+-      .taf-pairing-runtime-actions { display:flex; gap:8px; flex-wrap:wrap; }
+-      .taf-pairing-runtime-note { margin-top:7px; opacity:.72; font-size:11px; line-height:1.4; }
+-    `
+-    document.head.appendChild(style)
+-  }
+-
+-  function stateLabel(state) {
+-    return String(state || 'idle').toUpperCase()
+-  }
+-
+-  function getRuntimeCard() {
+-    return document.querySelector(CARD_SELECTOR)
+-  }
+-
+-  function renderPairing(state, message, rawHex) {
+-    const card = getRuntimeCard()
+-    if (!card) return
+-    const normalized = String(state || 'idle').toLowerCase()
+-    const badge = card.querySelector('[data-taf-pairing-badge]')
+-    const msg = card.querySelector('[data-taf-pairing-message]')
+-    const start = card.querySelector('[data-taf-pairing-start]')
+-    if (badge) {
+-      badge.dataset.state = normalized
+-      badge.textContent = stateLabel(normalized)
+-    }
+-    if (msg) {
+-      msg.textContent = message || 'No pairing session started'
+-      msg.title = rawHex || ''
+-    }
+-    if (start) {
+-      const busy = normalized === 'waiting' || normalized === 'pairing'
+-      start.disabled = busy
+-      start.textContent = busy ? 'Pairing in progress…' : '🔗 Re-pair Controller / Aircraft'
+-    }
+-  }
+-
+-  async function pollStatus() {
+-    if (!getRuntimeCard()) return
+-    try {
+-      const response = await fetch(`/api/status?_tafPairing=${Date.now()}`, { cache: 'no-store' })
+-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+-      const data = await response.json()
+-      if (data && data.pairing) {
+-        renderPairing(data.pairing.state, data.pairing.lastMessage, data.pairing.resultRawHex)
+-      }
+-    } catch (_) {
+-      // Keep the last known status. The normal application connection indicator already exposes backend outages.
+-    }
+-  }
+-
+-  async function startPairing() {
+-    const ok = window.confirm(
+-      'Start ATOM controller / aircraft pairing?\n\n' +
+-      'The controller will enter MiniPair mode. Afterwards put the aircraft into frequency-pairing mode using its power button.'
+-    )
+-    if (!ok) return
+-
+-    renderPairing('waiting', 'Sending pairing command to the controller…')
+-    try {
+-      const response = await fetch('/api/cmd/pair', { method: 'POST', cache: 'no-store' })
+-      const text = await response.text()
+-      if (!response.ok) throw new Error(text || `HTTP ${response.status}`)
+-      renderPairing('waiting', 'Pairing command sent; waiting for controller pairing mode')
+-      await pollStatus()
+-    } catch (error) {
+-      renderPairing('failed', `Could not start pairing: ${error instanceof Error ? error.message : String(error)}`)
+-    }
+-  }
+-
+-  async function resetPairing() {
+-    try {
+-      await fetch('/api/cmd/pair/reset', { method: 'POST', cache: 'no-store' })
+-    } catch (_) {}
+-    renderPairing('idle', 'No pairing session started')
+-  }
+-
+-  function ensurePairingCard() {
+-    patchFrontendVersionBadge()
+-
+-    // A freshly rebuilt Vue bundle already contains the native pairing panel.
+-    // In that case this compatibility bridge deliberately stays out of the UI.
+-    if (document.querySelector(NATIVE_PAIRING_SELECTOR)) {
+-      const runtime = getRuntimeCard()
+-      if (runtime) runtime.remove()
+-      return
+-    }
+-
+-    if (getRuntimeCard()) return
+-    const panel = document.querySelector('.fpv-pane .fpv-controls-col .panel-box')
+-    if (!panel) return
+-
+-    ensureStyles()
+-    const card = document.createElement('div')
+-    card.className = 'action-card highlight-card pairing-card taf-runtime-pairing-card'
+-    card.dataset.tafPairingRuntime = VERSION
+-    card.innerHTML = `
+-      <div class="act-header">
+-        <span class="act-name">ATOM Controller / Aircraft Pairing</span>
+-        <span class="taf-pairing-runtime-badge" data-taf-pairing-badge data-state="idle">IDLE</span>
+-      </div>
+-      <p class="act-desc">
+-        Starts the PotensicPro MiniPair sequence (FE 0x16 / function 0x18). After starting, put the aircraft into frequency-pairing mode using its power button.
+-      </p>
+-      <div class="taf-pairing-runtime-message" data-taf-pairing-message>No pairing session started</div>
+-      <div class="taf-pairing-runtime-actions">
+-        <button type="button" class="el-button el-button--primary el-button--small" data-taf-pairing-start>🔗 Re-pair Controller / Aircraft</button>
+-        <button type="button" class="el-button el-button--small is-plain" data-taf-pairing-reset>Reset Status</button>
+-      </div>
+-      <div class="taf-pairing-runtime-note">Status and result are monitored by the Android backend from 0x1715 / 0x1718 and are written to the Live Log.</div>
+-    `
+-
+-    const title = panel.querySelector('.box-title')
+-    if (title && title.parentElement === panel) title.insertAdjacentElement('afterend', card)
+-    else panel.prepend(card)
+-
+-    card.querySelector('[data-taf-pairing-start]')?.addEventListener('click', startPairing)
+-    card.querySelector('[data-taf-pairing-reset]')?.addEventListener('click', resetPairing)
+-
+-    if (!pollTimer) pollTimer = window.setInterval(pollStatus, 1000)
+-    pollStatus()
+-  }
+-
+-  const observer = new MutationObserver(() => ensurePairingCard())
+-  observer.observe(document.documentElement, { childList: true, subtree: true })
+-  window.addEventListener('load', ensurePairingCard, { once: true })
+-  ensurePairingCard()
+-})()

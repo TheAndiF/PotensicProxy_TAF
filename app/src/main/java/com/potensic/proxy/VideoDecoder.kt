@@ -25,6 +25,10 @@ class VideoDecoder {
     @Volatile var lastJpegTime: Long = 0; private set
     @Volatile var publishFrame: Boolean = true
 
+    // A consistent JPEG/time pair avoids reading a newer timestamp with an older frame.
+    @Synchronized fun jpegSnapshot(): Pair<ByteArray, Long>? =
+        lastJpeg?.let { Pair(it, lastJpegTime) }
+
     companion object {
         const val MAX_JPEG_QUEUE = 2 // minimal queue for low latency
         const val JPEG_QUALITY = 95
@@ -138,8 +142,10 @@ class VideoDecoder {
                     if (jpeg != null) {
                         val count = framesDecoded.incrementAndGet()
                         if (publishFrame) {
-                            lastJpeg = jpeg
-                            lastJpegTime = System.currentTimeMillis()
+                            synchronized(this) {
+                                lastJpeg = jpeg
+                                lastJpegTime = System.currentTimeMillis()
+                            }
                             while (jpegQueue.size >= MAX_JPEG_QUEUE) jpegQueue.poll()
                             jpegQueue.offer(jpeg)
                         }

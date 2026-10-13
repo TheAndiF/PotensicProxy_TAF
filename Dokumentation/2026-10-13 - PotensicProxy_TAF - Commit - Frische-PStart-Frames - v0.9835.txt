@@ -1,0 +1,23 @@
+BL_Enforce fresh verified PStart snapshots
+
+Date: 2026-10-13
+
+Summary:
+- Enforce a new synchronized decoder frame after server-side post-zoom barrier with 250 ms settling and a 3 s timeout.
+- Fail PStart on missing fresh frame or unverifiable JPEG storage; do not perform normal MAX-to-MIN reset on a failed capture.
+- Preserve REF00 to REF05 filename schema and align source build version to 0.9835.
+- NOTE: WebUI bundle / Android APK not rebuilt; Vite is blocked by missing @rollup/rollup-linux-x64-gnu. Source-only delivery, requires rebuild before installation.
+
+Changed files:
+- app/src/main/java/com/potensic/proxy/VideoDecoder.kt
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- app/build.gradle.kts
+- webui/src/services/AndroidMediaService.ts
+- webui/src/services/PrecisionStartService.ts
+- webui/package.json
+- webui/package-lock.json
+- webui/index.html
+- webui/public/assets/taf-pairing-runtime-v0.9835.js
+
+Removed files:
+- webui/public/assets/taf-pairing-runtime-v0.9834.js

@@ -508,16 +508,18 @@ export class PrecisionStartService {
 
     await this.setZoomAndWait(id, 1)
     if (!this.isCurrent(id)) return
+    const minFrameMarker = await AndroidMediaService.getFrameMarker()
     pstart.state.status = `${context.stepId}: Bild 1/2 ohne Zoom wird dokumentiert.`
-    await this.captureOne(id, context, 'ZERO')
+    await this.captureOne(id, context, 'ZERO', minFrameMarker)
 
     const maxZoom = Math.max(1, Number(camera.zoomMax || 1))
     await this.setZoomAndWait(id, maxZoom)
     if (!this.isCurrent(id)) return
+    const maxFrameMarker = await AndroidMediaService.getFrameMarker()
     pstart.state.status = `${context.stepId}: Bild 2/2 mit maximalem Zoom wird dokumentiert.`
     // The awaited snapshot requires a newly decoded frame and verified MediaStore copy.
     // Do not return to MIN before the MAX JPEG exists and is verified.
-    await this.captureOne(id, context, 'MAX')
+    await this.captureOne(id, context, 'MAX', maxFrameMarker)
     if (!this.isCurrent(id)) return
     this.recordProtocolEvent('MAX_IMAGE_SAVED_BEFORE_ZOOM_RESET', { stepId: context.stepId })
     // Keep the pilot/live view wide between stages, only after verified MAX save.
@@ -537,6 +539,7 @@ export class PrecisionStartService {
       referenceReason?: string
     },
     zoomRole: 'ZERO' | 'MAX',
+    frameMarker: number,
   ) {
     if (!this.isCurrent(id)) return
     const pstart = usePrecisionStartStore()
@@ -567,7 +570,8 @@ export class PrecisionStartService {
     const zoomLabel = zoomRole === 'ZERO' ? 'min' : 'max'
     const name = `PStart_${pstart.state.sessionId}_${referenceLabel}_${heightLabel}_${zoomLabel}.jpg`
     const source = context.referenceEligible ? 'pstart-reference' : 'pstart-documentation'
-    const saved = await AndroidMediaService.savePrecisionSnapshot(metadata, name, source, pstart.state.sessionId)
+    const saved = await AndroidMediaService.savePrecisionSnapshot(metadata, name, source, pstart.state.sessionId, frameMarker)
+    if (saved.verified !== true) throw new Error(`PStart ${name}: JPEG verification failed`)
     if (!this.isCurrent(id)) return
 
     if (context.stepId === 'STEP0' && zoomRole === 'ZERO') {

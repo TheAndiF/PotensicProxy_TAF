@@ -62,13 +62,22 @@ export class AndroidMediaService {
   }
 
 
+  static async getFrameMarker(): Promise<number> {
+    const response = await fetch(`${this.baseUrl()}/api/media/frame-marker`, { cache: 'no-store' })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok || !Number.isFinite(Number(body.lastJpegMs))) throw new Error('PStart frame marker unavailable')
+    return Number(body.lastJpegMs)
+  }
+
   static async savePrecisionSnapshot(
     metadata: Record<string, unknown>,
     fileName: string,
     source: 'pstart-documentation' | 'pstart-reference',
-    sessionId: string
+    sessionId: string,
+    afterFrameMs: number
   ): Promise<AndroidStoredImage> {
-    const params = new URLSearchParams({ library: 'recognition', source, name: fileName, session: sessionId })
+    if (!Number.isFinite(afterFrameMs) || afterFrameMs < 0) throw new Error('Invalid PStart frame marker')
+    const params = new URLSearchParams({ library: 'recognition', source, name: fileName, session: sessionId, afterFrameMs: String(afterFrameMs) })
     const response = await fetch(`${this.baseUrl()}/api/media/snapshot?${params.toString()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -77,6 +86,9 @@ export class AndroidMediaService {
     const body = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`)
     const saved = body as AndroidStoredImage
+    if (saved.verified !== true || !saved.id || !saved.name || !saved.sha256) {
+      throw new Error(`PStart image save not verified: ${fileName}`)
+    }
     window.dispatchEvent(new CustomEvent('taf-android-media-saved', { detail: saved }))
     return saved
   }
