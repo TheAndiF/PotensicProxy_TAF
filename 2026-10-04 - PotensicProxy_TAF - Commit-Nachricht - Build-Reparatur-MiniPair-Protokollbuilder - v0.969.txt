@@ -27,3 +27,4 @@ Validation:
 - DroneProtocol.kt and PotensicProtocol.kt compiled together with a minimal Android Log stub.
 - PotensicProtocol.buildFpvMiniPair() produced: fe000000000000160000000000000007fffd030018001b.
 - A complete local Android APK build was not executed because this container does not provide an Android SDK; the GitHub Actions workflow remains the authoritative full APK build environment.
+ 
