@@ -104,15 +104,22 @@
         <span class="crosshair-center"></span>
       </div>
 
-      <!-- Display-only preview: fixed size without a usable scale; no connection to flight correction. -->
-      <div v-if="!compact && markerOverlayEnabled && hasFrame" class="pport-model-overlay" aria-label="PPort Referenzmuster, unverifiziert">
-        <img v-if="markerOverlayUrl" :src="markerOverlayUrl" class="pport-marker-pattern"
-          :style="{width: markerPreviewPx + 'px',height: markerPreviewPx + 'px'}" alt="Höhenabhängiges Referenzmuster" />
+      <!-- Model display is opt-in. Ideal is schematic, not a calibrated optical observation. -->
+      <div v-if="!compact && markerDisplayMode !== 'off' && hasFrame" class="pport-model-overlay" aria-label="PLand Mustermodelle, nur Anzeige">
+        <img v-if="(markerDisplayMode === 'measured' || markerDisplayMode === 'compare') && markerOverlayUrl"
+          :src="markerOverlayUrl" class="pport-marker-pattern"
+          :style="{ width: markerPreviewPx + 'px', height: markerPreviewPx + 'px', opacity: markerDisplayMode === 'compare' ? 0.37 : 0.44 }"
+          alt="PStart-Mustermodell (unverifiziert)" />
+        <img v-if="markerDisplayMode === 'ideal' || markerDisplayMode === 'compare'"
+          :src="idealMarkerUrl" class="pport-marker-pattern"
+          :style="{ width: markerPreviewPx + 'px', height: markerPreviewPx + 'px', opacity: markerDisplayMode === 'compare' ? 0.32 : 0.44, outline: markerDisplayMode === 'compare' ? '2px dashed #4fe3c1' : 'none' }"
+          alt="Schematisches Idealmodell des Landemusters" />
         <div class="pport-marker-status">
-          <div>PPort {{ markerModelId || '–' }} · {{ markerOverlayStatus }}</div>
-          <div>Höhe: {{ Number(store.telemetry.altitude).toFixed(1) }} m · {{ markerZoomRole }} · {{ markerDisplayPx > 0 ? markerDisplayPx.toFixed(0) + ' px' : 'Maßstab unbekannt – Vorschau' }}</div>
+          <div>PLand {{ markerDisplayMode === 'ideal' ? 'Idealmodell (schematisch)' : markerDisplayMode === 'compare' ? 'PStart + Ideal (Vergleich)' : 'PStart-Modell' }} · {{ markerOverlayStatus }}</div>
+          <div>Modell {{ markerModelId || '–' }} · {{ markerScaleAvailable ? markerDisplayPx.toFixed(0) + ' px (Kalibrierbereich)' : 'Maßstab unbekannt – unmaßstäbliche Vorschau' }}</div>
+          <div>Telemetriehöhe: {{ Number(store.telemetry.altitude).toFixed(1) }} m (Quelle nicht verifiziert)</div>
           <div>Optik: {{ markerOpticalPercent }} % · GPS: {{ 100 - markerOpticalPercent }} % (nur Modellanzeige)</div>
-          <div>Nur Anzeige · keine Regelung</div>
+          <div>Nur Anzeige · keine Flugregelung</div>
         </div>
       </div>
 
@@ -135,7 +142,14 @@
           <button class="osd-action-btn success" @click="activateSelectedLiveView">⚡ Stream</button>
           <button class="osd-action-btn" @click="requestIdr">🔄 I-Frame</button>
           <button class="osd-action-btn" @click="toggleNextMode">🔀 {{ mode.toUpperCase() }}</button>
-          <button class="osd-action-btn" @click="toggleMarkerOverlay" :title="markerOverlayStatus">◫ Muster {{ markerOverlayEnabled ? 'AN' : 'AUS' }}</button>
+          <label class="osd-action-btn" for="pland-model-mode">◫ Muster
+            <select id="pland-model-mode" v-model="markerDisplayMode" aria-label="Mustermodell-Anzeige">
+              <option value="off">AUS</option>
+              <option value="measured">PStart-Modell</option>
+              <option value="ideal">Idealmodell</option>
+              <option value="compare">Vergleich</option>
+            </select>
+          </label>
           <button class="osd-action-btn" @click="toggleFullscreen" :title="t('video.fullscreenTitle')">⛶ {{ t('video.fullscreen') }}</button>
         </div>
       </div>
@@ -159,8 +173,12 @@ const controlsOpen = ref(false)
 const store = useDroneStore()
 const { t } = useI18n()
 const { crosshairVisible } = useLandingAssistSettings()
-const markerOverlayEnabled = ref(true)
+const markerDisplayMode = ref<'off'|'measured'|'ideal'|'compare'>('off')
 const markerOverlayUrl = ref('')
+// Vector reference: relative normalized geometry, without a claimed physical dimension.
+// It is schematic until dimensions have been separately measured/confirmed.
+const idealMarkerSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560"><rect x="80" y="80" width="400" height="400" fill="white"/><rect x="94" y="94" width="372" height="372" fill="none" stroke="#111" stroke-width="24"/><path d="M396 396H466V466H396Z" fill="#111"/><rect x="185" y="185" width="190" height="190" fill="none" stroke="#222" stroke-width="10"/><path d="M280 222V338M222 280H338" stroke="#222" stroke-width="12"/></svg>`
+const idealMarkerUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(idealMarkerSvg)
 const markerModelId = ref('')
 const markerOverlayStatus = ref('Kein Modell geladen')
 const cameraForModel = useCameraStore()
@@ -184,7 +202,8 @@ const markerDisplayPx = computed(() => {
   if (!containerWidth) return 0
   return Math.min(containerWidth, markerExpectedPx.value * containerWidth / 1280)
 })
-const markerPreviewPx = computed(() => markerDisplayPx.value > 0 ? markerDisplayPx.value : 160)
+const markerScaleAvailable = computed(() => markerDisplayPx.value > 0)
+const markerPreviewPx = computed(() => markerScaleAvailable.value ? markerDisplayPx.value : 160)
 const markerOpticalPercent = computed(() => {
   // A candidate model MUST NEVER receive verified optical weight.
   if (markerOverlayStatus.value !== 'VERIFIED') return 0
@@ -204,10 +223,6 @@ async function loadMarkerOverlay() {
     markerOverlayStatus.value=data.model?.status || 'UNVERIFIED'
     markerOverlayUrl.value='data:image/png;base64,'+data.patternBase64
   } catch(e) { markerOverlayStatus.value='Ladefehler: '+String(e) }
-}
-async function toggleMarkerOverlay() {
-  markerOverlayEnabled.value = !markerOverlayEnabled.value
-  if (markerOverlayEnabled.value) await loadMarkerOverlay()
 }
 
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -759,4 +774,8 @@ onUnmounted(() => {
 .pport-model-overlay{position:absolute;inset:0;pointer-events:none;z-index:13;display:flex;align-items:center;justify-content:center;overflow:hidden}
 .pport-marker-pattern{position:absolute;object-fit:fill;opacity:.32;max-width:none;max-height:none}
 .pport-marker-status{position:absolute;left:8px;bottom:8px;background:rgba(12,20,24,.82);color:white;font:12px/1.5 sans-serif;padding:7px;border-radius:5px;max-width:85%}
+</style>
+
+<style scoped>
+#pland-model-mode{margin-left:6px;background:#142232;color:#f1f5f9;border:1px solid #48566c;border-radius:4px;padding:2px 4px;max-width:125px}
 </style>

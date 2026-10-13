@@ -1,0 +1,15 @@
+BS_ PLand selectable ideal marker reference and model comparison (v0.9845.5)
+Date: 2026-10-13
+
+Implement an explicit four-state PLand marker display mode (off / PStart / ideal / compare).
+Keep the measured PStart model unchanged in PPort; synthesize a separate normalized schematic SVG ideal marker client-side.
+Default overlay to OFF; retain manual activation, provisional/no-scale caveats and no-control semantics.
+Regenerate the packaged Android JavaScript from the corrected Vue SFC and validate TypeScript and JavaScript syntax.
+
+Changed files:
+ - webui/src/components/cockpit/VideoPlayer.vue
+ - app/src/main/assets/web/assets/modules/components/cockpit/VideoPlayer.js
+ - webui/scripts/build-ideal-runtime.mjs
+
+Verification: vue-tsc --noEmit PASS; node --check embedded VideoPlayer.js PASS; ZIP integrity PASS.
+Not verified: Android APK build, device operation, geometrically calibrated sizing, PLand automation.

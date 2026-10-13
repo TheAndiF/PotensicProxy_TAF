@@ -1,0 +1,280 @@
+--- a/webui/src/components/cockpit/VideoPlayer.vue
++++ b/webui/src/components/cockpit/VideoPlayer.vue
+@@ -104,15 +104,22 @@
+         <span class="crosshair-center"></span>
+       </div>
+ 
+-      <!-- Display-only preview: fixed size without a usable scale; no connection to flight correction. -->
+-      <div v-if="!compact && markerOverlayEnabled && hasFrame" class="pport-model-overlay" aria-label="PPort Referenzmuster, unverifiziert">
+-        <img v-if="markerOverlayUrl" :src="markerOverlayUrl" class="pport-marker-pattern"
+-          :style="{width: markerPreviewPx + 'px',height: markerPreviewPx + 'px'}" alt="Höhenabhängiges Referenzmuster" />
++      <!-- Model display is opt-in. Ideal is schematic, not a calibrated optical observation. -->
++      <div v-if="!compact && markerDisplayMode !== 'off' && hasFrame" class="pport-model-overlay" aria-label="PLand Mustermodelle, nur Anzeige">
++        <img v-if="(markerDisplayMode === 'measured' || markerDisplayMode === 'compare') && markerOverlayUrl"
++          :src="markerOverlayUrl" class="pport-marker-pattern"
++          :style="{ width: markerPreviewPx + 'px', height: markerPreviewPx + 'px', opacity: markerDisplayMode === 'compare' ? 0.37 : 0.44 }"
++          alt="PStart-Mustermodell (unverifiziert)" />
++        <img v-if="markerDisplayMode === 'ideal' || markerDisplayMode === 'compare'"
++          :src="idealMarkerUrl" class="pport-marker-pattern"
++          :style="{ width: markerPreviewPx + 'px', height: markerPreviewPx + 'px', opacity: markerDisplayMode === 'compare' ? 0.32 : 0.44, outline: markerDisplayMode === 'compare' ? '2px dashed #4fe3c1' : 'none' }"
++          alt="Schematisches Idealmodell des Landemusters" />
+         <div class="pport-marker-status">
+-          <div>PPort {{ markerModelId || '–' }} · {{ markerOverlayStatus }}</div>
+-          <div>Höhe: {{ Number(store.telemetry.altitude).toFixed(1) }} m · {{ markerZoomRole }} · {{ markerDisplayPx > 0 ? markerDisplayPx.toFixed(0) + ' px' : 'Maßstab unbekannt – Vorschau' }}</div>
++          <div>PLand {{ markerDisplayMode === 'ideal' ? 'Idealmodell (schematisch)' : markerDisplayMode === 'compare' ? 'PStart + Ideal (Vergleich)' : 'PStart-Modell' }} · {{ markerOverlayStatus }}</div>
++          <div>Modell {{ markerModelId || '–' }} · {{ markerScaleAvailable ? markerDisplayPx.toFixed(0) + ' px (Kalibrierbereich)' : 'Maßstab unbekannt – unmaßstäbliche Vorschau' }}</div>
++          <div>Telemetriehöhe: {{ Number(store.telemetry.altitude).toFixed(1) }} m (Quelle nicht verifiziert)</div>
+           <div>Optik: {{ markerOpticalPercent }} % · GPS: {{ 100 - markerOpticalPercent }} % (nur Modellanzeige)</div>
+-          <div>Nur Anzeige · keine Regelung</div>
++          <div>Nur Anzeige · keine Flugregelung</div>
+         </div>
+       </div>
+ 
+@@ -135,7 +142,14 @@
+           <button class="osd-action-btn success" @click="activateSelectedLiveView">⚡ Stream</button>
+           <button class="osd-action-btn" @click="requestIdr">🔄 I-Frame</button>
+           <button class="osd-action-btn" @click="toggleNextMode">🔀 {{ mode.toUpperCase() }}</button>
+-          <button class="osd-action-btn" @click="toggleMarkerOverlay" :title="markerOverlayStatus">◫ Muster {{ markerOverlayEnabled ? 'AN' : 'AUS' }}</button>
++          <label class="osd-action-btn" for="pland-model-mode">◫ Muster
++            <select id="pland-model-mode" v-model="markerDisplayMode" aria-label="Mustermodell-Anzeige">
++              <option value="off">AUS</option>
++              <option value="measured">PStart-Modell</option>
++              <option value="ideal">Idealmodell</option>
++              <option value="compare">Vergleich</option>
++            </select>
++          </label>
+           <button class="osd-action-btn" @click="toggleFullscreen" :title="t('video.fullscreenTitle')">⛶ {{ t('video.fullscreen') }}</button>
+         </div>
+       </div>
+@@ -159,8 +173,12 @@
+ const store = useDroneStore()
+ const { t } = useI18n()
+ const { crosshairVisible } = useLandingAssistSettings()
+-const markerOverlayEnabled = ref(true)
++const markerDisplayMode = ref<'off'|'measured'|'ideal'|'compare'>('off')
+ const markerOverlayUrl = ref('')
++// Vector reference: relative normalized geometry, without a claimed physical dimension.
++// It is schematic until dimensions have been separately measured/confirmed.
++const idealMarkerSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560"><rect x="80" y="80" width="400" height="400" fill="white"/><rect x="94" y="94" width="372" height="372" fill="none" stroke="#111" stroke-width="24"/><path d="M396 396H466V466H396Z" fill="#111"/><rect x="185" y="185" width="190" height="190" fill="none" stroke="#222" stroke-width="10"/><path d="M280 222V338M222 280H338" stroke="#222" stroke-width="12"/></svg>`
++const idealMarkerUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(idealMarkerSvg)
+ const markerModelId = ref('')
+ const markerOverlayStatus = ref('Kein Modell geladen')
+ const cameraForModel = useCameraStore()
+@@ -184,7 +202,8 @@
+   if (!containerWidth) return 0
+   return Math.min(containerWidth, markerExpectedPx.value * containerWidth / 1280)
+ })
+-const markerPreviewPx = computed(() => markerDisplayPx.value > 0 ? markerDisplayPx.value : 160)
++const markerScaleAvailable = computed(() => markerDisplayPx.value > 0)
++const markerPreviewPx = computed(() => markerScaleAvailable.value ? markerDisplayPx.value : 160)
+ const markerOpticalPercent = computed(() => {
+   // A candidate model MUST NEVER receive verified optical weight.
+   if (markerOverlayStatus.value !== 'VERIFIED') return 0
+@@ -204,10 +223,6 @@
+     markerOverlayStatus.value=data.model?.status || 'UNVERIFIED'
+     markerOverlayUrl.value='data:image/png;base64,'+data.patternBase64
+   } catch(e) { markerOverlayStatus.value='Ladefehler: '+String(e) }
+-}
+-async function toggleMarkerOverlay() {
+-  markerOverlayEnabled.value = !markerOverlayEnabled.value
+-  if (markerOverlayEnabled.value) await loadMarkerOverlay()
+ }
+ 
+ const containerRef = ref<HTMLDivElement | null>(null)
+@@ -760,3 +775,7 @@
+ .pport-marker-pattern{position:absolute;object-fit:fill;opacity:.32;max-width:none;max-height:none}
+ .pport-marker-status{position:absolute;left:8px;bottom:8px;background:rgba(12,20,24,.82);color:white;font:12px/1.5 sans-serif;padding:7px;border-radius:5px;max-width:85%}
+ </style>
++
++<style scoped>
++#pland-model-mode{margin-left:6px;background:#142232;color:#f1f5f9;border:1px solid #48566c;border-radius:4px;padding:2px 4px;max-width:125px}
++</style>
+--- a/app/src/main/assets/web/assets/modules/components/cockpit/VideoPlayer.js
++++ b/app/src/main/assets/web/assets/modules/components/cockpit/VideoPlayer.js
+@@ -1,5 +1,5 @@
+ import { defineComponent as _defineComponent } from '../../../vendor/vue.js';
+-import { createCommentVNode as _createCommentVNode, vShow as _vShow, createElementVNode as _createElementVNode, withDirectives as _withDirectives, openBlock as _openBlock, createElementBlock as _createElementBlock, unref as _unref, toDisplayString as _toDisplayString, normalizeClass as _normalizeClass, renderList as _renderList, Fragment as _Fragment, createTextVNode as _createTextVNode, normalizeStyle as _normalizeStyle } from '../../../vendor/vue.js';
++import { createCommentVNode as _createCommentVNode, vShow as _vShow, createElementVNode as _createElementVNode, withDirectives as _withDirectives, openBlock as _openBlock, createElementBlock as _createElementBlock, unref as _unref, toDisplayString as _toDisplayString, normalizeClass as _normalizeClass, renderList as _renderList, Fragment as _Fragment, createTextVNode as _createTextVNode, normalizeStyle as _normalizeStyle, vModelSelect as _vModelSelect } from '../../../vendor/vue.js';
+ const _hoisted_1 = { class: "video-viewport" };
+ const _hoisted_2 = ["src"];
+ const _hoisted_3 = {
+@@ -44,7 +44,7 @@
+ const _hoisted_26 = {
+     key: 3,
+     class: "pport-model-overlay",
+-    "aria-label": "PPort Referenzmuster, unverifiziert"
++    "aria-label": "PLand Mustermodelle, nur Anzeige"
+ };
+ const _hoisted_27 = ["src"];
+ const _hoisted_28 = { class: "pport-marker-status" };
+@@ -71,7 +71,10 @@
+     key: 0,
+     class: "drawer-actions"
+ };
+-const _hoisted_37 = ["title"];
++const _hoisted_37 = {
++    class: "osd-action-btn",
++    for: "pland-model-mode"
++};
+ const _hoisted_38 = ["title"];
+ import { ref, reactive, onMounted, onUnmounted, computed } from '../../../vendor/vue.js';
+ import { useDroneStore } from '../../stores/useDroneStore.js';
+@@ -81,7 +84,8 @@
+ import { WebCodecsPlayer } from '../../video/WebCodecsPlayer.js';
+ import { useI18n } from '../../i18n/index.js';
+ import { useLandingAssistSettings } from '../../composables/useLandingAssistSettings.js';
+-const __sfc__ = /*@__PURE__*/ _defineComponent({
++const idealMarkerSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560"><rect x="80" y="80" width="400" height="400" fill="white"/><rect x="94" y="94" width="372" height="372" fill="none" stroke="#111" stroke-width="24"/><path d="M396 396H466V466H396Z" fill="#111"/><rect x="185" y="185" width="190" height="190" fill="none" stroke="#222" stroke-width="10"/><path d="M280 222V338M222 280H338" stroke="#222" stroke-width="12"/></svg>`;
++export default /*@__PURE__*/ _defineComponent({
+     __name: 'VideoPlayer',
+     props: {
+         compact: { type: Boolean, required: false, default: false }
+@@ -93,8 +97,11 @@
+         const store = useDroneStore();
+         const { t } = useI18n();
+         const { crosshairVisible } = useLandingAssistSettings();
+-        const markerOverlayEnabled = ref(true);
++        const markerDisplayMode = ref('off');
+         const markerOverlayUrl = ref('');
++        // Vector reference: relative normalized geometry, without a claimed physical dimension.
++        // It is schematic until dimensions have been separately measured/confirmed.
++        const idealMarkerUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(idealMarkerSvg);
+         const markerModelId = ref('');
+         const markerOverlayStatus = ref('Kein Modell geladen');
+         const cameraForModel = useCameraStore();
+@@ -121,7 +128,8 @@
+                 return 0;
+             return Math.min(containerWidth, markerExpectedPx.value * containerWidth / 1280);
+         });
+-        const markerPreviewPx = computed(() => markerDisplayPx.value > 0 ? markerDisplayPx.value : 160);
++        const markerScaleAvailable = computed(() => markerDisplayPx.value > 0);
++        const markerPreviewPx = computed(() => markerScaleAvailable.value ? markerDisplayPx.value : 160);
+         const markerOpticalPercent = computed(() => {
+             // A candidate model MUST NEVER receive verified optical weight.
+             if (markerOverlayStatus.value !== 'VERIFIED')
+@@ -149,11 +157,6 @@
+             catch (e) {
+                 markerOverlayStatus.value = 'Ladefehler: ' + String(e);
+             }
+-        }
+-        async function toggleMarkerOverlay() {
+-            markerOverlayEnabled.value = !markerOverlayEnabled.value;
+-            if (markerOverlayEnabled.value)
+-                await loadMarkerOverlay();
+         }
+         const containerRef = ref(null);
+         const canvasRef = ref(null);
+@@ -475,7 +478,7 @@
+                     _createCommentVNode(" Placeholder / Waiting Screen with Diagnostics "),
+                     (!hasFrame.value)
+                         ? (_openBlock(), _createElementBlock("div", _hoisted_3, [
+-                            _cache[1] || (_cache[1] = _createElementVNode("div", { class: "placeholder-icon" }, "🚁", -1 /* CACHED */)),
++                            _cache[2] || (_cache[2] = _createElementVNode("div", { class: "placeholder-icon" }, "🚁", -1 /* CACHED */)),
+                             _createElementVNode("div", _hoisted_4, _toDisplayString(_unref(t)('video.waitingTitle')), 1 /* TEXT */),
+                             _createElementVNode("div", _hoisted_5, _toDisplayString(_unref(t)('video.waitingDesc')), 1 /* TEXT */),
+                             _createCommentVNode(" Real-time Diagnostics Checklist "),
+@@ -567,29 +570,39 @@
+                         ]))
+                         : _createCommentVNode("v-if", true),
+                     (!compact.value && _unref(crosshairVisible) && hasFrame.value)
+-                        ? (_openBlock(), _createElementBlock("div", _hoisted_25, [...(_cache[2] || (_cache[2] = [
++                        ? (_openBlock(), _createElementBlock("div", _hoisted_25, [...(_cache[3] || (_cache[3] = [
+                                 _createElementVNode("span", { class: "crosshair-line crosshair-h" }, null, -1 /* CACHED */),
+                                 _createElementVNode("span", { class: "crosshair-line crosshair-v" }, null, -1 /* CACHED */),
+                                 _createElementVNode("span", { class: "crosshair-center" }, null, -1 /* CACHED */)
+                             ]))]))
+                         : _createCommentVNode("v-if", true),
+-                    _createCommentVNode(" Display-only preview: fixed size without a usable scale; no connection to flight correction. "),
+-                    (!compact.value && markerOverlayEnabled.value && hasFrame.value)
++                    _createCommentVNode(" Model display is opt-in. Ideal is schematic, not a calibrated optical observation. "),
++                    (!compact.value && markerDisplayMode.value !== 'off' && hasFrame.value)
+                         ? (_openBlock(), _createElementBlock("div", _hoisted_26, [
+-                            (markerOverlayUrl.value)
++                            ((markerDisplayMode.value === 'measured' || markerDisplayMode.value === 'compare') && markerOverlayUrl.value)
+                                 ? (_openBlock(), _createElementBlock("img", {
+                                     key: 0,
+                                     src: markerOverlayUrl.value,
+                                     class: "pport-marker-pattern",
+-                                    style: _normalizeStyle({ width: markerPreviewPx.value + 'px', height: markerPreviewPx.value + 'px' }),
+-                                    alt: "Höhenabhängiges Referenzmuster"
++                                    style: _normalizeStyle({ width: markerPreviewPx.value + 'px', height: markerPreviewPx.value + 'px', opacity: markerDisplayMode.value === 'compare' ? 0.37 : 0.44 }),
++                                    alt: "PStart-Mustermodell (unverifiziert)"
+                                 }, null, 12 /* STYLE, PROPS */, _hoisted_27))
+                                 : _createCommentVNode("v-if", true),
++                            (markerDisplayMode.value === 'ideal' || markerDisplayMode.value === 'compare')
++                                ? (_openBlock(), _createElementBlock("img", {
++                                    key: 1,
++                                    src: idealMarkerUrl,
++                                    class: "pport-marker-pattern",
++                                    style: _normalizeStyle({ width: markerPreviewPx.value + 'px', height: markerPreviewPx.value + 'px', opacity: markerDisplayMode.value === 'compare' ? 0.32 : 0.44, outline: markerDisplayMode.value === 'compare' ? '2px dashed #4fe3c1' : 'none' }),
++                                    alt: "Schematisches Idealmodell des Landemusters"
++                                }, null, 4 /* STYLE */))
++                                : _createCommentVNode("v-if", true),
+                             _createElementVNode("div", _hoisted_28, [
+-                                _createElementVNode("div", null, "PPort " + _toDisplayString(markerModelId.value || '–') + " · " + _toDisplayString(markerOverlayStatus.value), 1 /* TEXT */),
+-                                _createElementVNode("div", null, "Höhe: " + _toDisplayString(Number(_unref(store).telemetry.altitude).toFixed(1)) + " m · " + _toDisplayString(markerZoomRole.value) + " · " + _toDisplayString(markerDisplayPx.value > 0 ? markerDisplayPx.value.toFixed(0) + ' px' : 'Maßstab unbekannt – Vorschau'), 1 /* TEXT */),
++                                _createElementVNode("div", null, "PLand " + _toDisplayString(markerDisplayMode.value === 'ideal' ? 'Idealmodell (schematisch)' : markerDisplayMode.value === 'compare' ? 'PStart + Ideal (Vergleich)' : 'PStart-Modell') + " · " + _toDisplayString(markerOverlayStatus.value), 1 /* TEXT */),
++                                _createElementVNode("div", null, "Modell " + _toDisplayString(markerModelId.value || '–') + " · " + _toDisplayString(markerScaleAvailable.value ? markerDisplayPx.value.toFixed(0) + ' px (Kalibrierbereich)' : 'Maßstab unbekannt – unmaßstäbliche Vorschau'), 1 /* TEXT */),
++                                _createElementVNode("div", null, "Telemetriehöhe: " + _toDisplayString(Number(_unref(store).telemetry.altitude).toFixed(1)) + " m (Quelle nicht verifiziert)", 1 /* TEXT */),
+                                 _createElementVNode("div", null, "Optik: " + _toDisplayString(markerOpticalPercent.value) + " % · GPS: " + _toDisplayString(100 - markerOpticalPercent.value) + " % (nur Modellanzeige)", 1 /* TEXT */),
+-                                _cache[3] || (_cache[3] = _createElementVNode("div", null, "Nur Anzeige · keine Regelung", -1 /* CACHED */))
++                                _cache[4] || (_cache[4] = _createElementVNode("div", null, "Nur Anzeige · keine Flugregelung", -1 /* CACHED */))
+                             ])
+                         ]))
+                         : _createCommentVNode("v-if", true),
+@@ -638,11 +651,21 @@
+                                         class: "osd-action-btn",
+                                         onClick: toggleNextMode
+                                     }, "🔀 " + _toDisplayString(mode.value.toUpperCase()), 1 /* TEXT */),
+-                                    _createElementVNode("button", {
+-                                        class: "osd-action-btn",
+-                                        onClick: toggleMarkerOverlay,
+-                                        title: markerOverlayStatus.value
+-                                    }, "◫ Muster " + _toDisplayString(markerOverlayEnabled.value ? 'AN' : 'AUS'), 9 /* TEXT, PROPS */, _hoisted_37),
++                                    _createElementVNode("label", _hoisted_37, [
++                                        _cache[6] || (_cache[6] = _createTextVNode("◫ Muster ", -1 /* CACHED */)),
++                                        _withDirectives(_createElementVNode("select", {
++                                            id: "pland-model-mode",
++                                            "onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => ((markerDisplayMode).value = $event)),
++                                            "aria-label": "Mustermodell-Anzeige"
++                                        }, [...(_cache[5] || (_cache[5] = [
++                                                _createElementVNode("option", { value: "off" }, "AUS", -1 /* CACHED */),
++                                                _createElementVNode("option", { value: "measured" }, "PStart-Modell", -1 /* CACHED */),
++                                                _createElementVNode("option", { value: "ideal" }, "Idealmodell", -1 /* CACHED */),
++                                                _createElementVNode("option", { value: "compare" }, "Vergleich", -1 /* CACHED */)
++                                            ]))], 512 /* NEED_PATCH */), [
++                                            [_vModelSelect, markerDisplayMode.value]
++                                        ])
++                                    ]),
+                                     _createElementVNode("button", {
+                                         class: "osd-action-btn",
+                                         onClick: toggleFullscreen,
+@@ -657,6 +680,3 @@
+         };
+     }
+ });
+-
+-__sfc__.__scopeId = "data-v-af27c373";
+-export default __sfc__;
+--- /dev/null
++++ b/webui/scripts/build-ideal-runtime.mjs
+@@ -0,0 +1,19 @@
++import fs from 'node:fs';
++import {parse,compileScript} from '@vue/compiler-sfc';
++import ts from 'typescript';
++const file='src/components/cockpit/VideoPlayer.vue';
++const {descriptor}=parse(fs.readFileSync(file,'utf8'),{filename:'VideoPlayer.vue'});
++const script=compileScript(descriptor,{id:'pland-ideal-hotfix',inlineTemplate:true});
++let output=ts.transpileModule(script.content,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2020}}).outputText;
++output=output.replace(/from ['"]vue['"]/g,"from '../../../vendor/vue.js'")
++.replace(/from ['"]\.\.\/\.\.\/stores\/useDroneStore['"]/g,"from '../../stores/useDroneStore.js'")
++.replace(/from ['"]\.\.\/\.\.\/stores\/useCameraStore['"]/g,"from '../../stores/useCameraStore.js'")
++.replace(/from ['"]\.\.\/\.\.\/services\/DroneControlService['"]/g,"from '../../services/DroneControlService.js'")
++.replace(/from ['"]\.\.\/\.\.\/protocol\/VideoExtractor['"]/g,"from '../../protocol/VideoExtractor.js'")
++.replace(/from ['"]\.\.\/\.\.\/video\/WebCodecsPlayer['"]/g,"from '../../video/WebCodecsPlayer.js'")
++.replace(/from ['"]\.\.\/\.\.\/i18n['"]/g,"from '../../i18n/index.js'")
++.replace(/from ['"]\.\.\/\.\.\/composables\/useLandingAssistSettings['"]/g,"from '../../composables/useLandingAssistSettings.js'");
++if (/from ['"]vue['"]/.test(output)) throw Error('unmapped vue import');
++const dest='../app/src/main/assets/web/assets/modules/components/cockpit/VideoPlayer.js';
++fs.writeFileSync(dest,output);
++console.log(dest,output.length);
