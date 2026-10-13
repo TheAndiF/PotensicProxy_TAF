@@ -7,7 +7,7 @@ export interface PStartReference {
   captureTimestampMs: number | null; telemetryTimestampMs: number | null; timestampDeltaMs: number | null
   centerPx: [number, number] | null; outerCornersPx: [number, number][] | null; homography: number[][] | null
   markerWidthPx: null; quality: { sharpness: number | null; contrast: number | null; detectionConfidence: number | null }
-  status: 'candidate' | 'unverified' | 'error'; warnings: string[]
+  status: 'candidate' | 'unverified' | 'metadata_only' | 'error'; warnings: string[]
   patternScore?: number | null; candidateAmbiguous?: boolean; seriesRole?: 'anchor' | 'corroborated' | 'unverified'; seriesReferenceImageId?: string | null; seriesQualityScore?: number | null
 }
 export interface PStartProfile {
@@ -126,7 +126,8 @@ export class PStartPostProcessingService {
     } })), (name, blob) => this.saveAndroid(sessionId, name, blob))
   }
   private static async sha256(bytes: ArrayBuffer): Promise<string> {
-    // Android computes the digest; browser crypto.subtle is unavailable over HTTP LAN.
+    // Always use Android SHA-256; crypto.subtle can be undefined on Android WebView over HTTP.
+    this.record('INFO', 'HASH_METHOD', '', 'ANDROID_SHA256')
     const response = await fetch('/api/pstart/analysis/sha256', { method: 'POST', body: bytes })
     if (!response.ok) throw new Error('SHA-256 Android: ' + await response.text())
     const data = await response.json() as { sha256: string }
@@ -156,6 +157,13 @@ export class PStartPostProcessingService {
     this.logLines = []
     const runId = new Date().toISOString().replace(/[^0-9]/g, '')
     this.record('INFO', 'START', '', `session=${sessionId}; images=${items.length}; writeAccess=${!!save}`)
+    try {
+      const r = await fetch('/api/version', { cache: 'no-store' })
+      const v = await r.json()
+      this.record('INFO', 'BACKEND_VERSION', '', JSON.stringify(v))
+      if (!r.ok || !JSON.stringify(v).includes('0.9842')) this.record('ERROR', 'VERSION_MISMATCH', '', 'Expected backend 0.9842: ' + JSON.stringify(v))
+    } catch (e) { this.record('ERROR', 'VERSION_CHECK_FAILED', '', String(e)) }
+    this.record('INFO', 'FRONTEND_ANALYZER', '', 'webui-ts-v0.9842')
     if (!items.length) this.record('WARN', 'EMPTY_INPUT', '', 'No JPEG images found')
     const refs: PStartReference[] = []
     const pendingCopies: { name: string; bytes: ArrayBuffer; ref: PStartReference }[] = []
@@ -171,7 +179,7 @@ export class PStartPostProcessingService {
           const bytes = await blob.arrayBuffer()
           if (bytes.byteLength < 4 || new DataView(bytes).getUint16(0) !== 0xffd8) throw new Error('Ungültiger JPEG-Header')
           ref.imageSha256 = await this.sha256(bytes)
-          if (seen.has(ref.imageSha256)) { warnings.push('Duplikat (SHA-256)'); this.record('WARN', 'DUPLICATE', item.name, ref.imageSha256); continue }
+          if (seen.has(ref.imageSha256)) { warnings.push('Duplikat (SHA-256)'); this.record('WARN', 'DUPLICATE', item.name, ref.imageSha256) }
           seen.add(ref.imageSha256)
           this.record('INFO', 'JPEG_CHECK', item.name, `bytes=${bytes.byteLength}; sha256=${ref.imageSha256}`)
           const metadata = this.readXmp(bytes)
@@ -192,22 +200,18 @@ export class PStartPostProcessingService {
           if (p.referenceEligible === false) warnings.push('Laut PStart nicht als Referenz geeignet')
           if (ref.captureTimestampMs == null) warnings.push('Aufnahmezeitstempel fehlt')
           if (ref.targetHeightM == null) warnings.push('Sollhöhe fehlt')
-          // STEP0 stores XMP only; today's MAX images are uncalibrated placeholders.
-          // Never let either influence marker detection, reference ranking or quality statistics.
-          const step0 = /(?:^|_)(?:STEP0|REF00)(?:_|\.)/i.test(item.name)
+          // REF00 is XMP-only, including both MIN and MAX; REF01..REF05 use the same native detector.
+          const metadataOnly = /(?:^|_)(?:STEP0|REF00)(?:_|\.)/i.test(item.name) || ref.targetHeightM === 0
           const opticalReference = /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(item.name)
-          const placeholderZoom = ref.zoomRole === 'MAX' || /_max\.jpe?g$/i.test(item.name)
-          if (step0) {
-            ref.warnings.push('STEP0: ausschließlich Metadaten; keine optische Analyse')
-            this.record('INFO', 'METADATA_ONLY', item.name, 'STEP0 skipped optical analysis')
-          } else if (placeholderZoom) {
-            ref.warnings.push('MAX-Zoom-Platzhalter: aus optischer Auswertung ausgeschlossen')
-            this.record('INFO', 'ZOOM_PLACEHOLDER', item.name, 'MAX excluded pending verified optical zoom')
+          if (metadataOnly) {
+            ref.status = 'metadata_only'
+            this.record('INFO', 'METADATA_ONLY', item.name, 'REF00 XMP only; optical analysis skipped')
           } else if (!opticalReference) {
-            ref.warnings.push('Nicht erkannte Referenzrolle; keine optische Analyse')
+            warnings.push('Nicht erkannte Referenzrolle; keine optische Analyse')
             this.record('WARN', 'UNKNOWN_ROLE', item.name, 'REF01..REF05 expected')
           } else {
             this.emit({ state: 'DETECTING_MARKER', completed: refs.length - 1, total: items.length, message: item.name })
+            this.record('INFO', 'OPTICAL_ANALYSIS', item.name, `zoom=${ref.zoomRole}`)
             await this.measure(blob, ref)
           }
           if (ref.timestampDeltaMs != null) this.record(Math.abs(ref.timestampDeltaMs)>1000?'WARN':'INFO','TIMESTAMP_DELTA',item.name,`${ref.timestampDeltaMs} ms`)
@@ -236,8 +240,9 @@ export class PStartPostProcessingService {
         }
       }
       const errors = refs.filter(r => r.status === 'error').length
-      const valid = refs.filter(r => r.status === 'candidate' && /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath) && r.zoomRole !== 'MAX').length
-      const profile: PStartProfile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: errors === refs.length || !refs.length ? 'failed' : 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: valid && series.anchorImageId ? 'LIMITED' : 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series }
+      const valid = refs.filter(r => r.status === 'candidate' && /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath)).length
+      this.record('INFO', 'OPTICAL_SUMMARY', '', JSON.stringify({ metadataOnly: refs.filter(r => r.status === 'metadata_only').length, optical: refs.filter(r => /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath)).length, candidates: valid }))
+      const profile: PStartProfile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: errors === refs.length || !refs.length ? 'failed' : 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series }
       try { localStorage.setItem('taf.pstart.analysis.latest', JSON.stringify(profile)) } catch { /* storage optional */ }
       this.record('INFO', 'COMPLETE', '', `${refs.length} images; ${valid} candidates; anchor=${series.anchorImageId || "none"}`)
       if (save) {
@@ -262,7 +267,7 @@ export class PStartPostProcessingService {
   /** Ranking is observational: a clear near-image is the reference for pattern identity,
    * not a claimed camera extrinsic transform or a replacement for per-image localization. */
   private static evaluateSeries(refs: PStartReference[]): NonNullable<PStartProfile['seriesAnalysis']> {
-    const measured = refs.filter(r => /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath) && r.zoomRole !== 'MAX' && r.status === 'candidate' && r.centerPx && r.outerCornersPx?.length === 4 && r.targetHeightM != null && r.targetHeightM > 0)
+    const measured = refs.filter(r => /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath) && r.status === 'candidate' && r.centerPx && r.outerCornersPx?.length === 4 && r.targetHeightM != null && r.targetHeightM > 0)
     for (const ref of refs) {
       ref.seriesRole = 'unverified'
       ref.seriesReferenceImageId = null
@@ -322,7 +327,7 @@ export class PStartPostProcessingService {
     // Fail closed when geometry is incomplete or Android backend is not reachable.
     try {
       const result = await fetch('/api/pstart/analysis/opencv', { method: 'POST', body: blob })
-      if (!result.ok) throw new Error(`OpenCV HTTP ${result.status}`)
+      if (!result.ok) throw new Error(`OpenCV HTTP ${result.status}: ${(await result.text()).slice(0, 800)}`)
       const geometry = await result.json()
       this.record('INFO', 'OPENCV', ref.imageId, JSON.stringify({ status: geometry.status, engine: geometry.engine, patternScore: geometry.patternScore, candidateCount: geometry.candidateCount, candidateAmbiguous: geometry.candidateAmbiguous, warnings: geometry.warnings }))
       ref.patternScore = this.num(geometry.patternScore)
@@ -339,7 +344,7 @@ export class PStartPostProcessingService {
       }
       ref.warnings.push('OpenCV: no geometrically suitable quadrilateral found')
     } catch (error) {
-      this.record('WARN', 'OPENCV_UNAVAILABLE', ref.imageId, String(error))
+      this.record('ERROR', 'OPENCV_UNAVAILABLE', ref.imageId, String(error))
       ref.warnings.push('OpenCV backend unavailable; fallback is not a geometric verification')
     }
     await this.measureFallback(blob, ref)

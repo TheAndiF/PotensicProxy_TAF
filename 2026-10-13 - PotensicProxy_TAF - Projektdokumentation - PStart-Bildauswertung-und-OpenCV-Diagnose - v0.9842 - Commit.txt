@@ -1,0 +1,18 @@
+BS_PStart analysis diagnostics and MIN MAX parity
+
+Date: 2026-10-13
+
+Summary:
+- Align TypeScript optical reference handling with embedded runtime and include MAX images.
+- Record backend and analyzer versions; expand native OpenCV endpoint diagnostic stages.
+- Preserve metadata-only REF00 and conservative PLand readiness.
+- Prepare v0.9842 source without claiming an Android runtime validation.
+
+Changed files:
+- app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- app/src/main/assets/web/assets/modules/services/PStartPostProcessingService.js
+- webui/src/services/PStartPostProcessingService.ts
+- webui/package.json
+- webui/index.html
+- webui/public/assets/taf-pairing-runtime-v0.9842.js

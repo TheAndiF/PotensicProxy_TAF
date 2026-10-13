@@ -1,0 +1,364 @@
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@
+         applicationId = "com.potensic.proxy"
+         minSdk = 26
+         targetSdk = 36
+-        versionCode = 66
+-        versionName = "0.9841"
++        versionCode = 67
++        versionName = "0.9842"
+     }
+ 
+     signingConfigs {
+--- a/app/src/main/java/com/potensic/proxy/WebServer.kt
++++ b/app/src/main/java/com/potensic/proxy/WebServer.kt
+@@ -472,7 +472,17 @@
+                         val result = JSONObject().put("error", e.message ?: "OpenCV analysis failed")
+                             .put("errorType", e.javaClass.name).put("diagnosticId", id)
+                             .put("stage", "native-analysis").put("ready", PStartOpenCvAnalyzer.selfTest().optBoolean("ready"))
+-                        val status = if (e is IllegalArgumentException) HttpStatusCode.BadRequest else HttpStatusCode.InternalServerError
++                        val stage = when (e) {
++                            is IllegalArgumentException -> "input-or-decoding"
++                            is UnsatisfiedLinkError, is NoClassDefFoundError -> "native-library"
++                            is IllegalStateException -> "initialization-or-analysis"
++                            else -> "native-analysis"
++                        }
++                        result.put("stage", stage).put("cause", e.cause?.javaClass?.name ?: "")
++                            .put("message", e.message ?: "unknown")
++                        val status = if (e is IllegalArgumentException) HttpStatusCode.BadRequest
++                            else if (e is UnsatisfiedLinkError || e is NoClassDefFoundError) HttpStatusCode.ServiceUnavailable
++                            else HttpStatusCode.InternalServerError
+                         call.respondText(result.toString(), ContentType.Application.Json, status)
+                     }
+                 }
+--- a/app/src/main/assets/web/assets/modules/services/PStartPostProcessingService.js
++++ b/app/src/main/assets/web/assets/modules/services/PStartPostProcessingService.js
+@@ -145,6 +145,13 @@
+         this.logLines = [];
+         const runId = new Date().toISOString().replace(/[^0-9]/g, '');
+         this.record('INFO', 'START', '', `session=${sessionId}; images=${items.length}; writeAccess=${!!save}`);
++        try {
++            const r = await fetch('/api/version', { cache: 'no-store' });
++            const v = await r.json();
++            this.record('INFO', 'BACKEND_VERSION', '', JSON.stringify(v));
++            if (!r.ok || !JSON.stringify(v).includes('0.9842')) this.record('ERROR', 'VERSION_MISMATCH', '', 'Expected backend 0.9842: ' + JSON.stringify(v));
++        } catch (e) { this.record('ERROR', 'VERSION_CHECK_FAILED', '', String(e)); }
++        this.record('INFO', 'FRONTEND_ANALYZER', '', 'embedded-js-v0.9842');
+         const opencvHealth = await this.opencvHealth();
+         if (!items.length)
+             this.record('WARN', 'EMPTY_INPUT', '', 'No JPEG images found');
+@@ -166,9 +173,9 @@
+                     if (seen.has(ref.imageSha256)) {
+                         warnings.push('Duplikat (SHA-256)');
+                         this.record('WARN', 'DUPLICATE', item.name, ref.imageSha256);
+-                        continue;
+                     }
+                     seen.add(ref.imageSha256);
++                    this.record('INFO', 'HASH_METHOD', item.name, globalThis.crypto?.subtle?.digest ? 'WEBCRYPTO_OR_ANDROID_FALLBACK' : 'ANDROID_SHA256');
+                     this.record('INFO', 'JPEG_CHECK', item.name, `bytes=${bytes.byteLength}; sha256=${ref.imageSha256}`);
+                     const metadata = this.readXmp(bytes);
+                     if (!metadata)
+@@ -250,7 +257,7 @@
+                 }
+             }
+             const valid = refs.filter(r => r.status === 'candidate' && /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath)).length;
+-            const profile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: valid && series.anchorImageId ? 'LIMITED' : 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series };
++            const profile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series };
+             try {
+                 localStorage.setItem('taf.pstart.analysis.latest', JSON.stringify(profile));
+             }
+--- a/webui/src/services/PStartPostProcessingService.ts
++++ b/webui/src/services/PStartPostProcessingService.ts
+@@ -7,7 +7,7 @@
+   captureTimestampMs: number | null; telemetryTimestampMs: number | null; timestampDeltaMs: number | null
+   centerPx: [number, number] | null; outerCornersPx: [number, number][] | null; homography: number[][] | null
+   markerWidthPx: null; quality: { sharpness: number | null; contrast: number | null; detectionConfidence: number | null }
+-  status: 'candidate' | 'unverified' | 'error'; warnings: string[]
++  status: 'candidate' | 'unverified' | 'metadata_only' | 'error'; warnings: string[]
+   patternScore?: number | null; candidateAmbiguous?: boolean; seriesRole?: 'anchor' | 'corroborated' | 'unverified'; seriesReferenceImageId?: string | null; seriesQualityScore?: number | null
+ }
+ export interface PStartProfile {
+@@ -126,7 +126,8 @@
+     } })), (name, blob) => this.saveAndroid(sessionId, name, blob))
+   }
+   private static async sha256(bytes: ArrayBuffer): Promise<string> {
+-    // Android computes the digest; browser crypto.subtle is unavailable over HTTP LAN.
++    // Always use Android SHA-256; crypto.subtle can be undefined on Android WebView over HTTP.
++    this.record('INFO', 'HASH_METHOD', '', 'ANDROID_SHA256')
+     const response = await fetch('/api/pstart/analysis/sha256', { method: 'POST', body: bytes })
+     if (!response.ok) throw new Error('SHA-256 Android: ' + await response.text())
+     const data = await response.json() as { sha256: string }
+@@ -156,6 +157,13 @@
+     this.logLines = []
+     const runId = new Date().toISOString().replace(/[^0-9]/g, '')
+     this.record('INFO', 'START', '', `session=${sessionId}; images=${items.length}; writeAccess=${!!save}`)
++    try {
++      const r = await fetch('/api/version', { cache: 'no-store' })
++      const v = await r.json()
++      this.record('INFO', 'BACKEND_VERSION', '', JSON.stringify(v))
++      if (!r.ok || !JSON.stringify(v).includes('0.9842')) this.record('ERROR', 'VERSION_MISMATCH', '', 'Expected backend 0.9842: ' + JSON.stringify(v))
++    } catch (e) { this.record('ERROR', 'VERSION_CHECK_FAILED', '', String(e)) }
++    this.record('INFO', 'FRONTEND_ANALYZER', '', 'webui-ts-v0.9842')
+     if (!items.length) this.record('WARN', 'EMPTY_INPUT', '', 'No JPEG images found')
+     const refs: PStartReference[] = []
+     const pendingCopies: { name: string; bytes: ArrayBuffer; ref: PStartReference }[] = []
+@@ -171,7 +179,7 @@
+           const bytes = await blob.arrayBuffer()
+           if (bytes.byteLength < 4 || new DataView(bytes).getUint16(0) !== 0xffd8) throw new Error('Ungültiger JPEG-Header')
+           ref.imageSha256 = await this.sha256(bytes)
+-          if (seen.has(ref.imageSha256)) { warnings.push('Duplikat (SHA-256)'); this.record('WARN', 'DUPLICATE', item.name, ref.imageSha256); continue }
++          if (seen.has(ref.imageSha256)) { warnings.push('Duplikat (SHA-256)'); this.record('WARN', 'DUPLICATE', item.name, ref.imageSha256) }
+           seen.add(ref.imageSha256)
+           this.record('INFO', 'JPEG_CHECK', item.name, `bytes=${bytes.byteLength}; sha256=${ref.imageSha256}`)
+           const metadata = this.readXmp(bytes)
+@@ -192,22 +200,18 @@
+           if (p.referenceEligible === false) warnings.push('Laut PStart nicht als Referenz geeignet')
+           if (ref.captureTimestampMs == null) warnings.push('Aufnahmezeitstempel fehlt')
+           if (ref.targetHeightM == null) warnings.push('Sollhöhe fehlt')
+-          // STEP0 stores XMP only; today's MAX images are uncalibrated placeholders.
+-          // Never let either influence marker detection, reference ranking or quality statistics.
+-          const step0 = /(?:^|_)(?:STEP0|REF00)(?:_|\.)/i.test(item.name)
++          // REF00 is XMP-only, including both MIN and MAX; REF01..REF05 use the same native detector.
++          const metadataOnly = /(?:^|_)(?:STEP0|REF00)(?:_|\.)/i.test(item.name) || ref.targetHeightM === 0
+           const opticalReference = /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(item.name)
+-          const placeholderZoom = ref.zoomRole === 'MAX' || /_max\.jpe?g$/i.test(item.name)
+-          if (step0) {
+-            ref.warnings.push('STEP0: ausschließlich Metadaten; keine optische Analyse')
+-            this.record('INFO', 'METADATA_ONLY', item.name, 'STEP0 skipped optical analysis')
+-          } else if (placeholderZoom) {
+-            ref.warnings.push('MAX-Zoom-Platzhalter: aus optischer Auswertung ausgeschlossen')
+-            this.record('INFO', 'ZOOM_PLACEHOLDER', item.name, 'MAX excluded pending verified optical zoom')
++          if (metadataOnly) {
++            ref.status = 'metadata_only'
++            this.record('INFO', 'METADATA_ONLY', item.name, 'REF00 XMP only; optical analysis skipped')
+           } else if (!opticalReference) {
+-            ref.warnings.push('Nicht erkannte Referenzrolle; keine optische Analyse')
++            warnings.push('Nicht erkannte Referenzrolle; keine optische Analyse')
+             this.record('WARN', 'UNKNOWN_ROLE', item.name, 'REF01..REF05 expected')
+           } else {
+             this.emit({ state: 'DETECTING_MARKER', completed: refs.length - 1, total: items.length, message: item.name })
++            this.record('INFO', 'OPTICAL_ANALYSIS', item.name, `zoom=${ref.zoomRole}`)
+             await this.measure(blob, ref)
+           }
+           if (ref.timestampDeltaMs != null) this.record(Math.abs(ref.timestampDeltaMs)>1000?'WARN':'INFO','TIMESTAMP_DELTA',item.name,`${ref.timestampDeltaMs} ms`)
+@@ -236,8 +240,9 @@
+         }
+       }
+       const errors = refs.filter(r => r.status === 'error').length
+-      const valid = refs.filter(r => r.status === 'candidate' && /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath) && r.zoomRole !== 'MAX').length
+-      const profile: PStartProfile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: errors === refs.length || !refs.length ? 'failed' : 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: valid && series.anchorImageId ? 'LIMITED' : 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series }
++      const valid = refs.filter(r => r.status === 'candidate' && /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath)).length
++      this.record('INFO', 'OPTICAL_SUMMARY', '', JSON.stringify({ metadataOnly: refs.filter(r => r.status === 'metadata_only').length, optical: refs.filter(r => /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath)).length, candidates: valid }))
++      const profile: PStartProfile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: errors === refs.length || !refs.length ? 'failed' : 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series }
+       try { localStorage.setItem('taf.pstart.analysis.latest', JSON.stringify(profile)) } catch { /* storage optional */ }
+       this.record('INFO', 'COMPLETE', '', `${refs.length} images; ${valid} candidates; anchor=${series.anchorImageId || "none"}`)
+       if (save) {
+@@ -262,7 +267,7 @@
+   /** Ranking is observational: a clear near-image is the reference for pattern identity,
+    * not a claimed camera extrinsic transform or a replacement for per-image localization. */
+   private static evaluateSeries(refs: PStartReference[]): NonNullable<PStartProfile['seriesAnalysis']> {
+-    const measured = refs.filter(r => /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath) && r.zoomRole !== 'MAX' && r.status === 'candidate' && r.centerPx && r.outerCornersPx?.length === 4 && r.targetHeightM != null && r.targetHeightM > 0)
++    const measured = refs.filter(r => /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath) && r.status === 'candidate' && r.centerPx && r.outerCornersPx?.length === 4 && r.targetHeightM != null && r.targetHeightM > 0)
+     for (const ref of refs) {
+       ref.seriesRole = 'unverified'
+       ref.seriesReferenceImageId = null
+@@ -322,7 +327,7 @@
+     // Fail closed when geometry is incomplete or Android backend is not reachable.
+     try {
+       const result = await fetch('/api/pstart/analysis/opencv', { method: 'POST', body: blob })
+-      if (!result.ok) throw new Error(`OpenCV HTTP ${result.status}`)
++      if (!result.ok) throw new Error(`OpenCV HTTP ${result.status}: ${(await result.text()).slice(0, 800)}`)
+       const geometry = await result.json()
+       this.record('INFO', 'OPENCV', ref.imageId, JSON.stringify({ status: geometry.status, engine: geometry.engine, patternScore: geometry.patternScore, candidateCount: geometry.candidateCount, candidateAmbiguous: geometry.candidateAmbiguous, warnings: geometry.warnings }))
+       ref.patternScore = this.num(geometry.patternScore)
+@@ -339,7 +344,7 @@
+       }
+       ref.warnings.push('OpenCV: no geometrically suitable quadrilateral found')
+     } catch (error) {
+-      this.record('WARN', 'OPENCV_UNAVAILABLE', ref.imageId, String(error))
++      this.record('ERROR', 'OPENCV_UNAVAILABLE', ref.imageId, String(error))
+       ref.warnings.push('OpenCV backend unavailable; fallback is not a geometric verification')
+     }
+     await this.measureFallback(blob, ref)
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.9841",
++  "version": "0.9842",
+   "private": true,
+   "type": "module",
+   "scripts": {
+--- a/webui/index.html
++++ b/webui/index.html
+@@ -5,7 +5,7 @@
+     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚁</text></svg>">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+     <title>Potensic Proxy - TAF</title>
+-    <script defer src="/assets/taf-pairing-runtime-v0.9841.js"></script>
++    <script defer src="/assets/taf-pairing-runtime-v0.9842.js"></script>
+   </head>
+   <body>
+     <div id="app"></div>
+--- a/webui/public/assets/taf-pairing-runtime-v0.9842.js
++++ b/webui/public/assets/taf-pairing-runtime-v0.9842.js
+@@ -0,0 +1,157 @@
++(() => {
++  'use strict'
++
++  const VERSION = '0.9842'
++  const CARD_SELECTOR = '[data-taf-pairing-runtime="0.9842"]'
++  const NATIVE_PAIRING_SELECTOR = '.pairing-card:not(.taf-runtime-pairing-card)'
++  let pollTimer = null
++
++  function patchFrontendVersionBadge() {
++    const candidates = document.querySelectorAll('.version-badge, .el-tag')
++    for (const el of candidates) {
++      const text = (el.textContent || '').trim()
++      if (!/frontend/i.test(text)) continue
++      const replaced = text.replace(/v\d+\.\d+(?:\.\d+)?/i, `v${VERSION}`)
++      if (replaced !== text) el.textContent = replaced
++    }
++    document.documentElement.dataset.tafEmbeddedFrontend = VERSION
++  }
++
++  function ensureStyles() {
++    if (document.getElementById('taf-pairing-runtime-style')) return
++    const style = document.createElement('style')
++    style.id = 'taf-pairing-runtime-style'
++    style.textContent = `
++      .taf-runtime-pairing-card { border-color: rgba(64, 158, 255, .65) !important; }
++      .taf-pairing-runtime-badge { display:inline-flex; align-items:center; min-height:22px; padding:0 9px; border-radius:4px; font-size:12px; font-weight:700; color:#fff; background:#909399; }
++      .taf-pairing-runtime-badge[data-state="waiting"], .taf-pairing-runtime-badge[data-state="pairing"] { background:#e6a23c; }
++      .taf-pairing-runtime-badge[data-state="success"] { background:#67c23a; }
++      .taf-pairing-runtime-badge[data-state="failed"], .taf-pairing-runtime-badge[data-state="timeout"] { background:#f56c6c; }
++      .taf-pairing-runtime-message { margin:8px 0 10px; padding:8px 10px; border:1px solid rgba(144,147,153,.3); border-radius:4px; font-size:12px; line-height:1.45; word-break:break-word; }
++      .taf-pairing-runtime-actions { display:flex; gap:8px; flex-wrap:wrap; }
++      .taf-pairing-runtime-note { margin-top:7px; opacity:.72; font-size:11px; line-height:1.4; }
++    `
++    document.head.appendChild(style)
++  }
++
++  function stateLabel(state) {
++    return String(state || 'idle').toUpperCase()
++  }
++
++  function getRuntimeCard() {
++    return document.querySelector(CARD_SELECTOR)
++  }
++
++  function renderPairing(state, message, rawHex) {
++    const card = getRuntimeCard()
++    if (!card) return
++    const normalized = String(state || 'idle').toLowerCase()
++    const badge = card.querySelector('[data-taf-pairing-badge]')
++    const msg = card.querySelector('[data-taf-pairing-message]')
++    const start = card.querySelector('[data-taf-pairing-start]')
++    if (badge) {
++      badge.dataset.state = normalized
++      badge.textContent = stateLabel(normalized)
++    }
++    if (msg) {
++      msg.textContent = message || 'No pairing session started'
++      msg.title = rawHex || ''
++    }
++    if (start) {
++      const busy = normalized === 'waiting' || normalized === 'pairing'
++      start.disabled = busy
++      start.textContent = busy ? 'Pairing in progress…' : '🔗 Re-pair Controller / Aircraft'
++    }
++  }
++
++  async function pollStatus() {
++    if (!getRuntimeCard()) return
++    try {
++      const response = await fetch(`/api/status?_tafPairing=${Date.now()}`, { cache: 'no-store' })
++      if (!response.ok) throw new Error(`HTTP ${response.status}`)
++      const data = await response.json()
++      if (data && data.pairing) {
++        renderPairing(data.pairing.state, data.pairing.lastMessage, data.pairing.resultRawHex)
++      }
++    } catch (_) {
++      // Keep the last known status. The normal application connection indicator already exposes backend outages.
++    }
++  }
++
++  async function startPairing() {
++    const ok = window.confirm(
++      'Start ATOM controller / aircraft pairing?\n\n' +
++      'The controller will enter MiniPair mode. Afterwards put the aircraft into frequency-pairing mode using its power button.'
++    )
++    if (!ok) return
++
++    renderPairing('waiting', 'Sending pairing command to the controller…')
++    try {
++      const response = await fetch('/api/cmd/pair', { method: 'POST', cache: 'no-store' })
++      const text = await response.text()
++      if (!response.ok) throw new Error(text || `HTTP ${response.status}`)
++      renderPairing('waiting', 'Pairing command sent; waiting for controller pairing mode')
++      await pollStatus()
++    } catch (error) {
++      renderPairing('failed', `Could not start pairing: ${error instanceof Error ? error.message : String(error)}`)
++    }
++  }
++
++  async function resetPairing() {
++    try {
++      await fetch('/api/cmd/pair/reset', { method: 'POST', cache: 'no-store' })
++    } catch (_) {}
++    renderPairing('idle', 'No pairing session started')
++  }
++
++  function ensurePairingCard() {
++    patchFrontendVersionBadge()
++
++    // A freshly rebuilt Vue bundle already contains the native pairing panel.
++    // In that case this compatibility bridge deliberately stays out of the UI.
++    if (document.querySelector(NATIVE_PAIRING_SELECTOR)) {
++      const runtime = getRuntimeCard()
++      if (runtime) runtime.remove()
++      return
++    }
++
++    if (getRuntimeCard()) return
++    const panel = document.querySelector('.fpv-pane .fpv-controls-col .panel-box')
++    if (!panel) return
++
++    ensureStyles()
++    const card = document.createElement('div')
++    card.className = 'action-card highlight-card pairing-card taf-runtime-pairing-card'
++    card.dataset.tafPairingRuntime = VERSION
++    card.innerHTML = `
++      <div class="act-header">
++        <span class="act-name">ATOM Controller / Aircraft Pairing</span>
++        <span class="taf-pairing-runtime-badge" data-taf-pairing-badge data-state="idle">IDLE</span>
++      </div>
++      <p class="act-desc">
++        Starts the PotensicPro MiniPair sequence (FE 0x16 / function 0x18). After starting, put the aircraft into frequency-pairing mode using its power button.
++      </p>
++      <div class="taf-pairing-runtime-message" data-taf-pairing-message>No pairing session started</div>
++      <div class="taf-pairing-runtime-actions">
++        <button type="button" class="el-button el-button--primary el-button--small" data-taf-pairing-start>🔗 Re-pair Controller / Aircraft</button>
++        <button type="button" class="el-button el-button--small is-plain" data-taf-pairing-reset>Reset Status</button>
++      </div>
++      <div class="taf-pairing-runtime-note">Status and result are monitored by the Android backend from 0x1715 / 0x1718 and are written to the Live Log.</div>
++    `
++
++    const title = panel.querySelector('.box-title')
++    if (title && title.parentElement === panel) title.insertAdjacentElement('afterend', card)
++    else panel.prepend(card)
++
++    card.querySelector('[data-taf-pairing-start]')?.addEventListener('click', startPairing)
++    card.querySelector('[data-taf-pairing-reset]')?.addEventListener('click', resetPairing)
++
++    if (!pollTimer) pollTimer = window.setInterval(pollStatus, 1000)
++    pollStatus()
++  }
++
++  const observer = new MutationObserver(() => ensurePairingCard())
++  observer.observe(document.documentElement, { childList: true, subtree: true })
++  window.addEventListener('load', ensurePairingCard, { once: true })
++  ensurePairingCard()
++})()

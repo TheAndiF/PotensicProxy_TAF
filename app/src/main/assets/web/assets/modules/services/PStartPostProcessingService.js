@@ -145,6 +145,13 @@ export class PStartPostProcessingService {
         this.logLines = [];
         const runId = new Date().toISOString().replace(/[^0-9]/g, '');
         this.record('INFO', 'START', '', `session=${sessionId}; images=${items.length}; writeAccess=${!!save}`);
+        try {
+            const r = await fetch('/api/version', { cache: 'no-store' });
+            const v = await r.json();
+            this.record('INFO', 'BACKEND_VERSION', '', JSON.stringify(v));
+            if (!r.ok || !JSON.stringify(v).includes('0.9842')) this.record('ERROR', 'VERSION_MISMATCH', '', 'Expected backend 0.9842: ' + JSON.stringify(v));
+        } catch (e) { this.record('ERROR', 'VERSION_CHECK_FAILED', '', String(e)); }
+        this.record('INFO', 'FRONTEND_ANALYZER', '', 'embedded-js-v0.9842');
         const opencvHealth = await this.opencvHealth();
         if (!items.length)
             this.record('WARN', 'EMPTY_INPUT', '', 'No JPEG images found');
@@ -166,9 +173,9 @@ export class PStartPostProcessingService {
                     if (seen.has(ref.imageSha256)) {
                         warnings.push('Duplikat (SHA-256)');
                         this.record('WARN', 'DUPLICATE', item.name, ref.imageSha256);
-                        continue;
                     }
                     seen.add(ref.imageSha256);
+                    this.record('INFO', 'HASH_METHOD', item.name, globalThis.crypto?.subtle?.digest ? 'WEBCRYPTO_OR_ANDROID_FALLBACK' : 'ANDROID_SHA256');
                     this.record('INFO', 'JPEG_CHECK', item.name, `bytes=${bytes.byteLength}; sha256=${ref.imageSha256}`);
                     const metadata = this.readXmp(bytes);
                     if (!metadata)
@@ -250,7 +257,7 @@ export class PStartPostProcessingService {
                 }
             }
             const valid = refs.filter(r => r.status === 'candidate' && /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath)).length;
-            const profile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: valid && series.anchorImageId ? 'LIMITED' : 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series };
+            const profile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series };
             try {
                 localStorage.setItem('taf.pstart.analysis.latest', JSON.stringify(profile));
             }

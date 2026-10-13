@@ -472,7 +472,17 @@ class WebServer(
                         val result = JSONObject().put("error", e.message ?: "OpenCV analysis failed")
                             .put("errorType", e.javaClass.name).put("diagnosticId", id)
                             .put("stage", "native-analysis").put("ready", PStartOpenCvAnalyzer.selfTest().optBoolean("ready"))
-                        val status = if (e is IllegalArgumentException) HttpStatusCode.BadRequest else HttpStatusCode.InternalServerError
+                        val stage = when (e) {
+                            is IllegalArgumentException -> "input-or-decoding"
+                            is UnsatisfiedLinkError, is NoClassDefFoundError -> "native-library"
+                            is IllegalStateException -> "initialization-or-analysis"
+                            else -> "native-analysis"
+                        }
+                        result.put("stage", stage).put("cause", e.cause?.javaClass?.name ?: "")
+                            .put("message", e.message ?: "unknown")
+                        val status = if (e is IllegalArgumentException) HttpStatusCode.BadRequest
+                            else if (e is UnsatisfiedLinkError || e is NoClassDefFoundError) HttpStatusCode.ServiceUnavailable
+                            else HttpStatusCode.InternalServerError
                         call.respondText(result.toString(), ContentType.Application.Json, status)
                     }
                 }
