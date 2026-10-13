@@ -1,0 +1,24 @@
+BS_Fix repeatable PStart artifacts and PPort model replacement
+
+Date: 2026-10-13
+Project: PotensicProxy_TAF
+Base: v0.9845
+Patch revision: v0.9845.1 (storage hotfix; app build version unchanged)
+
+Summary:
+- Allow verified replacement of analysis artifacts from repeated PStart runs while preserving original captures.
+- Stage and read back SAF output before replacing existing same-session analysis files.
+- Make the manual SAF artifact writer repeatable using the same replacement safeguards.
+- Create and validate app-private PPort directories and model staging folders automatically.
+- Permit same-ID model updates through staged folder replacement with rollback on failures.
+- Verify model files by SHA-256 after committing to PPort and return the actual storage path.
+- Preserve unrelated PStart/PPort model folders.
+
+Changed files:
+- app/src/main/java/com/potensic/proxy/PStartSafStorage.kt
+- app/src/main/java/com/potensic/proxy/PPortModelStorage.kt
+
+Validation:
+- Source changes and input ZIP contents inspected; archive integrity checked.
+- Kotlin compilation/Android build not executed; target SAF provider rename behavior requires device validation.
+- Successful reanalysis, model generation and PPort retrieval are not yet confirmed on device.

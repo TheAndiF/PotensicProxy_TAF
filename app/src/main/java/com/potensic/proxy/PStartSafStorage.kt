@@ -110,20 +110,47 @@ object PStartSafStorage {
             directory = existing ?: DocumentsContract.createDocument(resolver, directory, DocumentsContract.Document.MIME_TYPE_DIR, part)
                 ?: throw IllegalStateException("Cannot create folder: $part")
         }
-        // Never overwrite original media or an existing analysis run.
-        require(findChild(context, grant, directory, filename, null) == null) { "File already exists: $filename" }
-        val file = DocumentsContract.createDocument(resolver, directory, mime, filename)
-            ?: throw IllegalStateException("Cannot create file: $filename")
+        val existing = findChild(context, grant, directory, filename, null)
+        // Only designated analysis outputs may be replaced; captured photos and source XMP stay immutable.
+        val replaceable = filename.contains("_analysis_", ignoreCase = true) &&
+            (filename.endsWith(".png", true) || filename.endsWith(".json", true) ||
+             filename.endsWith(".jsonl", true) || filename.endsWith(".xmp", true) ||
+             filename.endsWith(".jpg", true))
+        require(existing == null || replaceable) { "Original file already exists: $filename" }
+        // Write and verify before touching the old result. SAF rename is not guaranteed atomic.
+        val stagingName = "analysis_tmp_${java.util.UUID.randomUUID().toString().replace("-", "")}.tmp"
+        var staging = DocumentsContract.createDocument(resolver, directory, mime, stagingName)
+            ?: throw IllegalStateException("Cannot create analysis staging file")
+        var backup: Uri? = null
         try {
-            resolver.openOutputStream(file, "wt")?.use { it.write(bytes) } ?: error("Storage output failed")
-            val actual = resolver.openInputStream(file)?.use { it.readBytes() } ?: error("Storage readback failed")
-            if (!actual.contentEquals(bytes)) error("Stored file differs from source")
-            return JSONObject().put("uri", file.toString()).put("name", filename)
+            resolver.openOutputStream(staging, "wt")?.use { it.write(bytes) } ?: error("Storage output failed")
+            check(resolver.openInputStream(staging)?.use { it.readBytes().contentEquals(bytes) } == true) {
+                "Analysis staging readback mismatch"
+            }
+            if (existing != null) {
+                val backupName = "analysis_backup_${java.util.UUID.randomUUID().toString().replace("-", "")}.tmp"
+                backup = DocumentsContract.renameDocument(resolver, existing, backupName)
+                    ?: error("SAF provider cannot rename existing analysis file; original retained")
+            }
+            val result = DocumentsContract.renameDocument(resolver, staging, filename)
+                ?: error("SAF provider cannot rename staging file")
+            staging = result
+            check(resolver.openInputStream(result)?.use { it.readBytes().contentEquals(bytes) } == true) {
+                "Final analysis readback mismatch"
+            }
+            backup?.let { if (!DocumentsContract.deleteDocument(resolver, it)) Log.w("PStartSAF", "Previous artifact backup not removed: $filename") }
+            backup = null
+            return JSONObject().put("uri", result.toString()).put("name", filename)
                 .put("relativePath", "Documents/PotensicProxy/$path")
-                .put("size", bytes.size).put("sha256", MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) })
+                .put("size", bytes.size).put("replaced", existing != null)
+                .put("sha256", MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) })
                 .put("verified", true)
         } catch (e: Exception) {
-            try { DocumentsContract.deleteDocument(resolver, file) } catch (_: Exception) {}
+            try { DocumentsContract.deleteDocument(resolver, staging) } catch (_: Exception) {}
+            if (backup != null) {
+                try { DocumentsContract.renameDocument(resolver, backup, filename) }
+                catch (restore: Exception) { Log.e("PStartSAF", "Restore of previous analysis output failed: $filename", restore) }
+            }
             throw e
         }
     }
@@ -245,24 +272,33 @@ object PStartSafStorage {
         return context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw IllegalStateException("SAF open failed")
     }
     fun write(context: Context, name: String, bytes: ByteArray): JSONObject {
-        require(safe(name) && (name.endsWith(".json") || name.endsWith(".jsonl") || name.endsWith(".jpg"))) { "Unsupported artifact filename" }
-        require(bytes.size <= 30_000_000) { "Artifact too large" }
-        require(children(context).none { it.first == name }) { "Artifact already exists; use a new run ID" }
-        val type = if (name.endsWith(".jpg")) "image/jpeg" else "application/json"
-        val uri = DocumentsContract.createDocument(context.contentResolver, latestPStartDirectory(context), type, name) ?: throw IllegalStateException("Could not create artifact")
+        require(safe(name) && name.contains("_analysis_", true) &&
+            (name.endsWith(".json",true) || name.endsWith(".jsonl",true) ||
+             name.endsWith(".jpg",true) || name.endsWith(".png",true))) { "Unsupported analysis artifact filename" }
+        require(bytes.isNotEmpty() && bytes.size <= 30_000_000) { "Invalid artifact size" }
+        val resolver = context.contentResolver
+        val grant = tree(context) ?: throw SecurityException("SAF permission missing")
+        val folder = latestPStartDirectory(context)
+        val existing = findChild(context, grant, folder, name, null)
+        val token = java.util.UUID.randomUUID().toString().replace("-", "")
+        var staging = DocumentsContract.createDocument(resolver, folder, when { name.endsWith(".png",true) -> "image/png"; name.endsWith(".jpg",true) -> "image/jpeg"; else -> "application/json" }, "analysis_tmp_$token.tmp")
+            ?: error("Cannot create SAF staging artifact")
+        var backup: Uri? = null
         try {
-            context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) } ?: throw IllegalStateException("SAF output failed")
+            resolver.openOutputStream(staging,"wt")?.use { it.write(bytes) } ?: error("SAF write failed")
+            check(resolver.openInputStream(staging)?.use { it.readBytes().contentEquals(bytes) } == true) { "SAF staged readback mismatch" }
+            if (existing != null) backup = DocumentsContract.renameDocument(resolver,existing,"analysis_backup_$token.tmp")
+                ?: error("SAF cannot back up existing artifact")
+            staging = DocumentsContract.renameDocument(resolver,staging,name) ?: error("SAF artifact commit failed")
+            check(resolver.openInputStream(staging)?.use { it.readBytes().contentEquals(bytes) } == true) { "SAF final readback mismatch" }
+            backup?.let { if (!DocumentsContract.deleteDocument(resolver,it)) Log.w("PStartSAF","Prior artifact backup not removed: $name") }
+            backup = null
             val sha = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-            val verified = context.contentResolver.openInputStream(uri)?.use { stream ->
-                val digest = MessageDigest.getInstance("SHA-256")
-                val buffer = ByteArray(8192)
-                while (true) { val n = stream.read(buffer); if (n < 0) break; digest.update(buffer, 0, n) }
-                sha == digest.digest().joinToString("") { "%02x".format(it) }
-            } == true
-            if (!verified) throw IllegalStateException("Stored artifact hash mismatch")
-            return JSONObject().put("verified", true).put("name", name).put("sha256", sha)
-        } catch (e: Exception) {
-            DocumentsContract.deleteDocument(context.contentResolver, uri)
+            return JSONObject().put("verified",true).put("replaced",existing != null).put("name",name).put("sha256",sha)
+        } catch(e: Exception) {
+            try { DocumentsContract.deleteDocument(resolver,staging) } catch (_: Exception) {}
+            backup?.let { try { DocumentsContract.renameDocument(resolver,it,name) } catch (restore: Exception) {
+                Log.e("PStartSAF","Unable to restore previous artifact $name",restore) } }
             throw e
         }
     }
