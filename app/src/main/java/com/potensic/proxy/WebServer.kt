@@ -487,6 +487,22 @@ class WebServer(
                     }
                 }
 
+                // Candidate preview with transparent missing pixels, no PLand release.
+                post("/api/pstart/analysis/opencv/normalize") {
+                    try {
+                        val body = call.receiveStream().use { it.readBytes() }
+                        val result = withContext(Dispatchers.Default) { PStartOpenCvAnalyzer.normalizedReference(body) }
+                        call.respondText(result.toString(), ContentType.Application.Json)
+                    } catch (e: Throwable) {
+                        val id = java.util.UUID.randomUUID().toString().take(8)
+                        Log.e("[PStartOpenCV] normalize failed id=$id", e)
+                        call.respondText(JSONObject().put("error", e.message ?: "normalization failed")
+                            .put("diagnosticId", id).put("stage", "normalize")
+                            .put("errorType",e.javaClass.name).toString(), ContentType.Application.Json,
+                            if (e is IllegalArgumentException) HttpStatusCode.BadRequest else HttpStatusCode.InternalServerError)
+                    }
+                }
+
                 // Analysis outputs are additive, scoped to the session and hash-verified by MediaStore.
                 post("/api/pstart/analysis/artifact") {
                     call.response.header("Access-Control-Allow-Origin", "*")

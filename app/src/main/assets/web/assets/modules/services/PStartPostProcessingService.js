@@ -1,35 +1,8 @@
-import { AndroidMediaService } from './AndroidMediaService';
 export class PStartPostProcessingService {
     static busy = false;
     static logLines = [];
     static record(level, step, image, detail) {
         this.logLines.push(JSON.stringify({ at: new Date().toISOString(), level, step, image, detail }));
-    }
-    static async sha256(bytes) {
-        if (globalThis.crypto?.subtle?.digest) {
-            try {
-                const hash = await globalThis.crypto.subtle.digest('SHA-256', bytes);
-                return Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('');
-            } catch (error) {
-                this.record('WARN', 'WEBCRYPTO_FAILED', '', String(error));
-            }
-        }
-        const response = await fetch('/api/pstart/analysis/sha256', { method: 'POST', body: bytes });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok || !/^[0-9a-f]{64}$/i.test(result.sha256 || ''))
-            throw new Error(`SHA256 Android HTTP ${response.status}: ${result.error || 'invalid response'}`);
-        return result.sha256.toLowerCase();
-    }
-    static async opencvHealth() {
-        try {
-            const response = await fetch('/api/pstart/analysis/opencv/health', { cache: 'no-store' });
-            const result = await response.json();
-            this.record(result.ready ? 'INFO' : 'ERROR', 'OPENCV_HEALTH', '', JSON.stringify(result));
-            return result;
-        } catch (e) {
-            this.record('ERROR', 'OPENCV_HEALTH', '', String(e));
-            return { ready: false, error: String(e) };
-        }
     }
     static exportLog() {
         this.download(`PStart_analysis_${Date.now()}_log.jsonl`, new Blob([this.logLines.join('\n') + '\n'], { type: 'application/x-ndjson' }));
@@ -93,41 +66,75 @@ export class PStartPostProcessingService {
             await stream.close();
         });
     }
+    /** Android SAF: the folder stays on the device; no zip or browser File System Access API required. */
     static async requestAndroidFolder() {
-        const r = await fetch('/api/pstart/saf/select', {method:'POST'});
-        if (!r.ok) throw new Error('Android SAF picker: ' + await r.text());
+        const r = await fetch('/api/pstart/saf/select', { method: 'POST' });
+        if (!r.ok)
+            throw new Error(`Android Ordnerdialog: ${await r.text()}`);
     }
     static async analyzeAndroidFolder() {
-        const status = await (await fetch('/api/pstart/saf/status', {cache:'no-store'})).json();
-        if (status.state !== 'READY') throw new Error('Bitte Ordner am Handy freigeben: '+status.state);
-        const response = await fetch('/api/pstart/saf/files', {cache:'no-store'});
-        if (!response.ok) throw new Error(await response.text());
-        const names = (await response.json()).files.sort((a,b)=>a.localeCompare(b));
-        const first = names.map(n=>n.match(/^PStart_(.+?)_(?:STEP0|REF_\d+|REF0[0-5])_/i)).find(Boolean);
-        return this.run(first?.[1] || 'offline-saf', names.map(name=>({name, load:async()=>{
-            const r=await fetch('/api/pstart/saf/image?'+new URLSearchParams({name}), {cache:'no-store'});
-            if(!r.ok) throw new Error('SAF read '+name+': '+await r.text());
-            return r.blob();
-        }})),async(name,blob)=>{
-            const r=await fetch('/api/pstart/saf/artifact?'+new URLSearchParams({name}),{method:'POST',body:blob});
-            const result=await r.json();
-            if(!r.ok || !result.verified) throw new Error('SAF write '+name+': '+(result.error||r.status));
+        const statusResponse = await fetch('/api/pstart/saf/status', { cache: 'no-store' });
+        const status = await statusResponse.json();
+        if (status.state !== 'READY')
+            throw new Error('Bitte den Ordner auf dem Android-Handy zuerst freigeben (Status: ' + status.state + ').');
+        const response = await fetch('/api/pstart/saf/files', { cache: 'no-store' });
+        if (!response.ok)
+            throw new Error('SAF-Dateiliste: ' + await response.text());
+        const listing = await response.json();
+        const names = listing.files.sort((a, b) => a.localeCompare(b));
+        const first = names.map(n => n.match(/^PStart_(.+?)_(?:STEP0|REF_\d+|REF0[0-5])_/i)).find(Boolean);
+        return this.run(first?.[1] || 'offline-saf', names.map(name => ({ name, load: async () => {
+                const r = await fetch('/api/pstart/saf/image?' + new URLSearchParams({ name }), { cache: 'no-store' });
+                if (!r.ok)
+                    throw new Error('SAF JPEG ' + name + ': ' + await r.text());
+                return r.blob();
+            } })), async (name, blob) => {
+            const r = await fetch('/api/pstart/saf/artifact?' + new URLSearchParams({ name }), { method: 'POST', body: blob });
+            const result = await r.json();
+            if (!r.ok || !result.verified)
+                throw new Error('SAF save ' + name + ': ' + (result.error || r.status));
         });
     }
     static subscribers = new Set();
     static progress = { state: 'WAITING', completed: 0, total: 0, message: '' };
     static subscribe(cb) { this.subscribers.add(cb); cb(this.progress); return () => { this.subscribers.delete(cb); }; }
     static emit(value) { this.progress = value; this.subscribers.forEach(cb => cb(value)); }
+    /** Both triggers use the same SAF-backed analysis workflow, without a PC browser picker. */
+    static async listAndroidSessions() {
+        const response = await fetch('/api/pstart/sessions', { cache: 'no-store' });
+        if (!response.ok)
+            throw new Error('Android sessions: ' + await response.text());
+        const data = await response.json();
+        return data.sessions.sort().reverse();
+    }
+    static async analyzeAndroidSession(sessionId) {
+        if (!/^[A-Za-z0-9_.-]{1,190}$/.test(sessionId) || sessionId.includes('..'))
+            throw new Error('Invalid session');
+        const response = await fetch(`/api/pstart/sessions/${encodeURIComponent(sessionId)}/images`, { cache: 'no-store' });
+        if (!response.ok)
+            throw new Error('Android session: ' + await response.text());
+        const data = await response.json();
+        return this.run(sessionId, data.files.map(name => ({ name, load: async () => {
+                const image = await fetch(`/api/pstart/sessions/${encodeURIComponent(sessionId)}/image?` + new URLSearchParams({ name }), { cache: 'no-store' });
+                if (!image.ok)
+                    throw new Error(`Android JPEG ${name}: ${await image.text()}`);
+                return image.blob();
+            } })), (name, blob) => this.saveAndroid(sessionId, name, blob));
+    }
+    static async sha256(bytes) {
+        // Always use Android SHA-256; crypto.subtle can be undefined on Android WebView over HTTP.
+        this.record('INFO', 'HASH_METHOD', '', 'ANDROID_SHA256');
+        const response = await fetch('/api/pstart/analysis/sha256', { method: 'POST', body: bytes });
+        if (!response.ok)
+            throw new Error('SHA-256 Android: ' + await response.text());
+        const data = await response.json();
+        if (!/^[a-f0-9]{64}$/.test(data.sha256))
+            throw new Error('Invalid SHA-256 response');
+        return data.sha256;
+    }
     /** Automatic mode reads only images belonging to the completed session. Never sends flight commands. */
     static async analyzeSavedSession(sessionId) {
-        const images = await AndroidMediaService.listImages('recognition');
-        const selected = images.filter(i => i.name.startsWith(`PStart_${sessionId}_`) && /\.jpe?g$/i.test(i.name) && !/_analysis_/i.test(i.name));
-        return this.run(sessionId, selected.map(i => ({ name: i.name, load: async () => {
-                const response = await fetch(AndroidMediaService.imageUrl(i.id), { cache: 'no-store' });
-                if (!response.ok)
-                    throw new Error(`JPEG HTTP ${response.status}`);
-                return response.blob();
-            } })), (name, blob) => this.saveAndroid(sessionId, name, blob));
+        return this.analyzeAndroidSession(sessionId);
     }
     /** The browser's directory selector works offline, with no filesystem permission outside the chosen files. */
     static async analyzeFolder(files) {
@@ -149,10 +156,13 @@ export class PStartPostProcessingService {
             const r = await fetch('/api/version', { cache: 'no-store' });
             const v = await r.json();
             this.record('INFO', 'BACKEND_VERSION', '', JSON.stringify(v));
-            if (!r.ok || !JSON.stringify(v).includes('0.9842')) this.record('ERROR', 'VERSION_MISMATCH', '', 'Expected backend 0.9842: ' + JSON.stringify(v));
-        } catch (e) { this.record('ERROR', 'VERSION_CHECK_FAILED', '', String(e)); }
-        this.record('INFO', 'FRONTEND_ANALYZER', '', 'embedded-js-v0.9842');
-        const opencvHealth = await this.opencvHealth();
+            if (!r.ok || !JSON.stringify(v).includes('0.9843'))
+                this.record('ERROR', 'VERSION_MISMATCH', '', 'Expected backend 0.9843: ' + JSON.stringify(v));
+        }
+        catch (e) {
+            this.record('ERROR', 'VERSION_CHECK_FAILED', '', String(e));
+        }
+        this.record('INFO', 'FRONTEND_ANALYZER', '', 'webui-ts-v0.9843');
         if (!items.length)
             this.record('WARN', 'EMPTY_INPUT', '', 'No JPEG images found');
         const refs = [];
@@ -175,7 +185,6 @@ export class PStartPostProcessingService {
                         this.record('WARN', 'DUPLICATE', item.name, ref.imageSha256);
                     }
                     seen.add(ref.imageSha256);
-                    this.record('INFO', 'HASH_METHOD', item.name, globalThis.crypto?.subtle?.digest ? 'WEBCRYPTO_OR_ANDROID_FALLBACK' : 'ANDROID_SHA256');
                     this.record('INFO', 'JPEG_CHECK', item.name, `bytes=${bytes.byteLength}; sha256=${ref.imageSha256}`);
                     const metadata = this.readXmp(bytes);
                     if (!metadata)
@@ -189,8 +198,7 @@ export class PStartPostProcessingService {
                     ref.telemetryTimestampMs = this.num(metadata?.telemetry?.timestampUnixMs ?? metadata?.telemetry?.timestamp);
                     if (ref.captureTimestampMs != null && ref.telemetryTimestampMs != null) {
                         ref.timestampDeltaMs = ref.captureTimestampMs - ref.telemetryTimestampMs;
-                        if (Math.abs(ref.timestampDeltaMs) > 1000)
-                            warnings.push(`Zeitversatz Kamera/Telemetrie ${ref.timestampDeltaMs} ms (>1000 ms)`);
+                        // Timing offsets are diagnostic only, never an image-quality warning.
                     }
                     if (ref.actualHeightM != null && ref.targetHeightM != null && Math.abs(ref.actualHeightM - ref.targetHeightM) > 1)
                         warnings.push(`Hoehenabweichung ${Math.round((ref.actualHeightM - ref.targetHeightM) * 100) / 100} m`);
@@ -202,22 +210,24 @@ export class PStartPostProcessingService {
                         warnings.push('Aufnahmezeitstempel fehlt');
                     if (ref.targetHeightM == null)
                         warnings.push('Sollhöhe fehlt');
-                    this.emit({ state: 'DETECTING_MARKER', completed: refs.length - 1, total: items.length, message: item.name });
-                    // REF00 / legacy STEP0 is metadata-only, regardless of targetHeight or zoom.
-                    const isRef00 = /(?:^|_)(?:REF00|STEP0)(?:_|\.)/i.test(item.name) || ref.targetHeightM === 0;
-                    const opticalReference = /(?:^|_)REF(?:0[1-5]|_[0-4])(?:_|\.)/i.test(item.name);
-                    if (isRef00) {
+                    // REF00 is XMP-only, including both MIN and MAX; REF01..REF05 use the same native detector.
+                    const metadataOnly = /(?:^|_)(?:STEP0|REF00)(?:_|\.)/i.test(item.name) || ref.targetHeightM === 0;
+                    const opticalReference = !metadataOnly;
+                    if (metadataOnly) {
                         ref.status = 'metadata_only';
-                        this.record('INFO', 'METADATA_ONLY_REF00', item.name, 'XMP only; optical analysis intentionally skipped');
-                    } else if (!opticalReference) {
+                        this.record('INFO', 'METADATA_ONLY', item.name, 'REF00 XMP only; optical analysis skipped');
+                    }
+                    else if (!opticalReference) {
                         warnings.push('Nicht erkannte Referenzrolle; keine optische Analyse');
                         this.record('WARN', 'UNKNOWN_ROLE', item.name, 'REF01..REF05 expected');
-                    } else {
+                    }
+                    else {
+                        this.emit({ state: 'DETECTING_MARKER', completed: refs.length - 1, total: items.length, message: item.name });
                         this.record('INFO', 'OPTICAL_ANALYSIS', item.name, `zoom=${ref.zoomRole}`);
                         await this.measure(blob, ref);
                     }
                     if (ref.timestampDeltaMs != null)
-                        this.record(Math.abs(ref.timestampDeltaMs) > 1000 ? 'WARN' : 'INFO', 'TIMESTAMP_DELTA', item.name, `${ref.timestampDeltaMs} ms`);
+                        this.record('INFO', 'TIMESTAMP_DELTA', item.name, `${ref.timestampDeltaMs} ms`);
                     this.record('INFO', 'MEASURE', item.name, `status=${ref.status}; center=${JSON.stringify(ref.centerPx)}; warnings=${warnings.join(';')}`);
                     // Do not persist image-specific results until the complete series is ranked.
                     if (save)
@@ -234,14 +244,45 @@ export class PStartPostProcessingService {
             // A single ascent is one dataset. Select its strongest eligible close image;
             // never transfer pixel positions between altitudes or zoom roles.
             const series = this.evaluateSeries(refs);
-            this.record('INFO', 'OPTICAL_SUMMARY', '', JSON.stringify({
-                eligible: refs.filter(r => /(?:^|_)REF(?:0[1-5]|_[0-4])(?:_|\.)/i.test(r.imagePath)).length,
-                min: refs.filter(r => r.zoomRole === 'MIN' && r.status !== 'metadata_only').length,
-                max: refs.filter(r => r.zoomRole === 'MAX' && r.status !== 'metadata_only').length,
-                metadataOnly: refs.filter(r => r.status === 'metadata_only').length,
-                candidates: refs.filter(r => r.status === 'candidate').length
-            }));
             this.record(series.anchorImageId ? 'INFO' : 'WARN', 'SERIES_ANCHOR', series.anchorImageId || '', JSON.stringify(series));
+            // Save a single normalized image from the strongest complete OpenCV candidate.
+            // Candidate is deliberately not promoted to verified by successful warping.
+            const ranked = pendingCopies.filter(c => c.ref.status === 'candidate' && c.ref.outerCornersPx?.length === 4)
+                .sort((a, b) => Number(a.ref.candidateAmbiguous) - Number(b.ref.candidateAmbiguous) ||
+                (b.ref.patternScore ?? 0) - (a.ref.patternScore ?? 0));
+            if (save && ranked.length) {
+                const chosen = ranked[0];
+                try {
+                    const result = await fetch('/api/pstart/analysis/opencv/normalize', {
+                        method: 'POST', body: new Blob([chosen.bytes], { type: 'image/jpeg' })
+                    });
+                    if (!result.ok)
+                        throw new Error(`OpenCV normalize HTTP ${result.status}: ${await result.text()}`);
+                    const output = await result.json();
+                    const binary = atob(output.pngBase64 || "");
+                    const pixels = Uint8Array.from(binary, c => c.charCodeAt(0));
+                    await save('reference_marker_analysis_normalized.png', new Blob([pixels], { type: 'image/png' }));
+                    delete output.pngBase64;
+                    if (typeof output.diagnosticPngBase64 === 'string') {
+                        const diagnostic = Uint8Array.from(atob(output.diagnosticPngBase64), c => c.charCodeAt(0));
+                        await save('reference_marker_analysis_diagnostic.png', new Blob([diagnostic], { type: 'image/png' }));
+                    }
+                    delete output.diagnosticPngBase64;
+                    await save('reference_marker_analysis_geometry.json', new Blob([JSON.stringify({
+                            ...output, sourceImage: chosen.name, sourceSha256: chosen.ref.imageSha256,
+                            runId, selectedBy: 'nonambiguous-first-then-pattern-score',
+                            landingReadiness: 'NOT_READY'
+                        }, null, 2)], { type: 'application/json' }));
+                    this.record('INFO', 'REFERENCE_NORMALIZED', chosen.name, JSON.stringify(output));
+                    if (output.orientationStatus !== 'orientation_candidate')
+                        this.record('WARN', 'ORIENTATION_AMBIGUOUS', chosen.name, String(output.cornerSeparation));
+                }
+                catch (e) {
+                    this.record('ERROR', 'REFERENCE_NORMALIZATION', chosen.name, String(e));
+                }
+            }
+            else
+                this.record('WARN', 'REFERENCE_NORMALIZATION', '', 'No suitable candidate or writable session folder');
             if (save) {
                 for (const copy of pendingCopies) {
                     try {
@@ -256,8 +297,10 @@ export class PStartPostProcessingService {
                     }
                 }
             }
-            const valid = refs.filter(r => r.status === 'candidate' && /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath)).length;
-            const profile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series };
+            const errors = refs.filter(r => r.status === 'error').length;
+            const valid = refs.filter(r => r.status === 'candidate').length;
+            this.record('INFO', 'OPTICAL_SUMMARY', '', JSON.stringify({ metadataOnly: refs.filter(r => r.status === 'metadata_only').length, optical: refs.filter(r => r.status !== 'metadata_only').length, candidates: valid }));
+            const profile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: errors === refs.length || !refs.length ? 'failed' : 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series };
             try {
                 localStorage.setItem('taf.pstart.analysis.latest', JSON.stringify(profile));
             }
@@ -280,7 +323,7 @@ export class PStartPostProcessingService {
             else {
                 this.record('WARN', 'READ_ONLY_FOLDER', '', 'Browser file input has no directory write permission; export manually or use writable-folder mode');
             }
-            this.emit({ state: profile.analysisStatus !== 'completed' || refs.some(r => r.warnings.length) ? 'COMPLETED_WITH_WARNINGS' : 'COMPLETED', completed: refs.length, total: items.length, message: `${valid} Kreuz-Kandidaten; keine Flugfreigabe`, profile });
+            this.emit({ state: profile.analysisStatus === 'failed' ? 'FAILED' : profile.analysisStatus !== 'completed' || errors || refs.some(r => r.warnings.length) ? 'COMPLETED_WITH_WARNINGS' : 'COMPLETED', completed: refs.length, total: items.length, message: `${refs.length - errors} erfolgreich gelesen, ${errors} Fehler; ${valid} Kreuz-Kandidaten; keine Flugfreigabe`, profile });
             return profile;
         }
         catch (e) {
@@ -373,10 +416,8 @@ export class PStartPostProcessingService {
         // Fail closed when geometry is incomplete or Android backend is not reachable.
         try {
             const result = await fetch('/api/pstart/analysis/opencv', { method: 'POST', body: blob });
-            if (!result.ok) {
-                const detail = await result.text().catch(() => '');
-                throw new Error(`OpenCV HTTP ${result.status}: ${detail.slice(0, 800)}`);
-            }
+            if (!result.ok)
+                throw new Error(`OpenCV HTTP ${result.status}: ${(await result.text()).slice(0, 800)}`);
             const geometry = await result.json();
             this.record('INFO', 'OPENCV', ref.imageId, JSON.stringify({ status: geometry.status, engine: geometry.engine, patternScore: geometry.patternScore, candidateCount: geometry.candidateCount, candidateAmbiguous: geometry.candidateAmbiguous, warnings: geometry.warnings }));
             ref.patternScore = this.num(geometry.patternScore);

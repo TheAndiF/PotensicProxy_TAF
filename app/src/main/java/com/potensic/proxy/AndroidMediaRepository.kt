@@ -212,6 +212,7 @@ class AndroidMediaRepository(
         require(Regex("[A-Za-z0-9._-]{1,180}").matches(name) && name.contains("_analysis_", true)) { "invalid analysis filename" }
         val mime = when {
             name.endsWith(".jpg", true) || name.endsWith(".jpeg", true) -> "image/jpeg"
+            name.endsWith(".png", true) -> "image/png"
             name.endsWith(".json", true) -> "application/json"
             name.endsWith(".jsonl", true) -> "application/x-ndjson"
             name.endsWith(".xmp", true) -> "application/rdf+xml"

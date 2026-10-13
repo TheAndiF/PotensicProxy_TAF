@@ -161,9 +161,9 @@ export class PStartPostProcessingService {
       const r = await fetch('/api/version', { cache: 'no-store' })
       const v = await r.json()
       this.record('INFO', 'BACKEND_VERSION', '', JSON.stringify(v))
-      if (!r.ok || !JSON.stringify(v).includes('0.9842')) this.record('ERROR', 'VERSION_MISMATCH', '', 'Expected backend 0.9842: ' + JSON.stringify(v))
+      if (!r.ok || !JSON.stringify(v).includes('0.9843')) this.record('ERROR', 'VERSION_MISMATCH', '', 'Expected backend 0.9843: ' + JSON.stringify(v))
     } catch (e) { this.record('ERROR', 'VERSION_CHECK_FAILED', '', String(e)) }
-    this.record('INFO', 'FRONTEND_ANALYZER', '', 'webui-ts-v0.9842')
+    this.record('INFO', 'FRONTEND_ANALYZER', '', 'webui-ts-v0.9843')
     if (!items.length) this.record('WARN', 'EMPTY_INPUT', '', 'No JPEG images found')
     const refs: PStartReference[] = []
     const pendingCopies: { name: string; bytes: ArrayBuffer; ref: PStartReference }[] = []
@@ -193,7 +193,7 @@ export class PStartPostProcessingService {
           ref.telemetryTimestampMs = this.num(metadata?.telemetry?.timestampUnixMs ?? metadata?.telemetry?.timestamp)
           if (ref.captureTimestampMs != null && ref.telemetryTimestampMs != null) {
             ref.timestampDeltaMs = ref.captureTimestampMs - ref.telemetryTimestampMs
-            if (Math.abs(ref.timestampDeltaMs) > 1000) warnings.push(`Zeitversatz Kamera/Telemetrie ${ref.timestampDeltaMs} ms (>1000 ms)`)
+            // Timing offsets are diagnostic only, never an image-quality warning.
           }
           if (ref.actualHeightM != null && ref.targetHeightM != null && Math.abs(ref.actualHeightM - ref.targetHeightM) > 1) warnings.push(`Hoehenabweichung ${Math.round((ref.actualHeightM - ref.targetHeightM)*100)/100} m`)
           if (p.sessionId && p.sessionId !== sessionId) warnings.push('Abweichende Sitzungskennung im XMP')
@@ -202,7 +202,7 @@ export class PStartPostProcessingService {
           if (ref.targetHeightM == null) warnings.push('Sollhöhe fehlt')
           // REF00 is XMP-only, including both MIN and MAX; REF01..REF05 use the same native detector.
           const metadataOnly = /(?:^|_)(?:STEP0|REF00)(?:_|\.)/i.test(item.name) || ref.targetHeightM === 0
-          const opticalReference = /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(item.name)
+          const opticalReference = !metadataOnly
           if (metadataOnly) {
             ref.status = 'metadata_only'
             this.record('INFO', 'METADATA_ONLY', item.name, 'REF00 XMP only; optical analysis skipped')
@@ -214,7 +214,7 @@ export class PStartPostProcessingService {
             this.record('INFO', 'OPTICAL_ANALYSIS', item.name, `zoom=${ref.zoomRole}`)
             await this.measure(blob, ref)
           }
-          if (ref.timestampDeltaMs != null) this.record(Math.abs(ref.timestampDeltaMs)>1000?'WARN':'INFO','TIMESTAMP_DELTA',item.name,`${ref.timestampDeltaMs} ms`)
+          if (ref.timestampDeltaMs != null) this.record('INFO','TIMESTAMP_DELTA',item.name,`${ref.timestampDeltaMs} ms`)
           this.record('INFO', 'MEASURE', item.name, `status=${ref.status}; center=${JSON.stringify(ref.centerPx)}; warnings=${warnings.join(';')}`)
           // Do not persist image-specific results until the complete series is ranked.
           if (save) pendingCopies.push({ name: item.name, bytes, ref })
@@ -226,6 +226,37 @@ export class PStartPostProcessingService {
       // never transfer pixel positions between altitudes or zoom roles.
       const series = this.evaluateSeries(refs)
       this.record(series.anchorImageId ? 'INFO' : 'WARN', 'SERIES_ANCHOR', series.anchorImageId || '', JSON.stringify(series))
+      // Save a single normalized image from the strongest complete OpenCV candidate.
+      // Candidate is deliberately not promoted to verified by successful warping.
+      const ranked = pendingCopies.filter(c => c.ref.status === 'candidate' && c.ref.outerCornersPx?.length === 4)
+        .sort((a,b) => Number(a.ref.candidateAmbiguous) - Number(b.ref.candidateAmbiguous) ||
+          (b.ref.patternScore ?? 0) - (a.ref.patternScore ?? 0))
+      if (save && ranked.length) {
+        const chosen = ranked[0]
+        try {
+          const result = await fetch('/api/pstart/analysis/opencv/normalize', {
+            method: 'POST', body: new Blob([chosen.bytes], { type: 'image/jpeg' }) })
+          if (!result.ok) throw new Error(`OpenCV normalize HTTP ${result.status}: ${await result.text()}`)
+          const output = await result.json() as { pngBase64?: string; [key: string]: unknown }
+          const binary = atob(output.pngBase64 || "")
+          const pixels = Uint8Array.from(binary, c => c.charCodeAt(0))
+          await save('reference_marker_analysis_normalized.png', new Blob([pixels], { type: 'image/png' }))
+          delete output.pngBase64
+          if (typeof output.diagnosticPngBase64 === 'string') {
+            const diagnostic = Uint8Array.from(atob(output.diagnosticPngBase64), c => c.charCodeAt(0))
+            await save('reference_marker_analysis_diagnostic.png', new Blob([diagnostic], { type: 'image/png' }))
+          }
+          delete output.diagnosticPngBase64
+          await save('reference_marker_analysis_geometry.json', new Blob([JSON.stringify({
+            ...output, sourceImage: chosen.name, sourceSha256: chosen.ref.imageSha256,
+            runId, selectedBy: 'nonambiguous-first-then-pattern-score',
+            landingReadiness: 'NOT_READY'
+          }, null, 2)], { type: 'application/json' }))
+          this.record('INFO','REFERENCE_NORMALIZED',chosen.name,JSON.stringify(output))
+          if (output.orientationStatus !== 'orientation_candidate')
+            this.record('WARN','ORIENTATION_AMBIGUOUS',chosen.name,String(output.cornerSeparation))
+        } catch(e) { this.record('ERROR','REFERENCE_NORMALIZATION',chosen.name,String(e)) }
+      } else this.record('WARN','REFERENCE_NORMALIZATION','', 'No suitable candidate or writable session folder')
       if (save) {
         for (const copy of pendingCopies) {
           try {
@@ -240,8 +271,8 @@ export class PStartPostProcessingService {
         }
       }
       const errors = refs.filter(r => r.status === 'error').length
-      const valid = refs.filter(r => r.status === 'candidate' && /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath)).length
-      this.record('INFO', 'OPTICAL_SUMMARY', '', JSON.stringify({ metadataOnly: refs.filter(r => r.status === 'metadata_only').length, optical: refs.filter(r => /(?:^|_)(?:REF_[0-4]|REF0[1-5])(?:_|\.)/i.test(r.imagePath)).length, candidates: valid }))
+      const valid = refs.filter(r => r.status === 'candidate').length
+      this.record('INFO', 'OPTICAL_SUMMARY', '', JSON.stringify({ metadataOnly: refs.filter(r => r.status === 'metadata_only').length, optical: refs.filter(r => r.status !== 'metadata_only').length, candidates: valid }))
       const profile: PStartProfile = { schemaVersion: '1.0', algorithmVersion: 'series-worktree-1', sessionId, analysisStatus: errors === refs.length || !refs.length ? 'failed' : 'completed', marker: { modelId: 'cross-800-v1', widthMm: 800, heightMm: 800, blackLineWidthMm: 50, targetMm: [400, 400] }, camera: { calibrationId: null, gimbalTargetDeg: -90 }, references: refs, landingReadiness: { status: 'NOT_READY', reasons: ['Geometrie ohne verifizierte Rahmenpunkte und Kamera-Kalibrierung ist nicht für automatische PLanding-Steuerung freigegeben.', ...(valid ? [] : ['Kein plausibler Kreuzmittelpunkt gefunden.'])] }, generatedAt: new Date().toISOString(), seriesAnalysis: series }
       try { localStorage.setItem('taf.pstart.analysis.latest', JSON.stringify(profile)) } catch { /* storage optional */ }
       this.record('INFO', 'COMPLETE', '', `${refs.length} images; ${valid} candidates; anchor=${series.anchorImageId || "none"}`)

@@ -1,0 +1,31 @@
+BS_PStart marker normalization and corner orientation
+
+Date: 2026-10-13
+Version: v0.9843
+Base version: v0.9842
+
+Summary:
+- Inspect all session JPEG images except REF00 metadata-only captures.
+- Detect square marker candidates using native OpenCV.
+- Normalize a selected candidate with 20 percent context margin.
+- Orient the dominant black interior corner to bottom-right, recording ambiguity.
+- Persist normalized PNG, diagnostic PNG and geometry JSON in the session folder.
+- Treat telemetry timestamp offsets as informational only.
+- Preserve PLand NOT_READY; no verified camera geometry is asserted.
+- Enable PNG artifact persistence in the existing Android analysis storage.
+
+Changed files:
+- app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/PStartOpenCvAnalyzer.kt
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- app/src/main/java/com/potensic/proxy/AndroidMediaRepository.kt
+- app/src/main/assets/web/assets/modules/services/PStartPostProcessingService.js
+- webui/src/services/PStartPostProcessingService.ts
+- webui/package.json
+
+Validation:
+- TypeScript type check: PASSED.
+- Embedded service JavaScript syntax check: PASSED.
+- Native Android compilation: NOT RUN.
+- Android OpenCV device health and JPEG recognition: NOT RUN.
+- On-device image output, corner orientation and SAF persistence: NOT RUN.
