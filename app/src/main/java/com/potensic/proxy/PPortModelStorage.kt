@@ -6,7 +6,7 @@ import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 
-/** App-private PPort cache. Only data artifacts; never issues flight commands. */
+/** SAF-backed public PPort models. Display-only assets; never issues flight commands. */
 object PPortModelStorage {
     private val names = setOf("marker_pattern.png", "marker_model.json", "marker_scale.json", "marker_quality.json", "marker_weighting.json")
     private const val PUBLIC_MODELS = "Auto/PPort"
@@ -33,6 +33,12 @@ object PPortModelStorage {
             hashes.put(name, sha256(bytes))
         }
         val model = JSONObject(String(staged.getValue("marker_model.json"), Charsets.UTF_8))
+        model.put("patternFile", "marker_pattern.png")
+        model.put("scaleFile", "marker_scale.json")
+        model.put("qualityFile", "marker_quality.json")
+        model.put("weightingFile", "marker_weighting.json")
+        staged["marker_model.json"] = model.toString(2).toByteArray(Charsets.UTF_8)
+        hashes.put("marker_model.json", sha256(staged.getValue("marker_model.json")))
         require(model.optString("status") == "CANDIDATE_UNVERIFIED") { "Unexpected model status" }
         try {
             for ((name, bytes) in staged) {
@@ -65,6 +71,11 @@ object PPortModelStorage {
             try {
                 val path = "$PUBLIC_MODELS/$folder"
                 val model = JSONObject(String(PStartSafStorage.readProjectFile(ctx,path,"marker_model.json"), Charsets.UTF_8))
+                // Older exported models may still reference *_analysis files that do not exist in PPort.
+                model.put("patternFile", "marker_pattern.png")
+                model.put("scaleFile", "marker_scale.json")
+                model.put("qualityFile", "marker_quality.json")
+                model.put("weightingFile", "marker_weighting.json")
                 val scale = JSONObject(String(PStartSafStorage.readProjectFile(ctx,path,"marker_scale.json"), Charsets.UTF_8))
                 val weighting = JSONObject(String(PStartSafStorage.readProjectFile(ctx,path,"marker_weighting.json"), Charsets.UTF_8))
                 // Treat incomplete candidate models as unavailable.

@@ -293,7 +293,7 @@ export class PStartPostProcessingService {
             try {
               const files: Record<string,string> = {}
               for (const [name,data] of [['marker_pattern.png',new Blob([pixels],{type:'image/png'})],
-                  ['marker_model.json',jsonBlob(model)],['marker_scale.json',jsonBlob(scale)],
+                  ['marker_model.json',jsonBlob({...model,patternFile:'marker_pattern.png',scaleFile:'marker_scale.json',qualityFile:'marker_quality.json',weightingFile:'marker_weighting.json'})],['marker_scale.json',jsonBlob(scale)],
                   ['marker_quality.json',jsonBlob(quality)],['marker_weighting.json',jsonBlob(weighting)]] as const) {
                 const arr = new Uint8Array(await data.arrayBuffer())
                 let raw=''; for (let i=0;i<arr.length;i+=8192) raw += String.fromCharCode(...arr.subarray(i,i+8192))

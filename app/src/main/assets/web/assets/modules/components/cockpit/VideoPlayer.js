@@ -1,6 +1,81 @@
 import { defineComponent as _defineComponent } from '../../../vendor/vue.js';
+import { createCommentVNode as _createCommentVNode, vShow as _vShow, createElementVNode as _createElementVNode, withDirectives as _withDirectives, openBlock as _openBlock, createElementBlock as _createElementBlock, unref as _unref, toDisplayString as _toDisplayString, normalizeClass as _normalizeClass, renderList as _renderList, Fragment as _Fragment, createTextVNode as _createTextVNode, normalizeStyle as _normalizeStyle } from '../../../vendor/vue.js';
+const _hoisted_1 = { class: "video-viewport" };
+const _hoisted_2 = ["src"];
+const _hoisted_3 = {
+    key: 1,
+    class: "video-placeholder"
+};
+const _hoisted_4 = { class: "placeholder-title" };
+const _hoisted_5 = { class: "placeholder-desc" };
+const _hoisted_6 = { class: "diag-checklist" };
+const _hoisted_7 = { class: "diag-item" };
+const _hoisted_8 = { class: "diag-label" };
+const _hoisted_9 = { class: "diag-item" };
+const _hoisted_10 = { class: "diag-label" };
+const _hoisted_11 = { class: "diag-item" };
+const _hoisted_12 = { class: "diag-label" };
+const _hoisted_13 = { class: "diag-item" };
+const _hoisted_14 = { class: "diag-label" };
+const _hoisted_15 = {
+    key: 0,
+    class: "diag-item"
+};
+const _hoisted_16 = { class: "diag-label" };
+const _hoisted_17 = { class: "diag-muted fe-traffic-list" };
+const _hoisted_18 = {
+    key: 1,
+    class: "diag-item"
+};
+const _hoisted_19 = { class: "diag-label" };
+const _hoisted_20 = { class: "diag-item" };
+const _hoisted_21 = { class: "diag-label" };
+const _hoisted_22 = {
+    key: 2,
+    class: "diag-item"
+};
+const _hoisted_23 = { class: "diag-label" };
+const _hoisted_24 = { class: "placeholder-actions" };
+const _hoisted_25 = {
+    key: 2,
+    class: "landing-crosshair",
+    "aria-hidden": "true"
+};
+const _hoisted_26 = {
+    key: 3,
+    class: "pport-model-overlay",
+    "aria-label": "PPort Referenzmuster, unverifiziert"
+};
+const _hoisted_27 = ["src"];
+const _hoisted_28 = { class: "pport-marker-status" };
+const _hoisted_29 = {
+    key: 4,
+    class: "video-osd"
+};
+const _hoisted_30 = { class: "osd-left" };
+const _hoisted_31 = { class: "osd-tag" };
+const _hoisted_32 = {
+    key: 0,
+    class: "osd-tag"
+};
+const _hoisted_33 = {
+    key: 1,
+    class: "osd-tag"
+};
+const _hoisted_34 = {
+    key: 2,
+    class: "osd-tag highlight-tag"
+};
+const _hoisted_35 = ["title"];
+const _hoisted_36 = {
+    key: 0,
+    class: "drawer-actions"
+};
+const _hoisted_37 = ["title"];
+const _hoisted_38 = ["title"];
 import { ref, reactive, onMounted, onUnmounted, computed } from '../../../vendor/vue.js';
 import { useDroneStore } from '../../stores/useDroneStore.js';
+import { useCameraStore } from '../../stores/useCameraStore.js';
 import { DroneControlService } from '../../services/DroneControlService.js';
 import { VideoExtractor } from '../../protocol/VideoExtractor.js';
 import { WebCodecsPlayer } from '../../video/WebCodecsPlayer.js';
@@ -11,14 +86,75 @@ const __sfc__ = /*@__PURE__*/ _defineComponent({
     props: {
         compact: { type: Boolean, required: false, default: false }
     },
-    setup(__props, { expose: __expose }) {
-        __expose();
+    setup(__props) {
         const props = __props;
         const compact = computed(() => props.compact);
         const controlsOpen = ref(false);
         const store = useDroneStore();
         const { t } = useI18n();
         const { crosshairVisible } = useLandingAssistSettings();
+        const markerOverlayEnabled = ref(true);
+        const markerOverlayUrl = ref('');
+        const markerModelId = ref('');
+        const markerOverlayStatus = ref('Kein Modell geladen');
+        const cameraForModel = useCameraStore();
+        const markerZoomRole = computed(() => (cameraForModel.zoomActual ?? cameraForModel.zoomTarget) > 1.01 ? 'MAX' : 'MIN');
+        const markerScale = ref(null);
+        const markerWeighting = ref(null);
+        const markerExpectedPx = computed(() => {
+            const h = Number(store.telemetry.altitude);
+            const group = markerScale.value?.groups?.[markerZoomRole.value];
+            if (cameraForModel.zoomActual == null || !Number.isFinite(h) || h <= 0 || !group?.heightRangeM ||
+                h < group.heightRangeM[0] || h > group.heightRangeM[1])
+                return 0;
+            const k = Number(group.kPixelMeters);
+            return Number.isFinite(k) && k > 0 ? k / h : 0;
+        });
+        // Scale is measured in source-image pixels (1280px width).
+        // Hide projection until live frame dimensions are known; never extrapolate outside fitted height range.
+        const markerFrameWidth = computed(() => Number(canvasRef.value?.width || decoderStats.width || 0));
+        const markerDisplayPx = computed(() => {
+            if (!markerFrameWidth.value || !markerExpectedPx.value)
+                return 0;
+            const containerWidth = containerRef.value?.clientWidth || 0;
+            if (!containerWidth)
+                return 0;
+            return Math.min(containerWidth, markerExpectedPx.value * containerWidth / 1280);
+        });
+        const markerPreviewPx = computed(() => markerDisplayPx.value > 0 ? markerDisplayPx.value : 160);
+        const markerOpticalPercent = computed(() => {
+            // A candidate model MUST NEVER receive verified optical weight.
+            if (markerOverlayStatus.value !== 'VERIFIED')
+                return 0;
+            const p = markerExpectedPx.value;
+            const p0 = Number(markerWeighting.value?.p0Px);
+            return p > 0 && p0 > 0 ? Math.round(100 * p * p / (p * p + p0 * p0)) : 0;
+        });
+        async function loadMarkerOverlay() {
+            try {
+                const r = await fetch('/api/pport/models/latest', { cache: 'no-store' });
+                if (!r.ok)
+                    throw new Error('HTTP ' + r.status);
+                const data = await r.json();
+                if (!data.available) {
+                    markerOverlayStatus.value = 'Kein PPort-Modell';
+                    return;
+                }
+                markerModelId.value = data.id;
+                markerScale.value = data.scale;
+                markerWeighting.value = data.weighting;
+                markerOverlayStatus.value = data.model?.status || 'UNVERIFIED';
+                markerOverlayUrl.value = 'data:image/png;base64,' + data.patternBase64;
+            }
+            catch (e) {
+                markerOverlayStatus.value = 'Ladefehler: ' + String(e);
+            }
+        }
+        async function toggleMarkerOverlay() {
+            markerOverlayEnabled.value = !markerOverlayEnabled.value;
+            if (markerOverlayEnabled.value)
+                await loadMarkerOverlay();
+        }
         const containerRef = ref(null);
         const canvasRef = ref(null);
         // Rendering Modes: 'webcodecs' (Direct H.265/H.264) | 'snapshot' (HTTP poll) | 'mjpeg' (HTTP MJPEG)
@@ -286,6 +422,8 @@ const __sfc__ = /*@__PURE__*/ _defineComponent({
                 initWebCodecs();
         }
         onMounted(async () => {
+            // PPort is loaded automatically; no flight commands or corrections are issued.
+            await loadMarkerOverlay();
             window.addEventListener('drone-profile-changed', onDroneProfileChanged);
             // 1. Initialize WebCodecs
             await initWebCodecs();
@@ -308,261 +446,217 @@ const __sfc__ = /*@__PURE__*/ _defineComponent({
             if (backendStatsTimer)
                 clearInterval(backendStatsTimer);
         });
-        const __returned__ = { props, compact, controlsOpen, store, t, crosshairVisible, containerRef, canvasRef, mode, hasFrame, resolution, fps, retryCounter, webCodecsSupported, h265Supported, h264Supported, currentDroneProfile, currentVideoTransport, atomFramesParsed, videoExtractor, get webCodecsPlayer() { return webCodecsPlayer; }, set webCodecsPlayer(v) { webCodecsPlayer = v; }, get unsubscribeExtractor() { return unsubscribeExtractor; }, set unsubscribeExtractor(v) { unsubscribeExtractor = v; }, get backendStatsTimer() { return backendStatsTimer; }, set backendStatsTimer(v) { backendStatsTimer = v; }, get isDestroyed() { return isDestroyed; }, set isDestroyed(v) { isDestroyed = v; }, feTraffic, parserStats, videoStats, decoderStats, codecSupportOk, codecSupportText, mjpegUrl, onMjpegLoad, onMjpegError, toggleNextMode, activateSelectedLiveView, requestIdr, formatRate, refreshBackendVideoStats, toggleFullscreen, initWebCodecs, get isSnapshotLoopActive() { return isSnapshotLoopActive; }, set isSnapshotLoopActive(v) { isSnapshotLoopActive = v; }, startSnapshotLoop, stopSnapshotLoop, onDroneProfileChanged };
-        Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true });
-        return __returned__;
+        return (_ctx, _cache) => {
+            return (_openBlock(), _createElementBlock("div", {
+                class: "video-container",
+                ref_key: "containerRef",
+                ref: containerRef
+            }, [
+                _createElementVNode("div", _hoisted_1, [
+                    _createCommentVNode(" High Performance WebCodecs / Canvas Video Feed "),
+                    _withDirectives(_createElementVNode("canvas", {
+                        ref_key: "canvasRef",
+                        ref: canvasRef,
+                        class: "video-feed"
+                    }, null, 512 /* NEED_PATCH */), [
+                        [_vShow, (mode.value === 'webcodecs' || mode.value === 'snapshot') && hasFrame.value]
+                    ]),
+                    _createCommentVNode(" Fallback MJPEG Stream Mode "),
+                    (mode.value === 'mjpeg')
+                        ? (_openBlock(), _createElementBlock("img", {
+                            key: 0,
+                            src: mjpegUrl.value,
+                            onLoad: onMjpegLoad,
+                            onError: onMjpegError,
+                            class: "video-feed",
+                            alt: "Live FPV"
+                        }, null, 40 /* PROPS, NEED_HYDRATION */, _hoisted_2))
+                        : _createCommentVNode("v-if", true),
+                    _createCommentVNode(" Placeholder / Waiting Screen with Diagnostics "),
+                    (!hasFrame.value)
+                        ? (_openBlock(), _createElementBlock("div", _hoisted_3, [
+                            _cache[1] || (_cache[1] = _createElementVNode("div", { class: "placeholder-icon" }, "🚁", -1 /* CACHED */)),
+                            _createElementVNode("div", _hoisted_4, _toDisplayString(_unref(t)('video.waitingTitle')), 1 /* TEXT */),
+                            _createElementVNode("div", _hoisted_5, _toDisplayString(_unref(t)('video.waitingDesc')), 1 /* TEXT */),
+                            _createCommentVNode(" Real-time Diagnostics Checklist "),
+                            _createElementVNode("div", _hoisted_6, [
+                                _createElementVNode("div", _hoisted_7, [
+                                    _createElementVNode("span", _hoisted_8, _toDisplayString(_unref(t)('video.usbPassthrough')), 1 /* TEXT */),
+                                    _createElementVNode("span", {
+                                        class: _normalizeClass(_unref(store).connection.wsConnected ? 'diag-ok' : 'diag-warn')
+                                    }, _toDisplayString(_unref(store).connection.wsConnected ? '✓ Ready' : '✗ Not Connected'), 3 /* TEXT, CLASS */)
+                                ]),
+                                _createElementVNode("div", _hoisted_9, [
+                                    _createElementVNode("span", _hoisted_10, _toDisplayString(_unref(t)('video.androidUsb')), 1 /* TEXT */),
+                                    _createElementVNode("span", {
+                                        class: _normalizeClass(_unref(store).connection.usbTransportOpen ? 'diag-ok' : 'diag-warn')
+                                    }, _toDisplayString(_unref(store).connection.usbTransportOpen ? '✓ Open' : '✗ Closed'), 3 /* TEXT, CLASS */)
+                                ]),
+                                _createElementVNode("div", _hoisted_11, [
+                                    _createElementVNode("span", _hoisted_12, _toDisplayString(_unref(t)('video.rxLink')), 1 /* TEXT */),
+                                    _createElementVNode("span", {
+                                        class: _normalizeClass(_unref(store).connection.usbConnected ? 'diag-ok' : 'diag-warn')
+                                    }, _toDisplayString(_unref(store).connection.usbConnected ? '✓ Connected (RX confirmed)' : (_unref(store).connection.usbTransportOpen ? '… Waiting for RX' : '✗ Not Connected')), 3 /* TEXT, CLASS */)
+                                ]),
+                                _createElementVNode("div", _hoisted_13, [
+                                    _createElementVNode("span", _hoisted_14, _toDisplayString(_unref(t)('video.videoExtraction')), 1 /* TEXT */),
+                                    _createElementVNode("span", {
+                                        class: _normalizeClass(videoStats.framesExtracted > 0 ? 'diag-ok' : 'diag-muted')
+                                    }, _toDisplayString(videoStats.framesExtracted) + " frames (I: " + _toDisplayString(videoStats.iFrames) + " / P: " + _toDisplayString(videoStats.pFrames) + ") " + _toDisplayString(videoStats.detectedCodec !== 'unknown' ? `[${videoStats.detectedCodec.toUpperCase()}]` : ''), 3 /* TEXT, CLASS */)
+                                ]),
+                                (feTraffic.value.length > 0)
+                                    ? (_openBlock(), _createElementBlock("div", _hoisted_15, [
+                                        _createElementVNode("span", _hoisted_16, _toDisplayString(_unref(t)('video.feTraffic')), 1 /* TEXT */),
+                                        _createElementVNode("span", _hoisted_17, [
+                                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(feTraffic.value, (item) => {
+                                                return (_openBlock(), _createElementBlock("span", {
+                                                    key: item.feType,
+                                                    class: _normalizeClass(["fe-traffic-chip", item.feType === 0x06 && item.bytesPerSecond > 0 ? 'diag-ok' : ''])
+                                                }, _toDisplayString(item.feTypeHex) + ": " + _toDisplayString(formatRate(item.bytesPerSecond)) + " / " + _toDisplayString(item.packetsPerSecond) + " pkt/s ", 3 /* TEXT, CLASS */));
+                                            }), 128 /* KEYED_FRAGMENT */))
+                                        ])
+                                    ]))
+                                    : _createCommentVNode("v-if", true),
+                                (parserStats.fePacketsParsed > 0)
+                                    ? (_openBlock(), _createElementBlock("div", _hoisted_18, [
+                                        _createElementVNode("span", _hoisted_19, _toDisplayString(_unref(t)('video.parser')), 1 /* TEXT */),
+                                        _createElementVNode("span", {
+                                            class: _normalizeClass(videoStats.framesExtracted > 0 ? 'diag-ok' : 'diag-muted')
+                                        }, [
+                                            _createTextVNode(_toDisplayString(currentDroneProfile.value) + " / " + _toDisplayString(currentVideoTransport.value) + " | FE " + _toDisplayString(parserStats.fePacketsParsed) + " ", 1 /* TEXT */),
+                                            (currentVideoTransport.value === 'w42')
+                                                ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                                    _createTextVNode(" | w42 valid " + _toDisplayString(parserStats.w42HeadersParsed) + " / invalid " + _toDisplayString(parserStats.w42InvalidHeaders), 1 /* TEXT */)
+                                                ], 64 /* STABLE_FRAGMENT */))
+                                                : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                                                    _createTextVNode(" | ATOM frames " + _toDisplayString(atomFramesParsed.value), 1 /* TEXT */)
+                                                ], 64 /* STABLE_FRAGMENT */)),
+                                            _createTextVNode(" | pending " + _toDisplayString(parserStats.videoStreamBufferBytes) + " B " + _toDisplayString(parserStats.detectedCodec !== 'unknown' ? `| ${parserStats.detectedCodec.toUpperCase()}` : ''), 1 /* TEXT */)
+                                        ], 2 /* CLASS */)
+                                    ]))
+                                    : _createCommentVNode("v-if", true),
+                                _createElementVNode("div", _hoisted_20, [
+                                    _createElementVNode("span", _hoisted_21, _toDisplayString(_unref(t)('video.webcodecs')), 1 /* TEXT */),
+                                    _createElementVNode("span", {
+                                        class: _normalizeClass(codecSupportOk.value ? 'diag-ok' : 'diag-warn')
+                                    }, _toDisplayString(codecSupportText.value), 3 /* TEXT, CLASS */)
+                                ]),
+                                (decoderStats.framesDecoded > 0 || decoderStats.droppedFrames > 0)
+                                    ? (_openBlock(), _createElementBlock("div", _hoisted_22, [
+                                        _createElementVNode("span", _hoisted_23, _toDisplayString(_unref(t)('video.decoder')), 1 /* TEXT */),
+                                        _createElementVNode("span", {
+                                            class: _normalizeClass(decoderStats.framesDecoded > 0 ? 'diag-ok' : 'diag-warn')
+                                        }, " Decoded " + _toDisplayString(decoderStats.framesDecoded) + " frames (dropped: " + _toDisplayString(decoderStats.droppedFrames) + ") ", 3 /* TEXT, CLASS */)
+                                    ]))
+                                    : _createCommentVNode("v-if", true)
+                            ]),
+                            _createElementVNode("div", _hoisted_24, [
+                                _createElementVNode("button", {
+                                    class: "taf-btn taf-btn--primary",
+                                    onClick: activateSelectedLiveView
+                                }, " ⚡ Activate Stream (" + _toDisplayString(currentDroneProfile.value) + ") ", 1 /* TEXT */),
+                                _createElementVNode("button", {
+                                    class: "taf-btn",
+                                    onClick: requestIdr
+                                }, " 🔄 Request Keyframe (IDR) "),
+                                _createElementVNode("button", {
+                                    class: "taf-btn",
+                                    onClick: toggleNextMode
+                                }, " 🔀 Switch Mode (Current: " + _toDisplayString(mode.value.toUpperCase()) + ") ", 1 /* TEXT */)
+                            ])
+                        ]))
+                        : _createCommentVNode("v-if", true),
+                    (!compact.value && _unref(crosshairVisible) && hasFrame.value)
+                        ? (_openBlock(), _createElementBlock("div", _hoisted_25, [...(_cache[2] || (_cache[2] = [
+                                _createElementVNode("span", { class: "crosshair-line crosshair-h" }, null, -1 /* CACHED */),
+                                _createElementVNode("span", { class: "crosshair-line crosshair-v" }, null, -1 /* CACHED */),
+                                _createElementVNode("span", { class: "crosshair-center" }, null, -1 /* CACHED */)
+                            ]))]))
+                        : _createCommentVNode("v-if", true),
+                    _createCommentVNode(" Display-only preview: fixed size without a usable scale; no connection to flight correction. "),
+                    (!compact.value && markerOverlayEnabled.value && hasFrame.value)
+                        ? (_openBlock(), _createElementBlock("div", _hoisted_26, [
+                            (markerOverlayUrl.value)
+                                ? (_openBlock(), _createElementBlock("img", {
+                                    key: 0,
+                                    src: markerOverlayUrl.value,
+                                    class: "pport-marker-pattern",
+                                    style: _normalizeStyle({ width: markerPreviewPx.value + 'px', height: markerPreviewPx.value + 'px' }),
+                                    alt: "Höhenabhängiges Referenzmuster"
+                                }, null, 12 /* STYLE, PROPS */, _hoisted_27))
+                                : _createCommentVNode("v-if", true),
+                            _createElementVNode("div", _hoisted_28, [
+                                _createElementVNode("div", null, "PPort " + _toDisplayString(markerModelId.value || '–') + " · " + _toDisplayString(markerOverlayStatus.value), 1 /* TEXT */),
+                                _createElementVNode("div", null, "Höhe: " + _toDisplayString(Number(_unref(store).telemetry.altitude).toFixed(1)) + " m · " + _toDisplayString(markerZoomRole.value) + " · " + _toDisplayString(markerDisplayPx.value > 0 ? markerDisplayPx.value.toFixed(0) + ' px' : 'Maßstab unbekannt – Vorschau'), 1 /* TEXT */),
+                                _createElementVNode("div", null, "Optik: " + _toDisplayString(markerOpticalPercent.value) + " % · GPS: " + _toDisplayString(100 - markerOpticalPercent.value) + " % (nur Modellanzeige)", 1 /* TEXT */),
+                                _cache[3] || (_cache[3] = _createElementVNode("div", null, "Nur Anzeige · keine Regelung", -1 /* CACHED */))
+                            ])
+                        ]))
+                        : _createCommentVNode("v-if", true),
+                    _createCommentVNode(" Transparent status overlay; controls live in the collapsible side drawer. "),
+                    (!compact.value)
+                        ? (_openBlock(), _createElementBlock("div", _hoisted_29, [
+                            _createElementVNode("div", _hoisted_30, [
+                                _createElementVNode("span", {
+                                    class: _normalizeClass(["osd-tag", hasFrame.value ? 'live' : 'waiting'])
+                                }, _toDisplayString(hasFrame.value ? '● Live Video' : '○ Waiting for Stream'), 3 /* TEXT, CLASS */),
+                                _createElementVNode("span", _hoisted_31, "Render: " + _toDisplayString(mode.value.toUpperCase()), 1 /* TEXT */),
+                                (resolution.value)
+                                    ? (_openBlock(), _createElementBlock("span", _hoisted_32, _toDisplayString(resolution.value), 1 /* TEXT */))
+                                    : _createCommentVNode("v-if", true),
+                                (fps.value > 0)
+                                    ? (_openBlock(), _createElementBlock("span", _hoisted_33, _toDisplayString(fps.value) + " FPS", 1 /* TEXT */))
+                                    : _createCommentVNode("v-if", true),
+                                (hasFrame.value && mode.value === 'webcodecs')
+                                    ? (_openBlock(), _createElementBlock("span", _hoisted_34, _toDisplayString((decoderStats.codecType || 'h265').toUpperCase()) + " HW Decode", 1 /* TEXT */))
+                                    : _createCommentVNode("v-if", true)
+                            ])
+                        ]))
+                        : _createCommentVNode("v-if", true),
+                    (!compact.value)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 5,
+                            class: _normalizeClass(["video-control-drawer", { open: controlsOpen.value }])
+                        }, [
+                            _createElementVNode("button", {
+                                class: "drawer-toggle",
+                                type: "button",
+                                title: controlsOpen.value ? 'Hide LiveView controls' : 'Show LiveView controls',
+                                onClick: _cache[0] || (_cache[0] = ($event) => (controlsOpen.value = !controlsOpen.value))
+                            }, _toDisplayString(controlsOpen.value ? '›' : '‹'), 9 /* TEXT, PROPS */, _hoisted_35),
+                            (controlsOpen.value)
+                                ? (_openBlock(), _createElementBlock("div", _hoisted_36, [
+                                    _createElementVNode("button", {
+                                        class: "osd-action-btn success",
+                                        onClick: activateSelectedLiveView
+                                    }, "⚡ Stream"),
+                                    _createElementVNode("button", {
+                                        class: "osd-action-btn",
+                                        onClick: requestIdr
+                                    }, "🔄 I-Frame"),
+                                    _createElementVNode("button", {
+                                        class: "osd-action-btn",
+                                        onClick: toggleNextMode
+                                    }, "🔀 " + _toDisplayString(mode.value.toUpperCase()), 1 /* TEXT */),
+                                    _createElementVNode("button", {
+                                        class: "osd-action-btn",
+                                        onClick: toggleMarkerOverlay,
+                                        title: markerOverlayStatus.value
+                                    }, "◫ Muster " + _toDisplayString(markerOverlayEnabled.value ? 'AN' : 'AUS'), 9 /* TEXT, PROPS */, _hoisted_37),
+                                    _createElementVNode("button", {
+                                        class: "osd-action-btn",
+                                        onClick: toggleFullscreen,
+                                        title: _unref(t)('video.fullscreenTitle')
+                                    }, "⛶ " + _toDisplayString(_unref(t)('video.fullscreen')), 9 /* TEXT, PROPS */, _hoisted_38)
+                                ]))
+                                : _createCommentVNode("v-if", true)
+                        ], 2 /* CLASS */))
+                        : _createCommentVNode("v-if", true)
+                ])
+            ], 512 /* NEED_PATCH */));
+        };
     }
 });
-import { createCommentVNode as _createCommentVNode, vShow as _vShow, createElementVNode as _createElementVNode, withDirectives as _withDirectives, openBlock as _openBlock, createElementBlock as _createElementBlock, toDisplayString as _toDisplayString, normalizeClass as _normalizeClass, renderList as _renderList, Fragment as _Fragment, createTextVNode as _createTextVNode } from "../../../vendor/vue.js";
-const _hoisted_1 = {
-    class: "video-container",
-    ref: "containerRef"
-};
-const _hoisted_2 = { class: "video-viewport" };
-const _hoisted_3 = {
-    ref: "canvasRef",
-    class: "video-feed"
-};
-const _hoisted_4 = ["src"];
-const _hoisted_5 = {
-    key: 1,
-    class: "video-placeholder"
-};
-const _hoisted_6 = { class: "placeholder-title" };
-const _hoisted_7 = { class: "placeholder-desc" };
-const _hoisted_8 = { class: "diag-checklist" };
-const _hoisted_9 = { class: "diag-item" };
-const _hoisted_10 = { class: "diag-label" };
-const _hoisted_11 = { class: "diag-item" };
-const _hoisted_12 = { class: "diag-label" };
-const _hoisted_13 = { class: "diag-item" };
-const _hoisted_14 = { class: "diag-label" };
-const _hoisted_15 = { class: "diag-item" };
-const _hoisted_16 = { class: "diag-label" };
-const _hoisted_17 = {
-    key: 0,
-    class: "diag-item"
-};
-const _hoisted_18 = { class: "diag-label" };
-const _hoisted_19 = { class: "diag-muted fe-traffic-list" };
-const _hoisted_20 = {
-    key: 1,
-    class: "diag-item"
-};
-const _hoisted_21 = { class: "diag-label" };
-const _hoisted_22 = { class: "diag-item" };
-const _hoisted_23 = { class: "diag-label" };
-const _hoisted_24 = {
-    key: 2,
-    class: "diag-item"
-};
-const _hoisted_25 = { class: "diag-label" };
-const _hoisted_26 = { class: "placeholder-actions" };
-const _hoisted_27 = {
-    key: 2,
-    class: "landing-crosshair",
-    "aria-hidden": "true"
-};
-const _hoisted_28 = {
-    key: 3,
-    class: "video-osd"
-};
-const _hoisted_29 = { class: "osd-left" };
-const _hoisted_30 = { class: "osd-tag" };
-const _hoisted_31 = {
-    key: 0,
-    class: "osd-tag"
-};
-const _hoisted_32 = {
-    key: 1,
-    class: "osd-tag"
-};
-const _hoisted_33 = {
-    key: 2,
-    class: "osd-tag highlight-tag"
-};
-const _hoisted_34 = ["title"];
-const _hoisted_35 = {
-    key: 0,
-    class: "drawer-actions"
-};
-const _hoisted_36 = ["title"];
-function render(_ctx, _cache, $props, $setup, $data, $options) {
-    return (_openBlock(), _createElementBlock("div", _hoisted_1, [
-        _createElementVNode("div", _hoisted_2, [
-            _createCommentVNode(" High Performance WebCodecs / Canvas Video Feed "),
-            _withDirectives(_createElementVNode("canvas", _hoisted_3, null, 512 /* NEED_PATCH */), [
-                [_vShow, ($setup.mode === 'webcodecs' || $setup.mode === 'snapshot') && $setup.hasFrame]
-            ]),
-            _createCommentVNode(" Fallback MJPEG Stream Mode "),
-            ($setup.mode === 'mjpeg')
-                ? (_openBlock(), _createElementBlock("img", {
-                    key: 0,
-                    src: $setup.mjpegUrl,
-                    onLoad: $setup.onMjpegLoad,
-                    onError: $setup.onMjpegError,
-                    class: "video-feed",
-                    alt: "Live FPV"
-                }, null, 40 /* PROPS, NEED_HYDRATION */, _hoisted_4))
-                : _createCommentVNode("v-if", true),
-            _createCommentVNode(" Placeholder / Waiting Screen with Diagnostics "),
-            (!$setup.hasFrame)
-                ? (_openBlock(), _createElementBlock("div", _hoisted_5, [
-                    _cache[1] || (_cache[1] = _createElementVNode("div", { class: "placeholder-icon" }, "🚁", -1 /* CACHED */)),
-                    _createElementVNode("div", _hoisted_6, _toDisplayString($setup.t('video.waitingTitle')), 1 /* TEXT */),
-                    _createElementVNode("div", _hoisted_7, _toDisplayString($setup.t('video.waitingDesc')), 1 /* TEXT */),
-                    _createCommentVNode(" Real-time Diagnostics Checklist "),
-                    _createElementVNode("div", _hoisted_8, [
-                        _createElementVNode("div", _hoisted_9, [
-                            _createElementVNode("span", _hoisted_10, _toDisplayString($setup.t('video.usbPassthrough')), 1 /* TEXT */),
-                            _createElementVNode("span", {
-                                class: _normalizeClass($setup.store.connection.wsConnected ? 'diag-ok' : 'diag-warn')
-                            }, _toDisplayString($setup.store.connection.wsConnected ? '✓ Ready' : '✗ Not Connected'), 3 /* TEXT, CLASS */)
-                        ]),
-                        _createElementVNode("div", _hoisted_11, [
-                            _createElementVNode("span", _hoisted_12, _toDisplayString($setup.t('video.androidUsb')), 1 /* TEXT */),
-                            _createElementVNode("span", {
-                                class: _normalizeClass($setup.store.connection.usbTransportOpen ? 'diag-ok' : 'diag-warn')
-                            }, _toDisplayString($setup.store.connection.usbTransportOpen ? '✓ Open' : '✗ Closed'), 3 /* TEXT, CLASS */)
-                        ]),
-                        _createElementVNode("div", _hoisted_13, [
-                            _createElementVNode("span", _hoisted_14, _toDisplayString($setup.t('video.rxLink')), 1 /* TEXT */),
-                            _createElementVNode("span", {
-                                class: _normalizeClass($setup.store.connection.usbConnected ? 'diag-ok' : 'diag-warn')
-                            }, _toDisplayString($setup.store.connection.usbConnected ? '✓ Connected (RX confirmed)' : ($setup.store.connection.usbTransportOpen ? '… Waiting for RX' : '✗ Not Connected')), 3 /* TEXT, CLASS */)
-                        ]),
-                        _createElementVNode("div", _hoisted_15, [
-                            _createElementVNode("span", _hoisted_16, _toDisplayString($setup.t('video.videoExtraction')), 1 /* TEXT */),
-                            _createElementVNode("span", {
-                                class: _normalizeClass($setup.videoStats.framesExtracted > 0 ? 'diag-ok' : 'diag-muted')
-                            }, _toDisplayString($setup.videoStats.framesExtracted) + " frames (I: " + _toDisplayString($setup.videoStats.iFrames) + " / P: " + _toDisplayString($setup.videoStats.pFrames) + ") " + _toDisplayString($setup.videoStats.detectedCodec !== 'unknown' ? `[${$setup.videoStats.detectedCodec.toUpperCase()}]` : ''), 3 /* TEXT, CLASS */)
-                        ]),
-                        ($setup.feTraffic.length > 0)
-                            ? (_openBlock(), _createElementBlock("div", _hoisted_17, [
-                                _createElementVNode("span", _hoisted_18, _toDisplayString($setup.t('video.feTraffic')), 1 /* TEXT */),
-                                _createElementVNode("span", _hoisted_19, [
-                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.feTraffic, (item) => {
-                                        return (_openBlock(), _createElementBlock("span", {
-                                            key: item.feType,
-                                            class: _normalizeClass(["fe-traffic-chip", item.feType === 0x06 && item.bytesPerSecond > 0 ? 'diag-ok' : ''])
-                                        }, _toDisplayString(item.feTypeHex) + ": " + _toDisplayString($setup.formatRate(item.bytesPerSecond)) + " / " + _toDisplayString(item.packetsPerSecond) + " pkt/s ", 3 /* TEXT, CLASS */));
-                                    }), 128 /* KEYED_FRAGMENT */))
-                                ])
-                            ]))
-                            : _createCommentVNode("v-if", true),
-                        ($setup.parserStats.fePacketsParsed > 0)
-                            ? (_openBlock(), _createElementBlock("div", _hoisted_20, [
-                                _createElementVNode("span", _hoisted_21, _toDisplayString($setup.t('video.parser')), 1 /* TEXT */),
-                                _createElementVNode("span", {
-                                    class: _normalizeClass($setup.videoStats.framesExtracted > 0 ? 'diag-ok' : 'diag-muted')
-                                }, [
-                                    _createTextVNode(_toDisplayString($setup.currentDroneProfile) + " / " + _toDisplayString($setup.currentVideoTransport) + " | FE " + _toDisplayString($setup.parserStats.fePacketsParsed) + " ", 1 /* TEXT */),
-                                    ($setup.currentVideoTransport === 'w42')
-                                        ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
-                                            _createTextVNode(" | w42 valid " + _toDisplayString($setup.parserStats.w42HeadersParsed) + " / invalid " + _toDisplayString($setup.parserStats.w42InvalidHeaders), 1 /* TEXT */)
-                                        ], 64 /* STABLE_FRAGMENT */))
-                                        : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
-                                            _createTextVNode(" | ATOM frames " + _toDisplayString($setup.atomFramesParsed), 1 /* TEXT */)
-                                        ], 64 /* STABLE_FRAGMENT */)),
-                                    _createTextVNode(" | pending " + _toDisplayString($setup.parserStats.videoStreamBufferBytes) + " B " + _toDisplayString($setup.parserStats.detectedCodec !== 'unknown' ? `| ${$setup.parserStats.detectedCodec.toUpperCase()}` : ''), 1 /* TEXT */)
-                                ], 2 /* CLASS */)
-                            ]))
-                            : _createCommentVNode("v-if", true),
-                        _createElementVNode("div", _hoisted_22, [
-                            _createElementVNode("span", _hoisted_23, _toDisplayString($setup.t('video.webcodecs')), 1 /* TEXT */),
-                            _createElementVNode("span", {
-                                class: _normalizeClass($setup.codecSupportOk ? 'diag-ok' : 'diag-warn')
-                            }, _toDisplayString($setup.codecSupportText), 3 /* TEXT, CLASS */)
-                        ]),
-                        ($setup.decoderStats.framesDecoded > 0 || $setup.decoderStats.droppedFrames > 0)
-                            ? (_openBlock(), _createElementBlock("div", _hoisted_24, [
-                                _createElementVNode("span", _hoisted_25, _toDisplayString($setup.t('video.decoder')), 1 /* TEXT */),
-                                _createElementVNode("span", {
-                                    class: _normalizeClass($setup.decoderStats.framesDecoded > 0 ? 'diag-ok' : 'diag-warn')
-                                }, " Decoded " + _toDisplayString($setup.decoderStats.framesDecoded) + " frames (dropped: " + _toDisplayString($setup.decoderStats.droppedFrames) + ") ", 3 /* TEXT, CLASS */)
-                            ]))
-                            : _createCommentVNode("v-if", true)
-                    ]),
-                    _createElementVNode("div", _hoisted_26, [
-                        _createElementVNode("button", {
-                            class: "taf-btn taf-btn--primary",
-                            onClick: $setup.activateSelectedLiveView
-                        }, " ⚡ Activate Stream (" + _toDisplayString($setup.currentDroneProfile) + ") ", 1 /* TEXT */),
-                        _createElementVNode("button", {
-                            class: "taf-btn",
-                            onClick: $setup.requestIdr
-                        }, " 🔄 Request Keyframe (IDR) "),
-                        _createElementVNode("button", {
-                            class: "taf-btn",
-                            onClick: $setup.toggleNextMode
-                        }, " 🔀 Switch Mode (Current: " + _toDisplayString($setup.mode.toUpperCase()) + ") ", 1 /* TEXT */)
-                    ])
-                ]))
-                : _createCommentVNode("v-if", true),
-            (!$setup.compact && $setup.crosshairVisible && $setup.hasFrame)
-                ? (_openBlock(), _createElementBlock("div", _hoisted_27, [...(_cache[2] || (_cache[2] = [
-                        _createElementVNode("span", { class: "crosshair-line crosshair-h" }, null, -1 /* CACHED */),
-                        _createElementVNode("span", { class: "crosshair-line crosshair-v" }, null, -1 /* CACHED */),
-                        _createElementVNode("span", { class: "crosshair-center" }, null, -1 /* CACHED */)
-                    ]))]))
-                : _createCommentVNode("v-if", true),
-            _createCommentVNode(" Transparent status overlay; controls live in the collapsible side drawer. "),
-            (!$setup.compact)
-                ? (_openBlock(), _createElementBlock("div", _hoisted_28, [
-                    _createElementVNode("div", _hoisted_29, [
-                        _createElementVNode("span", {
-                            class: _normalizeClass(["osd-tag", $setup.hasFrame ? 'live' : 'waiting'])
-                        }, _toDisplayString($setup.hasFrame ? '● Live Video' : '○ Waiting for Stream'), 3 /* TEXT, CLASS */),
-                        _createElementVNode("span", _hoisted_30, "Render: " + _toDisplayString($setup.mode.toUpperCase()), 1 /* TEXT */),
-                        ($setup.resolution)
-                            ? (_openBlock(), _createElementBlock("span", _hoisted_31, _toDisplayString($setup.resolution), 1 /* TEXT */))
-                            : _createCommentVNode("v-if", true),
-                        ($setup.fps > 0)
-                            ? (_openBlock(), _createElementBlock("span", _hoisted_32, _toDisplayString($setup.fps) + " FPS", 1 /* TEXT */))
-                            : _createCommentVNode("v-if", true),
-                        ($setup.hasFrame && $setup.mode === 'webcodecs')
-                            ? (_openBlock(), _createElementBlock("span", _hoisted_33, _toDisplayString(($setup.decoderStats.codecType || 'h265').toUpperCase()) + " HW Decode", 1 /* TEXT */))
-                            : _createCommentVNode("v-if", true)
-                    ])
-                ]))
-                : _createCommentVNode("v-if", true),
-            (!$setup.compact)
-                ? (_openBlock(), _createElementBlock("div", {
-                    key: 4,
-                    class: _normalizeClass(["video-control-drawer", { open: $setup.controlsOpen }])
-                }, [
-                    _createElementVNode("button", {
-                        class: "drawer-toggle",
-                        type: "button",
-                        title: $setup.controlsOpen ? 'Hide LiveView controls' : 'Show LiveView controls',
-                        onClick: _cache[0] || (_cache[0] = $event => ($setup.controlsOpen = !$setup.controlsOpen))
-                    }, _toDisplayString($setup.controlsOpen ? '›' : '‹'), 9 /* TEXT, PROPS */, _hoisted_34),
-                    ($setup.controlsOpen)
-                        ? (_openBlock(), _createElementBlock("div", _hoisted_35, [
-                            _createElementVNode("button", {
-                                class: "osd-action-btn success",
-                                onClick: $setup.activateSelectedLiveView
-                            }, "⚡ Stream"),
-                            _createElementVNode("button", {
-                                class: "osd-action-btn",
-                                onClick: $setup.requestIdr
-                            }, "🔄 I-Frame"),
-                            _createElementVNode("button", {
-                                class: "osd-action-btn",
-                                onClick: $setup.toggleNextMode
-                            }, "🔀 " + _toDisplayString($setup.mode.toUpperCase()), 1 /* TEXT */),
-                            _createElementVNode("button", {
-                                class: "osd-action-btn",
-                                onClick: $setup.toggleFullscreen,
-                                title: $setup.t('video.fullscreenTitle')
-                            }, "⛶ " + _toDisplayString($setup.t('video.fullscreen')), 9 /* TEXT, PROPS */, _hoisted_36)
-                        ]))
-                        : _createCommentVNode("v-if", true)
-                ], 2 /* CLASS */))
-                : _createCommentVNode("v-if", true)
-        ])
-    ], 512 /* NEED_PATCH */));
-}
+
 __sfc__.__scopeId = "data-v-af27c373";
-__sfc__.render = render;
 export default __sfc__;

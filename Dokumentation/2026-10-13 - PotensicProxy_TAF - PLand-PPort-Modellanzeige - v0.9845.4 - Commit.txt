@@ -1,0 +1,24 @@
+BS_Enable automatic PLand reference-model preview from PPort
+
+Date: 2026-10-13
+Version: v0.9845.4
+Base: v0.9845.3
+
+Changes:
+- Automatically load newest complete model from SAF-backed Auto/PPort upon cockpit video component mount.
+- Keep manual model overlay toggle, render transparent centered marker on live video.
+- Use a clearly labeled unscaled preview when valid height/zoom/frame values are unavailable.
+- Display separate optical and GPS percentages as provisional visualization; candidate model optical weight remains zero.
+- Correct the model JSON links to published PPort filenames on new publish and when reading legacy candidate models.
+- Synchronize embedded Android runtime JavaScript and stylesheet with Vue/TypeScript source.
+- Never invoke flight control or automatic landing.
+
+Changed source/runtime files:
+- webui/src/components/cockpit/VideoPlayer.vue
+- app/src/main/assets/web/assets/modules/components/cockpit/VideoPlayer.js
+- app/src/main/assets/web/assets/styles/sfc-components.css
+- webui/src/services/PStartPostProcessingService.ts
+- app/src/main/assets/web/assets/modules/services/PStartPostProcessingService.js
+- app/src/main/java/com/potensic/proxy/PPortModelStorage.kt
+
+Validation: vue-tsc --noEmit PASS; embedded JS syntax PASS; ZIP CRC PASS. Device/APK validation NOT RUN.

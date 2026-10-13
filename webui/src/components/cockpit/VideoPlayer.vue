@@ -104,14 +104,14 @@
         <span class="crosshair-center"></span>
       </div>
 
-      <!-- Display-only: no connection to DroneControlService or flight correction. -->
+      <!-- Display-only preview: fixed size without a usable scale; no connection to flight correction. -->
       <div v-if="!compact && markerOverlayEnabled && hasFrame" class="pport-model-overlay" aria-label="PPort Referenzmuster, unverifiziert">
-        <img v-if="markerOverlayUrl && markerDisplayPx > 0" :src="markerOverlayUrl" class="pport-marker-pattern"
-          :style="{width: markerDisplayPx + 'px',height: markerDisplayPx + 'px'}" alt="Höhenabhängiges Referenzmuster" />
+        <img v-if="markerOverlayUrl" :src="markerOverlayUrl" class="pport-marker-pattern"
+          :style="{width: markerPreviewPx + 'px',height: markerPreviewPx + 'px'}" alt="Höhenabhängiges Referenzmuster" />
         <div class="pport-marker-status">
           <div>PPort {{ markerModelId || '–' }} · {{ markerOverlayStatus }}</div>
-          <div>Höhe: {{ Number(store.telemetry.altitude).toFixed(1) }} m · {{ markerZoomRole }} · {{ markerExpectedPx > 0 ? markerExpectedPx.toFixed(0) : 'nicht belegbar' }} px</div>
-          <div>Optik: {{ markerOpticalPercent }} % · GPS: {{ 100 - markerOpticalPercent }} %</div>
+          <div>Höhe: {{ Number(store.telemetry.altitude).toFixed(1) }} m · {{ markerZoomRole }} · {{ markerDisplayPx > 0 ? markerDisplayPx.toFixed(0) + ' px' : 'Maßstab unbekannt – Vorschau' }}</div>
+          <div>Optik: {{ markerOpticalPercent }} % · GPS: {{ 100 - markerOpticalPercent }} % (nur Modellanzeige)</div>
           <div>Nur Anzeige · keine Regelung</div>
         </div>
       </div>
@@ -159,7 +159,7 @@ const controlsOpen = ref(false)
 const store = useDroneStore()
 const { t } = useI18n()
 const { crosshairVisible } = useLandingAssistSettings()
-const markerOverlayEnabled = ref(false)
+const markerOverlayEnabled = ref(true)
 const markerOverlayUrl = ref('')
 const markerModelId = ref('')
 const markerOverlayStatus = ref('Kein Modell geladen')
@@ -175,7 +175,16 @@ const markerExpectedPx = computed(() => {
   const k = Number(group.kPixelMeters)
   return Number.isFinite(k) && k > 0 ? k/h : 0
 })
-const markerDisplayPx = computed(() => Math.min(1200,Math.max(0,markerExpectedPx.value*1.4)))
+// Scale is measured in source-image pixels (1280px width).
+// Hide projection until live frame dimensions are known; never extrapolate outside fitted height range.
+const markerFrameWidth = computed(() => Number(canvasRef.value?.width || decoderStats.width || 0))
+const markerDisplayPx = computed(() => {
+  if (!markerFrameWidth.value || !markerExpectedPx.value) return 0
+  const containerWidth = containerRef.value?.clientWidth || 0
+  if (!containerWidth) return 0
+  return Math.min(containerWidth, markerExpectedPx.value * containerWidth / 1280)
+})
+const markerPreviewPx = computed(() => markerDisplayPx.value > 0 ? markerDisplayPx.value : 160)
 const markerOpticalPercent = computed(() => {
   // A candidate model MUST NEVER receive verified optical weight.
   if (markerOverlayStatus.value !== 'VERIFIED') return 0
@@ -183,9 +192,7 @@ const markerOpticalPercent = computed(() => {
   const p0 = Number(markerWeighting.value?.p0Px)
   return p > 0 && p0 > 0 ? Math.round(100*p*p/(p*p+p0*p0)) : 0
 })
-async function toggleMarkerOverlay() {
-  markerOverlayEnabled.value = !markerOverlayEnabled.value
-  if (!markerOverlayEnabled.value) return
+async function loadMarkerOverlay() {
   try {
     const r = await fetch('/api/pport/models/latest',{cache:'no-store'})
     if (!r.ok) throw new Error('HTTP '+r.status)
@@ -197,6 +204,10 @@ async function toggleMarkerOverlay() {
     markerOverlayStatus.value=data.model?.status || 'UNVERIFIED'
     markerOverlayUrl.value='data:image/png;base64,'+data.patternBase64
   } catch(e) { markerOverlayStatus.value='Ladefehler: '+String(e) }
+}
+async function toggleMarkerOverlay() {
+  markerOverlayEnabled.value = !markerOverlayEnabled.value
+  if (markerOverlayEnabled.value) await loadMarkerOverlay()
 }
 
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -494,6 +505,8 @@ function onDroneProfileChanged() {
 }
 
 onMounted(async () => {
+  // PPort is loaded automatically; no flight commands or corrections are issued.
+  await loadMarkerOverlay()
   window.addEventListener('drone-profile-changed', onDroneProfileChanged)
   // 1. Initialize WebCodecs
   await initWebCodecs()

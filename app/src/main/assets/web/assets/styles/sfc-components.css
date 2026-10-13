@@ -1648,3 +1648,8 @@
 .homepoint-title{margin:12px 1px 8px;font-size:10px;font-weight:700;color:var(--ui-text)}
 
 @media(max-width:760px){.hud-bar .hud-item.homepoint{display:flex!important}}
+
+/* PPort reference preview – visual guidance only; never sends control signals. */
+.pport-model-overlay[data-v-af27c373]{position:absolute;inset:0;pointer-events:none;z-index:13;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.pport-marker-pattern[data-v-af27c373]{position:absolute;object-fit:fill;opacity:.32;max-width:none;max-height:none}
+.pport-marker-status[data-v-af27c373]{position:absolute;left:8px;bottom:8px;background:rgba(12,20,24,.82);color:white;font:12px/1.5 sans-serif;padding:7px;border-radius:5px;max-width:85%}
