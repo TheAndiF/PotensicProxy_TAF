@@ -1,0 +1,20 @@
+BS_20261013 PLand display-only activation and PPort ideal reference (v0.9845.6)
+
+- Enable PLand display-only preview after successful PStart COMPLETED phase.
+- Do not dispatch any landing or drone control command through preview button.
+- Store schematic ideal reference as SVG/JSON beside measured PPort model.
+- Migrate legacy PPort model directories lazily with readback verification.
+- Rebuild embedded Android JavaScript from Vue/TypeScript source.
+- Preserve measured marker model and mark ideal asset non-verified.
+
+Changed files (10):
+- app/src/main/assets/web/assets/modules/services/PStartPostProcessingService.js
+- app/src/main/assets/web/assets/modules/stores/usePrecisionStartStore.js
+- app/src/main/assets/web/assets/modules/components/cockpit/FlightActions.js
+- app/src/main/assets/web/assets/modules/components/cockpit/VideoPlayer.js
+- app/src/main/java/com/potensic/proxy/PPortModelStorage.kt
+- webui/scripts/build-pland-hotfix-runtime.mjs
+- webui/src/services/PStartPostProcessingService.ts
+- webui/src/stores/usePrecisionStartStore.ts
+- webui/src/components/cockpit/FlightActions.vue
+- webui/src/components/cockpit/VideoPlayer.vue

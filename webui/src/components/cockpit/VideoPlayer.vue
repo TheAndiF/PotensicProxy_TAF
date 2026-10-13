@@ -158,7 +158,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { useCameraStore } from '../../stores/useCameraStore'
 import { DroneControlService } from '../../services/DroneControlService'
@@ -166,6 +166,7 @@ import { VideoExtractor, ExtractedVideoFrame } from '../../protocol/VideoExtract
 import { WebCodecsPlayer, VideoPlayerStats } from '../../video/WebCodecsPlayer'
 import { useI18n } from '../../i18n'
 import { useLandingAssistSettings } from '../../composables/useLandingAssistSettings'
+import { usePrecisionStartStore } from '../../stores/usePrecisionStartStore'
 
 const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 const compact = computed(() => props.compact)
@@ -174,11 +175,14 @@ const store = useDroneStore()
 const { t } = useI18n()
 const { crosshairVisible } = useLandingAssistSettings()
 const markerDisplayMode = ref<'off'|'measured'|'ideal'|'compare'>('off')
+const plandStart = usePrecisionStartStore()
+watch(() => plandStart.state.plandPreviewActive, active => { markerDisplayMode.value = active ? 'measured' : 'off' })
 const markerOverlayUrl = ref('')
 // Vector reference: relative normalized geometry, without a claimed physical dimension.
 // It is schematic until dimensions have been separately measured/confirmed.
 const idealMarkerSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560"><rect x="80" y="80" width="400" height="400" fill="white"/><rect x="94" y="94" width="372" height="372" fill="none" stroke="#111" stroke-width="24"/><path d="M396 396H466V466H396Z" fill="#111"/><rect x="185" y="185" width="190" height="190" fill="none" stroke="#222" stroke-width="10"/><path d="M280 222V338M222 280H338" stroke="#222" stroke-width="12"/></svg>`
-const idealMarkerUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(idealMarkerSvg)
+const pportIdealSvg = ref('')
+const idealMarkerUrl = computed(() => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(pportIdealSvg.value || idealMarkerSvg))
 const markerModelId = ref('')
 const markerOverlayStatus = ref('Kein Modell geladen')
 const cameraForModel = useCameraStore()
@@ -218,6 +222,7 @@ async function loadMarkerOverlay() {
     const data = await r.json()
     if (!data.available) { markerOverlayStatus.value='Kein PPort-Modell';return }
     markerModelId.value = data.id
+    pportIdealSvg.value = typeof data.idealSvg === 'string' && data.idealSvg.startsWith('<svg ' ) ? data.idealSvg : ''
     markerScale.value=data.scale
     markerWeighting.value=data.weighting
     markerOverlayStatus.value=data.model?.status || 'UNVERIFIED'

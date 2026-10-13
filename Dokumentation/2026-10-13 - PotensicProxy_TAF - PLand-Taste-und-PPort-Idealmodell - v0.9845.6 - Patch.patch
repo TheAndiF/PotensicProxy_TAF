@@ -1,0 +1,755 @@
+--- a/app/src/main/assets/web/assets/modules/services/PStartPostProcessingService.js
++++ b/app/src/main/assets/web/assets/modules/services/PStartPostProcessingService.js
+@@ -1,6 +1,4 @@
+ export class PStartPostProcessingService {
+-    static busy = false;
+-    static logLines = [];
+     static record(level, step, image, detail) {
+         this.logLines.push(JSON.stringify({ at: new Date().toISOString(), level, step, image, detail }));
+     }
+@@ -95,8 +93,6 @@
+                 throw new Error('SAF save ' + name + ': ' + (result.error || r.status));
+         });
+     }
+-    static subscribers = new Set();
+-    static progress = { state: 'WAITING', completed: 0, total: 0, message: '' };
+     static subscribe(cb) { this.subscribers.add(cb); cb(this.progress); return () => { this.subscribers.delete(cb); }; }
+     static emit(value) { this.progress = value; this.subscribers.forEach(cb => cb(value)); }
+     /** Both triggers use the same SAF-backed analysis workflow, without a PC browser picker. */
+@@ -304,6 +300,8 @@
+                         gpsFormula: '1-opticalWeight', p0Px: 100, qualitySource: 'LIVE_GEOMETRY_REQUIRED',
+                         qualityWhenUnverified: 0, status: 'PROVISIONAL_NOT_VALIDATED', use: 'DISPLAY_ONLY' };
+                     const jsonBlob = (data) => new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
++                    const idealSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560"><rect x="80" y="80" width="400" height="400" fill="white"/><rect x="94" y="94" width="372" height="372" fill="none" stroke="#111" stroke-width="24"/><path d="M396 396H466V466H396Z" fill="#111"/><rect x="185" y="185" width="190" height="190" fill="none" stroke="#222" stroke-width="10"/><path d="M280 222V338M222 280H338" stroke="#222" stroke-width="12"/></svg>';
++                    const idealMetadata = { schemaVersion: 1, kind: 'SCHEMATIC_IDEAL_REFERENCE', unit: 'normalized', viewBox: [0, 0, 560, 560], markerBounds: [80, 80, 400, 400], dominantBlackCorner: 'bottom-right', physicalSizeVerified: false, geometryVerified: false, source: 'PLand reference sketch', use: 'DISPLAY_ONLY', svgFile: 'marker_ideal.svg' };
+                     await save('marker_pattern_analysis.png', new Blob([pixels], { type: 'image/png' }));
+                     await save('marker_model_analysis.json', jsonBlob(model));
+                     await save('marker_scale_analysis.json', jsonBlob(scale));
+@@ -315,7 +313,8 @@
+                             const files = {};
+                             for (const [name, data] of [['marker_pattern.png', new Blob([pixels], { type: 'image/png' })],
+                                 ['marker_model.json', jsonBlob({ ...model, patternFile: 'marker_pattern.png', scaleFile: 'marker_scale.json', qualityFile: 'marker_quality.json', weightingFile: 'marker_weighting.json' })], ['marker_scale.json', jsonBlob(scale)],
+-                                ['marker_quality.json', jsonBlob(quality)], ['marker_weighting.json', jsonBlob(weighting)]]) {
++                                ['marker_quality.json', jsonBlob(quality)], ['marker_weighting.json', jsonBlob(weighting)],
++                                ['marker_ideal.svg', new Blob([idealSvg], { type: 'image/svg+xml' })], ['marker_ideal.json', jsonBlob(idealMetadata)]]) {
+                                 const arr = new Uint8Array(await data.arrayBuffer());
+                                 let raw = '';
+                                 for (let i = 0; i < arr.length; i += 8192)
+@@ -577,3 +576,7 @@
+         }
+     }
+ }
++PStartPostProcessingService.busy = false;
++PStartPostProcessingService.logLines = [];
++PStartPostProcessingService.subscribers = new Set();
++PStartPostProcessingService.progress = { state: 'WAITING', completed: 0, total: 0, message: '' };
+--- a/app/src/main/assets/web/assets/modules/stores/usePrecisionStartStore.js
++++ b/app/src/main/assets/web/assets/modules/stores/usePrecisionStartStore.js
+@@ -3,6 +3,7 @@
+ export const usePrecisionStartStore = defineStore('precision-start', () => {
+     const state = reactive({
+         active: false,
++        plandPreviewActive: false,
+         phase: 'IDLE',
+         sessionId: '',
+         status: '',
+@@ -21,6 +22,7 @@
+     const blinking = computed(() => state.active);
+     function begin(sessionId) {
+         state.active = true;
++        state.plandPreviewActive = false;
+         state.phase = 'STEP0_CHECK';
+         state.sessionId = sessionId;
+         state.status = 'Schritt 0: Voraussetzungen werden geprüft.';
+@@ -45,6 +47,7 @@
+     }
+     function abort(reason) {
+         state.active = false;
++        state.plandPreviewActive = false;
+         state.phase = 'ABORTED';
+         state.abortReason = reason;
+         state.status = `PStart abgebrochen: ${reason}`;
+--- a/app/src/main/assets/web/assets/modules/components/cockpit/FlightActions.js
++++ b/app/src/main/assets/web/assets/modules/components/cockpit/FlightActions.js
+@@ -1,21 +1,50 @@
+ import { defineComponent as _defineComponent } from '../../../vendor/vue.js';
+-import { ref } from '../../../vendor/vue.js';
++import { unref as _unref, toDisplayString as _toDisplayString, createElementVNode as _createElementVNode, normalizeClass as _normalizeClass, openBlock as _openBlock, createElementBlock as _createElementBlock, createCommentVNode as _createCommentVNode, createTextVNode as _createTextVNode, withModifiers as _withModifiers, withKeys as _withKeys } from '../../../vendor/vue.js';
++const _hoisted_1 = { class: "actions-container" };
++const _hoisted_2 = { class: "panel-title" };
++const _hoisted_3 = { class: "btn-grid" };
++const _hoisted_4 = ["disabled"];
++const _hoisted_5 = ["disabled"];
++const _hoisted_6 = ["disabled"];
++const _hoisted_7 = ["disabled", "title"];
++const _hoisted_8 = ["disabled"];
++const _hoisted_9 = {
++    key: 0,
++    class: "pstart-status"
++};
++const _hoisted_10 = {
++    class: "panel-title",
++    style: { "margin-top": "10px" }
++};
++const _hoisted_11 = { class: "btn-grid" };
++const _hoisted_12 = ["disabled", "title"];
++const _hoisted_13 = ["disabled", "title"];
++const _hoisted_14 = ["aria-label", "onKeydown"];
++const _hoisted_15 = { class: "confirm-actions" };
++import { ref, computed } from '../../../vendor/vue.js';
+ import { DroneControlService } from '../../services/DroneControlService.js';
+ import { useDroneStore } from '../../stores/useDroneStore.js';
+ import { useCameraStore } from '../../stores/useCameraStore.js';
+ import { usePrecisionStartStore } from '../../stores/usePrecisionStartStore.js';
+ import { PrecisionStartService } from '../../services/PrecisionStartService.js';
+ import { useI18n } from '../../i18n/index.js';
+-const __sfc__ = /*@__PURE__*/ _defineComponent({
++export default /*@__PURE__*/ _defineComponent({
+     __name: 'FlightActions',
+-    setup(__props, { expose: __expose }) {
+-        __expose();
++    setup(__props) {
+         const { t } = useI18n();
+         const store = useDroneStore();
+         const camera = useCameraStore();
+         const pstart = usePrecisionStartStore();
+         const { telemetry } = store;
+         const emergencyConfirmOpen = ref(false);
++        const plandCanPreview = computed(() => pstart.state.phase === 'COMPLETE' && !pstart.state.active && !telemetry.landing && !telemetry.returning);
++        const plandHint = computed(() => pstart.state.plandPreviewActive ? 'PLand-Modellanzeige ausschalten (kein Landebefehl)' : plandCanPreview.value ? 'PLand-Modellanzeige aktivieren, nur visuell' : 'Erst PStart erfolgreich abschließen; während Landung/RTH nicht verfügbar');
++        function togglePLandPreview() {
++            if (!pstart.state.plandPreviewActive && !plandCanPreview.value)
++                return;
++            pstart.state.plandPreviewActive = !pstart.state.plandPreviewActive;
++            store.addLog('INFO', `[PLand] display-only preview ${pstart.state.plandPreviewActive ? 'activated' : 'deactivated'}; no flight commands`);
++        }
+         function confirmTakeoff() {
+             if (window.confirm(t('actions.takeoffConfirm')))
+                 DroneControlService.takeoff();
+@@ -57,129 +86,109 @@
+             store.addLog('WARN', '[Emergency stop] explicitly confirmed; executing existing emergency-stop path');
+             DroneControlService.emergencyStop();
+         }
+-        const __returned__ = { t, store, camera, pstart, telemetry, emergencyConfirmOpen, confirmTakeoff, togglePStart, landOrCancel, rthOrCancel, openEmergencyConfirm, cancelEmergency, confirmEmergency, get DroneControlService() { return DroneControlService; } };
+-        Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true });
+-        return __returned__;
++        return (_ctx, _cache) => {
++            return (_openBlock(), _createElementBlock("div", _hoisted_1, [
++                _createElementVNode("div", _hoisted_2, "✈️ " + _toDisplayString(_unref(t)('actions.flight')), 1 /* TEXT */),
++                _createElementVNode("div", _hoisted_3, [
++                    _createElementVNode("button", {
++                        class: "taf-btn taf-btn--success",
++                        disabled: _unref(telemetry).flying || _unref(telemetry).takingOff || _unref(pstart).state.active,
++                        onClick: confirmTakeoff
++                    }, "🛫 " + _toDisplayString(_unref(t)('actions.takeoff')), 9 /* TEXT, PROPS */, _hoisted_4),
++                    _createElementVNode("button", {
++                        class: _normalizeClass(["taf-btn", { 'taf-btn--danger': _unref(telemetry).landing }]),
++                        disabled: _unref(pstart).state.active || (!_unref(telemetry).flying && !_unref(telemetry).landing),
++                        onClick: landOrCancel
++                    }, "🛬 " + _toDisplayString(_unref(telemetry).landing ? _unref(t)('actions.cancelLand') : _unref(t)('actions.land')), 11 /* TEXT, CLASS, PROPS */, _hoisted_5),
++                    _createElementVNode("button", {
++                        class: _normalizeClass(["taf-btn pstart-button", { 'pstart-button--active': _unref(pstart).blinking }]),
++                        disabled: !_unref(pstart).state.active && (_unref(telemetry).flying || _unref(telemetry).takingOff),
++                        onClick: togglePStart
++                    }, "🎯 " + _toDisplayString(_unref(t)('actions.pstart')), 11 /* TEXT, CLASS, PROPS */, _hoisted_6),
++                    _createElementVNode("button", {
++                        class: _normalizeClass(["taf-btn", { 'taf-btn--primary': _unref(pstart).state.plandPreviewActive }]),
++                        disabled: !plandCanPreview.value && !_unref(pstart).state.plandPreviewActive,
++                        title: plandHint.value,
++                        onClick: togglePLandPreview
++                    }, "🎯 " + _toDisplayString(_unref(pstart).state.plandPreviewActive ? 'PLand-Anzeige AUS' : 'PLand-Anzeige'), 11 /* TEXT, CLASS, PROPS */, _hoisted_7),
++                    _createElementVNode("button", {
++                        class: _normalizeClass(["taf-btn", { 'taf-btn--danger': _unref(telemetry).returning }]),
++                        disabled: _unref(pstart).state.active || (!_unref(telemetry).flying && !_unref(telemetry).returning),
++                        onClick: rthOrCancel
++                    }, "🏠 " + _toDisplayString(_unref(telemetry).returning ? _unref(t)('actions.cancelRth') : _unref(t)('actions.rth')), 11 /* TEXT, CLASS, PROPS */, _hoisted_8),
++                    _createElementVNode("button", {
++                        class: "taf-btn taf-btn--danger",
++                        onClick: openEmergencyConfirm
++                    }, "⛔ " + _toDisplayString(_unref(t)('actions.emergency')), 1 /* TEXT */)
++                ]),
++                (_unref(pstart).state.phase === 'COMPLETE')
++                    ? (_openBlock(), _createElementBlock("div", _hoisted_9, "PLand-Anzeige nach PStart verfügbar – nur Vorschau, keine automatische Landung."))
++                    : _createCommentVNode("v-if", true),
++                (_unref(pstart).state.status)
++                    ? (_openBlock(), _createElementBlock("div", {
++                        key: 1,
++                        class: _normalizeClass(["pstart-status", { 'pstart-status--error': _unref(pstart).state.phase === 'ABORTED' }])
++                    }, [
++                        _cache[4] || (_cache[4] = _createElementVNode("strong", null, "PStart:", -1 /* CACHED */)),
++                        _createTextVNode(" " + _toDisplayString(_unref(pstart).state.status), 1 /* TEXT */)
++                    ], 2 /* CLASS */))
++                    : _createCommentVNode("v-if", true),
++                _createElementVNode("div", _hoisted_10, "📷 " + _toDisplayString(_unref(t)('actions.camera')), 1 /* TEXT */),
++                _createElementVNode("div", _hoisted_11, [
++                    _createElementVNode("button", {
++                        class: "taf-btn",
++                        disabled: !_unref(camera).initialization.ready || _unref(camera).capturePending,
++                        title: _unref(camera).initialization.ready ? '' : _unref(camera).initialization.lastInitMessage,
++                        onClick: _cache[0] || (_cache[0] = ($event) => (_unref(DroneControlService).takePhoto()))
++                    }, "📸 " + _toDisplayString(_unref(camera).captureMode === 'PHOTO' ? _unref(t)('actions.photoShoot') : _unref(t)('actions.photoMode')), 9 /* TEXT, PROPS */, _hoisted_12),
++                    _createElementVNode("button", {
++                        class: _normalizeClass(["taf-btn", { 'taf-btn--danger': _unref(camera).recording }]),
++                        disabled: !_unref(camera).initialization.ready || _unref(camera).recordingPending || _unref(camera).capturePending,
++                        title: _unref(camera).initialization.ready ? '' : _unref(camera).initialization.lastInitMessage,
++                        onClick: _cache[1] || (_cache[1] = ($event) => (_unref(DroneControlService).toggleRecord()))
++                    }, "🎥 " + _toDisplayString(_unref(camera).recording ? _unref(t)('actions.recordStop') : _unref(t)('actions.recordStart')), 11 /* TEXT, CLASS, PROPS */, _hoisted_13),
++                    _createElementVNode("button", {
++                        class: "taf-btn taf-btn--primary",
++                        onClick: _cache[2] || (_cache[2] = ($event) => (_unref(DroneControlService).requestIdr()))
++                    }, "🔄 " + _toDisplayString(_unref(t)('actions.keyframe')), 1 /* TEXT */),
++                    _createElementVNode("button", {
++                        class: "taf-btn",
++                        onClick: _cache[3] || (_cache[3] = ($event) => (_unref(DroneControlService).initLiveView()))
++                    }, "📡 " + _toDisplayString(_unref(t)('actions.liveview')), 1 /* TEXT */)
++                ]),
++                (emergencyConfirmOpen.value)
++                    ? (_openBlock(), _createElementBlock("div", {
++                        key: 2,
++                        class: "confirm-backdrop",
++                        role: "presentation",
++                        onClick: _withModifiers(cancelEmergency, ["self"])
++                    }, [
++                        _createElementVNode("div", {
++                            class: "confirm-dialog",
++                            role: "dialog",
++                            "aria-modal": "true",
++                            "aria-label": _unref(t)('actions.emergencyConfirmTitle'),
++                            onKeydown: _withKeys(_withModifiers(cancelEmergency, ["prevent"]), ["esc"]),
++                            tabindex: "-1"
++                        }, [
++                            _createElementVNode("h3", null, _toDisplayString(_unref(t)('actions.emergencyConfirmTitle')), 1 /* TEXT */),
++                            _createElementVNode("p", null, _toDisplayString(_unref(t)('actions.emergencyConfirmText')), 1 /* TEXT */),
++                            _createElementVNode("div", _hoisted_15, [
++                                _createElementVNode("button", {
++                                    class: "taf-btn taf-btn--primary",
++                                    type: "button",
++                                    onClick: cancelEmergency
++                                }, _toDisplayString(_unref(t)('actions.cancel')), 1 /* TEXT */),
++                                _createElementVNode("button", {
++                                    class: "taf-btn taf-btn--danger",
++                                    type: "button",
++                                    onClick: confirmEmergency
++                                }, _toDisplayString(_unref(t)('actions.emergencyExecute')), 1 /* TEXT */)
++                            ])
++                        ], 40 /* PROPS, NEED_HYDRATION */, _hoisted_14)
++                    ]))
++                    : _createCommentVNode("v-if", true)
++            ]));
++        };
+     }
+ });
+-import { toDisplayString as _toDisplayString, createElementVNode as _createElementVNode, normalizeClass as _normalizeClass, createTextVNode as _createTextVNode, openBlock as _openBlock, createElementBlock as _createElementBlock, createCommentVNode as _createCommentVNode, withModifiers as _withModifiers, withKeys as _withKeys } from "../../../vendor/vue.js";
+-const _hoisted_1 = { class: "actions-container" };
+-const _hoisted_2 = { class: "panel-title" };
+-const _hoisted_3 = { class: "btn-grid" };
+-const _hoisted_4 = ["disabled"];
+-const _hoisted_5 = ["disabled"];
+-const _hoisted_6 = ["disabled"];
+-const _hoisted_7 = {
+-    class: "taf-btn",
+-    disabled: "",
+-    title: "Precision Landing ist in dieser Version noch nicht implementiert"
+-};
+-const _hoisted_8 = ["disabled"];
+-const _hoisted_9 = {
+-    class: "panel-title",
+-    style: { "margin-top": "10px" }
+-};
+-const _hoisted_10 = { class: "btn-grid" };
+-const _hoisted_11 = ["disabled", "title"];
+-const _hoisted_12 = ["disabled", "title"];
+-const _hoisted_13 = ["aria-label", "onKeydown"];
+-const _hoisted_14 = { class: "confirm-actions" };
+-function render(_ctx, _cache, $props, $setup, $data, $options) {
+-    return (_openBlock(), _createElementBlock("div", _hoisted_1, [
+-        _createElementVNode("div", _hoisted_2, "✈️ " + _toDisplayString($setup.t('actions.flight')), 1 /* TEXT */),
+-        _createElementVNode("div", _hoisted_3, [
+-            _createElementVNode("button", {
+-                class: "taf-btn taf-btn--success",
+-                disabled: $setup.telemetry.flying || $setup.telemetry.takingOff || $setup.pstart.state.active,
+-                onClick: $setup.confirmTakeoff
+-            }, "🛫 " + _toDisplayString($setup.t('actions.takeoff')), 9 /* TEXT, PROPS */, _hoisted_4),
+-            _createElementVNode("button", {
+-                class: _normalizeClass(["taf-btn", { 'taf-btn--danger': $setup.telemetry.landing }]),
+-                disabled: $setup.pstart.state.active || (!$setup.telemetry.flying && !$setup.telemetry.landing),
+-                onClick: $setup.landOrCancel
+-            }, "🛬 " + _toDisplayString($setup.telemetry.landing ? $setup.t('actions.cancelLand') : $setup.t('actions.land')), 11 /* TEXT, CLASS, PROPS */, _hoisted_5),
+-            _createElementVNode("button", {
+-                class: _normalizeClass(["taf-btn pstart-button", { 'pstart-button--active': $setup.pstart.blinking }]),
+-                disabled: !$setup.pstart.state.active && ($setup.telemetry.flying || $setup.telemetry.takingOff),
+-                onClick: $setup.togglePStart
+-            }, "🎯 " + _toDisplayString($setup.t('actions.pstart')), 11 /* TEXT, CLASS, PROPS */, _hoisted_6),
+-            _createElementVNode("button", _hoisted_7, "🎯 " + _toDisplayString($setup.t('actions.planding')), 1 /* TEXT */),
+-            _createElementVNode("button", {
+-                class: _normalizeClass(["taf-btn", { 'taf-btn--danger': $setup.telemetry.returning }]),
+-                disabled: $setup.pstart.state.active || (!$setup.telemetry.flying && !$setup.telemetry.returning),
+-                onClick: $setup.rthOrCancel
+-            }, "🏠 " + _toDisplayString($setup.telemetry.returning ? $setup.t('actions.cancelRth') : $setup.t('actions.rth')), 11 /* TEXT, CLASS, PROPS */, _hoisted_8),
+-            _createElementVNode("button", {
+-                class: "taf-btn taf-btn--danger",
+-                onClick: $setup.openEmergencyConfirm
+-            }, "⛔ " + _toDisplayString($setup.t('actions.emergency')), 1 /* TEXT */)
+-        ]),
+-        ($setup.pstart.state.status)
+-            ? (_openBlock(), _createElementBlock("div", {
+-                key: 0,
+-                class: _normalizeClass(["pstart-status", { 'pstart-status--error': $setup.pstart.state.phase === 'ABORTED' }])
+-            }, [
+-                _cache[4] || (_cache[4] = _createElementVNode("strong", null, "PStart:", -1 /* CACHED */)),
+-                _createTextVNode(" " + _toDisplayString($setup.pstart.state.status), 1 /* TEXT */)
+-            ], 2 /* CLASS */))
+-            : _createCommentVNode("v-if", true),
+-        _createElementVNode("div", _hoisted_9, "📷 " + _toDisplayString($setup.t('actions.camera')), 1 /* TEXT */),
+-        _createElementVNode("div", _hoisted_10, [
+-            _createElementVNode("button", {
+-                class: "taf-btn",
+-                disabled: !$setup.camera.initialization.ready || $setup.camera.capturePending,
+-                title: $setup.camera.initialization.ready ? '' : $setup.camera.initialization.lastInitMessage,
+-                onClick: _cache[0] || (_cache[0] = $event => ($setup.DroneControlService.takePhoto()))
+-            }, "📸 " + _toDisplayString($setup.camera.captureMode === 'PHOTO' ? $setup.t('actions.photoShoot') : $setup.t('actions.photoMode')), 9 /* TEXT, PROPS */, _hoisted_11),
+-            _createElementVNode("button", {
+-                class: _normalizeClass(["taf-btn", { 'taf-btn--danger': $setup.camera.recording }]),
+-                disabled: !$setup.camera.initialization.ready || $setup.camera.recordingPending || $setup.camera.capturePending,
+-                title: $setup.camera.initialization.ready ? '' : $setup.camera.initialization.lastInitMessage,
+-                onClick: _cache[1] || (_cache[1] = $event => ($setup.DroneControlService.toggleRecord()))
+-            }, "🎥 " + _toDisplayString($setup.camera.recording ? $setup.t('actions.recordStop') : $setup.t('actions.recordStart')), 11 /* TEXT, CLASS, PROPS */, _hoisted_12),
+-            _createElementVNode("button", {
+-                class: "taf-btn taf-btn--primary",
+-                onClick: _cache[2] || (_cache[2] = $event => ($setup.DroneControlService.requestIdr()))
+-            }, "🔄 " + _toDisplayString($setup.t('actions.keyframe')), 1 /* TEXT */),
+-            _createElementVNode("button", {
+-                class: "taf-btn",
+-                onClick: _cache[3] || (_cache[3] = $event => ($setup.DroneControlService.initLiveView()))
+-            }, "📡 " + _toDisplayString($setup.t('actions.liveview')), 1 /* TEXT */)
+-        ]),
+-        ($setup.emergencyConfirmOpen)
+-            ? (_openBlock(), _createElementBlock("div", {
+-                key: 1,
+-                class: "confirm-backdrop",
+-                role: "presentation",
+-                onClick: _withModifiers($setup.cancelEmergency, ["self"])
+-            }, [
+-                _createElementVNode("div", {
+-                    class: "confirm-dialog",
+-                    role: "dialog",
+-                    "aria-modal": "true",
+-                    "aria-label": $setup.t('actions.emergencyConfirmTitle'),
+-                    onKeydown: _withKeys(_withModifiers($setup.cancelEmergency, ["prevent"]), ["esc"]),
+-                    tabindex: "-1"
+-                }, [
+-                    _createElementVNode("h3", null, _toDisplayString($setup.t('actions.emergencyConfirmTitle')), 1 /* TEXT */),
+-                    _createElementVNode("p", null, _toDisplayString($setup.t('actions.emergencyConfirmText')), 1 /* TEXT */),
+-                    _createElementVNode("div", _hoisted_14, [
+-                        _createElementVNode("button", {
+-                            class: "taf-btn taf-btn--primary",
+-                            type: "button",
+-                            onClick: $setup.cancelEmergency
+-                        }, _toDisplayString($setup.t('actions.cancel')), 1 /* TEXT */),
+-                        _createElementVNode("button", {
+-                            class: "taf-btn taf-btn--danger",
+-                            type: "button",
+-                            onClick: $setup.confirmEmergency
+-                        }, _toDisplayString($setup.t('actions.emergencyExecute')), 1 /* TEXT */)
+-                    ])
+-                ], 40 /* PROPS, NEED_HYDRATION */, _hoisted_13)
+-            ]))
+-            : _createCommentVNode("v-if", true)
+-    ]));
+-}
+-__sfc__.__scopeId = "data-v-012259a9";
+-__sfc__.render = render;
+-export default __sfc__;
+--- a/app/src/main/assets/web/assets/modules/components/cockpit/VideoPlayer.js
++++ b/app/src/main/assets/web/assets/modules/components/cockpit/VideoPlayer.js
+@@ -47,36 +47,37 @@
+     "aria-label": "PLand Mustermodelle, nur Anzeige"
+ };
+ const _hoisted_27 = ["src"];
+-const _hoisted_28 = { class: "pport-marker-status" };
+-const _hoisted_29 = {
++const _hoisted_28 = ["src"];
++const _hoisted_29 = { class: "pport-marker-status" };
++const _hoisted_30 = {
+     key: 4,
+     class: "video-osd"
+ };
+-const _hoisted_30 = { class: "osd-left" };
+-const _hoisted_31 = { class: "osd-tag" };
+-const _hoisted_32 = {
++const _hoisted_31 = { class: "osd-left" };
++const _hoisted_32 = { class: "osd-tag" };
++const _hoisted_33 = {
+     key: 0,
+     class: "osd-tag"
+ };
+-const _hoisted_33 = {
++const _hoisted_34 = {
+     key: 1,
+     class: "osd-tag"
+ };
+-const _hoisted_34 = {
++const _hoisted_35 = {
+     key: 2,
+     class: "osd-tag highlight-tag"
+ };
+-const _hoisted_35 = ["title"];
+-const _hoisted_36 = {
++const _hoisted_36 = ["title"];
++const _hoisted_37 = {
+     key: 0,
+     class: "drawer-actions"
+ };
+-const _hoisted_37 = {
++const _hoisted_38 = {
+     class: "osd-action-btn",
+     for: "pland-model-mode"
+ };
+-const _hoisted_38 = ["title"];
+-import { ref, reactive, onMounted, onUnmounted, computed } from '../../../vendor/vue.js';
++const _hoisted_39 = ["title"];
++import { ref, reactive, onMounted, onUnmounted, computed, watch } from '../../../vendor/vue.js';
+ import { useDroneStore } from '../../stores/useDroneStore.js';
+ import { useCameraStore } from '../../stores/useCameraStore.js';
+ import { DroneControlService } from '../../services/DroneControlService.js';
+@@ -84,6 +85,7 @@
+ import { WebCodecsPlayer } from '../../video/WebCodecsPlayer.js';
+ import { useI18n } from '../../i18n/index.js';
+ import { useLandingAssistSettings } from '../../composables/useLandingAssistSettings.js';
++import { usePrecisionStartStore } from '../../stores/usePrecisionStartStore.js';
+ const idealMarkerSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560"><rect x="80" y="80" width="400" height="400" fill="white"/><rect x="94" y="94" width="372" height="372" fill="none" stroke="#111" stroke-width="24"/><path d="M396 396H466V466H396Z" fill="#111"/><rect x="185" y="185" width="190" height="190" fill="none" stroke="#222" stroke-width="10"/><path d="M280 222V338M222 280H338" stroke="#222" stroke-width="12"/></svg>`;
+ export default /*@__PURE__*/ _defineComponent({
+     __name: 'VideoPlayer',
+@@ -98,10 +100,13 @@
+         const { t } = useI18n();
+         const { crosshairVisible } = useLandingAssistSettings();
+         const markerDisplayMode = ref('off');
++        const plandStart = usePrecisionStartStore();
++        watch(() => plandStart.state.plandPreviewActive, active => { markerDisplayMode.value = active ? 'measured' : 'off'; });
+         const markerOverlayUrl = ref('');
+         // Vector reference: relative normalized geometry, without a claimed physical dimension.
+         // It is schematic until dimensions have been separately measured/confirmed.
+-        const idealMarkerUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(idealMarkerSvg);
++        const pportIdealSvg = ref('');
++        const idealMarkerUrl = computed(() => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(pportIdealSvg.value || idealMarkerSvg));
+         const markerModelId = ref('');
+         const markerOverlayStatus = ref('Kein Modell geladen');
+         const cameraForModel = useCameraStore();
+@@ -149,6 +154,7 @@
+                     return;
+                 }
+                 markerModelId.value = data.id;
++                pportIdealSvg.value = typeof data.idealSvg === 'string' && data.idealSvg.startsWith('<svg ') ? data.idealSvg : '';
+                 markerScale.value = data.scale;
+                 markerWeighting.value = data.weighting;
+                 markerOverlayStatus.value = data.model?.status || 'UNVERIFIED';
+@@ -591,13 +597,13 @@
+                             (markerDisplayMode.value === 'ideal' || markerDisplayMode.value === 'compare')
+                                 ? (_openBlock(), _createElementBlock("img", {
+                                     key: 1,
+-                                    src: idealMarkerUrl,
++                                    src: idealMarkerUrl.value,
+                                     class: "pport-marker-pattern",
+                                     style: _normalizeStyle({ width: markerPreviewPx.value + 'px', height: markerPreviewPx.value + 'px', opacity: markerDisplayMode.value === 'compare' ? 0.32 : 0.44, outline: markerDisplayMode.value === 'compare' ? '2px dashed #4fe3c1' : 'none' }),
+                                     alt: "Schematisches Idealmodell des Landemusters"
+-                                }, null, 4 /* STYLE */))
++                                }, null, 12 /* STYLE, PROPS */, _hoisted_28))
+                                 : _createCommentVNode("v-if", true),
+-                            _createElementVNode("div", _hoisted_28, [
++                            _createElementVNode("div", _hoisted_29, [
+                                 _createElementVNode("div", null, "PLand " + _toDisplayString(markerDisplayMode.value === 'ideal' ? 'Idealmodell (schematisch)' : markerDisplayMode.value === 'compare' ? 'PStart + Ideal (Vergleich)' : 'PStart-Modell') + " · " + _toDisplayString(markerOverlayStatus.value), 1 /* TEXT */),
+                                 _createElementVNode("div", null, "Modell " + _toDisplayString(markerModelId.value || '–') + " · " + _toDisplayString(markerScaleAvailable.value ? markerDisplayPx.value.toFixed(0) + ' px (Kalibrierbereich)' : 'Maßstab unbekannt – unmaßstäbliche Vorschau'), 1 /* TEXT */),
+                                 _createElementVNode("div", null, "Telemetriehöhe: " + _toDisplayString(Number(_unref(store).telemetry.altitude).toFixed(1)) + " m (Quelle nicht verifiziert)", 1 /* TEXT */),
+@@ -608,20 +614,20 @@
+                         : _createCommentVNode("v-if", true),
+                     _createCommentVNode(" Transparent status overlay; controls live in the collapsible side drawer. "),
+                     (!compact.value)
+-                        ? (_openBlock(), _createElementBlock("div", _hoisted_29, [
+-                            _createElementVNode("div", _hoisted_30, [
++                        ? (_openBlock(), _createElementBlock("div", _hoisted_30, [
++                            _createElementVNode("div", _hoisted_31, [
+                                 _createElementVNode("span", {
+                                     class: _normalizeClass(["osd-tag", hasFrame.value ? 'live' : 'waiting'])
+                                 }, _toDisplayString(hasFrame.value ? '● Live Video' : '○ Waiting for Stream'), 3 /* TEXT, CLASS */),
+-                                _createElementVNode("span", _hoisted_31, "Render: " + _toDisplayString(mode.value.toUpperCase()), 1 /* TEXT */),
++                                _createElementVNode("span", _hoisted_32, "Render: " + _toDisplayString(mode.value.toUpperCase()), 1 /* TEXT */),
+                                 (resolution.value)
+-                                    ? (_openBlock(), _createElementBlock("span", _hoisted_32, _toDisplayString(resolution.value), 1 /* TEXT */))
++                                    ? (_openBlock(), _createElementBlock("span", _hoisted_33, _toDisplayString(resolution.value), 1 /* TEXT */))
+                                     : _createCommentVNode("v-if", true),
+                                 (fps.value > 0)
+-                                    ? (_openBlock(), _createElementBlock("span", _hoisted_33, _toDisplayString(fps.value) + " FPS", 1 /* TEXT */))
++                                    ? (_openBlock(), _createElementBlock("span", _hoisted_34, _toDisplayString(fps.value) + " FPS", 1 /* TEXT */))
+                                     : _createCommentVNode("v-if", true),
+                                 (hasFrame.value && mode.value === 'webcodecs')
+-                                    ? (_openBlock(), _createElementBlock("span", _hoisted_34, _toDisplayString((decoderStats.codecType || 'h265').toUpperCase()) + " HW Decode", 1 /* TEXT */))
++                                    ? (_openBlock(), _createElementBlock("span", _hoisted_35, _toDisplayString((decoderStats.codecType || 'h265').toUpperCase()) + " HW Decode", 1 /* TEXT */))
+                                     : _createCommentVNode("v-if", true)
+                             ])
+                         ]))
+@@ -636,9 +642,9 @@
+                                 type: "button",
+                                 title: controlsOpen.value ? 'Hide LiveView controls' : 'Show LiveView controls',
+                                 onClick: _cache[0] || (_cache[0] = ($event) => (controlsOpen.value = !controlsOpen.value))
+-                            }, _toDisplayString(controlsOpen.value ? '›' : '‹'), 9 /* TEXT, PROPS */, _hoisted_35),
++                            }, _toDisplayString(controlsOpen.value ? '›' : '‹'), 9 /* TEXT, PROPS */, _hoisted_36),
+                             (controlsOpen.value)
+-                                ? (_openBlock(), _createElementBlock("div", _hoisted_36, [
++                                ? (_openBlock(), _createElementBlock("div", _hoisted_37, [
+                                     _createElementVNode("button", {
+                                         class: "osd-action-btn success",
+                                         onClick: activateSelectedLiveView
+@@ -651,7 +657,7 @@
+                                         class: "osd-action-btn",
+                                         onClick: toggleNextMode
+                                     }, "🔀 " + _toDisplayString(mode.value.toUpperCase()), 1 /* TEXT */),
+-                                    _createElementVNode("label", _hoisted_37, [
++                                    _createElementVNode("label", _hoisted_38, [
+                                         _cache[6] || (_cache[6] = _createTextVNode("◫ Muster ", -1 /* CACHED */)),
+                                         _withDirectives(_createElementVNode("select", {
+                                             id: "pland-model-mode",
+@@ -670,7 +676,7 @@
+                                         class: "osd-action-btn",
+                                         onClick: toggleFullscreen,
+                                         title: _unref(t)('video.fullscreenTitle')
+-                                    }, "⛶ " + _toDisplayString(_unref(t)('video.fullscreen')), 9 /* TEXT, PROPS */, _hoisted_38)
++                                    }, "⛶ " + _toDisplayString(_unref(t)('video.fullscreen')), 9 /* TEXT, PROPS */, _hoisted_39)
+                                 ]))
+                                 : _createCommentVNode("v-if", true)
+                         ], 2 /* CLASS */))
+--- a/app/src/main/java/com/potensic/proxy/PPortModelStorage.kt
++++ b/app/src/main/java/com/potensic/proxy/PPortModelStorage.kt
+@@ -8,8 +8,15 @@
+ 
+ /** SAF-backed public PPort models. Display-only assets; never issues flight commands. */
+ object PPortModelStorage {
+-    private val names = setOf("marker_pattern.png", "marker_model.json", "marker_scale.json", "marker_quality.json", "marker_weighting.json")
++    private val names = setOf("marker_pattern.png", "marker_model.json", "marker_scale.json", "marker_quality.json", "marker_weighting.json", "marker_ideal.svg", "marker_ideal.json")
+     private const val PUBLIC_MODELS = "Auto/PPort"
++    private val idealSvgTemplate = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560"><rect x="80" y="80" width="400" height="400" fill="white"/><rect x="94" y="94" width="372" height="372" fill="none" stroke="#111" stroke-width="24"/><path d="M396 396H466V466H396Z" fill="#111"/><rect x="185" y="185" width="190" height="190" fill="none" stroke="#222" stroke-width="10"/><path d="M280 222V338M222 280H338" stroke="#222" stroke-width="12"/></svg>"""
++    private val idealMetadataTemplate = JSONObject().put("schemaVersion",1).put("kind","SCHEMATIC_IDEAL_REFERENCE")
++        .put("unit","normalized").put("viewBox",org.json.JSONArray(listOf(0,0,560,560)))
++        .put("markerBounds",org.json.JSONArray(listOf(80,80,400,400)))
++        .put("dominantBlackCorner","bottom-right").put("physicalSizeVerified",false)
++        .put("geometryVerified",false).put("source","PLand reference sketch")
++        .put("use","DISPLAY_ONLY").put("svgFile","marker_ideal.svg")
+     private fun validId(id: String) = id.matches(Regex("[A-Za-z0-9_-]{1,120}"))
+     private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256")
+         .digest(bytes).joinToString("") { "%02x".format(it) }
+@@ -39,10 +46,13 @@
+         model.put("weightingFile", "marker_weighting.json")
+         staged["marker_model.json"] = model.toString(2).toByteArray(Charsets.UTF_8)
+         hashes.put("marker_model.json", sha256(staged.getValue("marker_model.json")))
++        val ideal = JSONObject(String(staged.getValue("marker_ideal.json"), Charsets.UTF_8))
++        require(ideal.optString("kind") == "SCHEMATIC_IDEAL_REFERENCE" && !ideal.optBoolean("physicalSizeVerified")) { "Ideal geometry must be labeled schematic" }
++        require(String(staged.getValue("marker_ideal.svg"), Charsets.UTF_8).startsWith("<svg ")) { "Invalid ideal SVG" }
+         require(model.optString("status") == "CANDIDATE_UNVERIFIED") { "Unexpected model status" }
+         try {
+             for ((name, bytes) in staged) {
+-                val mime = if (name.endsWith(".png")) "image/png" else "application/json"
++                val mime = if (name.endsWith(".png")) "image/png" else if (name.endsWith(".svg")) "image/svg+xml" else "application/json"
+                 val saved = PStartSafStorage.putFile(ctx, relativeDir, name, mime, bytes)
+                 check(saved.optBoolean("verified")) { "PPort write not verified: $name" }
+                 val read = PStartSafStorage.readProjectFile(ctx, relativeDir, name)
+@@ -52,7 +62,7 @@
+         } catch (e: Exception) {
+             // Roll back previously existing model assets when the provider permits it.
+             for ((name, bytes) in oldBytes) try {
+-                val mime = if (name.endsWith(".png")) "image/png" else "application/json"
++                val mime = if (name.endsWith(".png")) "image/png" else if (name.endsWith(".svg")) "image/svg+xml" else "application/json"
+                 PStartSafStorage.putFile(ctx, relativeDir, name, mime, bytes)
+             } catch (rollback: Exception) {
+                 android.util.Log.e("PPortModels", "Rollback failed: $relativeDir/$name", rollback)
+@@ -81,9 +91,32 @@
+                 // Treat incomplete candidate models as unavailable.
+                 PStartSafStorage.readProjectFile(ctx,path,"marker_quality.json")
+                 val png = PStartSafStorage.readProjectFile(ctx,path,"marker_pattern.png")
++                // Upgrade older PPort sessions lazily; measured model assets are untouched.
++                val idealSvg = try {
++                    val current = String(PStartSafStorage.readProjectFile(ctx,path,"marker_ideal.svg"), Charsets.UTF_8)
++                    PStartSafStorage.readProjectFile(ctx,path,"marker_ideal.json")
++                    current
++                } catch (_: Exception) {
++                    try {
++                        for ((name, bytes, mime) in listOf(
++                            Triple("marker_ideal.svg", idealSvgTemplate.toByteArray(Charsets.UTF_8), "image/svg+xml"),
++                            Triple("marker_ideal.json", idealMetadataTemplate.toString(2).toByteArray(Charsets.UTF_8), "application/json")
++                        )) {
++                            val result = PStartSafStorage.putFile(ctx,path,name,mime,bytes)
++                            check(result.optBoolean("verified")) { "Ideal-model save not verified: $name" }
++                            check(sha256(PStartSafStorage.readProjectFile(ctx,path,name)) == sha256(bytes)) { "Ideal-model readback mismatch: $name" }
++                        }
++                        android.util.Log.i("PPortModels", "Generated schematic ideal model for $path")
++                        idealSvgTemplate
++                    } catch (e: Exception) {
++                        android.util.Log.w("PPortModels", "Unable to write ideal references for $path", e)
++                        ""
++                    }
++                }
+                 return JSONObject().put("available",true).put("id",folder)
+                     .put("model",model).put("scale",scale).put("weighting",weighting)
+                     .put("patternBase64",Base64.encodeToString(png,Base64.NO_WRAP))
++                    .put("idealSvg",idealSvg)
+             } catch (e: Exception) { android.util.Log.w("PPortModels", "Skipping incomplete $folder", e) }
+         }
+         return JSONObject().put("available",false)
+--- a/webui/scripts/build-pland-hotfix-runtime.mjs
++++ b/webui/scripts/build-pland-hotfix-runtime.mjs
+@@ -0,0 +1,29 @@
++import fs from 'node:fs';
++import {parse, compileScript} from '@vue/compiler-sfc';
++import ts from 'typescript';
++const base='../app/src/main/assets/web/assets/modules/';
++const mapping = new Map([
++  ['vue','../../../vendor/vue.js'],
++  ['../../stores/useDroneStore','../../stores/useDroneStore.js'],
++  ['../../stores/useCameraStore','../../stores/useCameraStore.js'],
++  ['../../stores/usePrecisionStartStore','../../stores/usePrecisionStartStore.js'],
++  ['../../services/DroneControlService','../../services/DroneControlService.js'],
++  ['../../services/PrecisionStartService','../../services/PrecisionStartService.js'],
++  ['../../protocol/VideoExtractor','../../protocol/VideoExtractor.js'],
++  ['../../video/WebCodecsPlayer','../../video/WebCodecsPlayer.js'],
++  ['../../i18n','../../i18n/index.js'],
++  ['../../composables/useLandingAssistSettings','../../composables/useLandingAssistSettings.js'],
++]);
++for(const name of ['FlightActions','VideoPlayer']){
++  const file=`src/components/cockpit/${name}.vue`;
++  const {descriptor}=parse(fs.readFileSync(file,'utf8'),{filename:file});
++  const compiled=compileScript(descriptor,{id:'pland-pport-9845-6',inlineTemplate:true});
++  let code=ts.transpileModule(compiled.content,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2020}}).outputText;
++  code=code.replace(/from (['"])([^'"]+)\1/g,(all,q,from)=>`from '${mapping.get(from) ?? from}'`);
++  if(/from ['"](?:vue|\.\.\/\.\.\/(?!.*\.js))/.test(code)) throw Error(`Unmapped import in ${file}`);
++  fs.writeFileSync(`${base}components/cockpit/${name}.js`,code);
++  console.log('rebuilt',name,code.length);
++}
++const service='src/services/PStartPostProcessingService.ts';
++let code=ts.transpileModule(fs.readFileSync(service,'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2020}}).outputText;
++fs.writeFileSync(`${base}services/PStartPostProcessingService.js`,code);
+--- a/webui/src/services/PStartPostProcessingService.ts
++++ b/webui/src/services/PStartPostProcessingService.ts
+@@ -283,6 +283,8 @@
+             gpsFormula:'1-opticalWeight',p0Px:100,qualitySource:'LIVE_GEOMETRY_REQUIRED',
+             qualityWhenUnverified:0,status:'PROVISIONAL_NOT_VALIDATED',use:'DISPLAY_ONLY'}
+           const jsonBlob = (data:unknown)=>new Blob([JSON.stringify(data,null,2)],{type:'application/json'})
++          const idealSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560"><rect x="80" y="80" width="400" height="400" fill="white"/><rect x="94" y="94" width="372" height="372" fill="none" stroke="#111" stroke-width="24"/><path d="M396 396H466V466H396Z" fill="#111"/><rect x="185" y="185" width="190" height="190" fill="none" stroke="#222" stroke-width="10"/><path d="M280 222V338M222 280H338" stroke="#222" stroke-width="12"/></svg>'
++          const idealMetadata = {schemaVersion:1,kind:'SCHEMATIC_IDEAL_REFERENCE',unit:'normalized',viewBox:[0,0,560,560],markerBounds:[80,80,400,400],dominantBlackCorner:'bottom-right',physicalSizeVerified:false,geometryVerified:false,source:'PLand reference sketch',use:'DISPLAY_ONLY',svgFile:'marker_ideal.svg'}
+           await save('marker_pattern_analysis.png',new Blob([pixels],{type:'image/png'}))
+           await save('marker_model_analysis.json',jsonBlob(model))
+           await save('marker_scale_analysis.json',jsonBlob(scale))
+@@ -294,7 +296,8 @@
+               const files: Record<string,string> = {}
+               for (const [name,data] of [['marker_pattern.png',new Blob([pixels],{type:'image/png'})],
+                   ['marker_model.json',jsonBlob({...model,patternFile:'marker_pattern.png',scaleFile:'marker_scale.json',qualityFile:'marker_quality.json',weightingFile:'marker_weighting.json'})],['marker_scale.json',jsonBlob(scale)],
+-                  ['marker_quality.json',jsonBlob(quality)],['marker_weighting.json',jsonBlob(weighting)]] as const) {
++                  ['marker_quality.json',jsonBlob(quality)],['marker_weighting.json',jsonBlob(weighting)],
++                  ['marker_ideal.svg',new Blob([idealSvg],{type:'image/svg+xml'})],['marker_ideal.json',jsonBlob(idealMetadata)]] as const) {
+                 const arr = new Uint8Array(await data.arrayBuffer())
+                 let raw=''; for (let i=0;i<arr.length;i+=8192) raw += String.fromCharCode(...arr.subarray(i,i+8192))
+                 files[name]=btoa(raw)
+--- a/webui/src/stores/usePrecisionStartStore.ts
++++ b/webui/src/stores/usePrecisionStartStore.ts
+@@ -17,6 +17,7 @@
+ export const usePrecisionStartStore = defineStore('precision-start', () => {
+   const state = reactive({
+     active: false,
++    plandPreviewActive: false,
+     phase: 'IDLE' as PrecisionStartPhase,
+     sessionId: '',
+     status: '',
+@@ -37,6 +38,7 @@
+ 
+   function begin(sessionId: string) {
+     state.active = true
++    state.plandPreviewActive = false
+     state.phase = 'STEP0_CHECK'
+     state.sessionId = sessionId
+     state.status = 'Schritt 0: Voraussetzungen werden geprüft.'
+@@ -63,6 +65,7 @@
+ 
+   function abort(reason: string) {
+     state.active = false
++    state.plandPreviewActive = false
+     state.phase = 'ABORTED'
+     state.abortReason = reason
+     state.status = `PStart abgebrochen: ${reason}`
+--- a/webui/src/components/cockpit/FlightActions.vue
++++ b/webui/src/components/cockpit/FlightActions.vue
+@@ -5,10 +5,11 @@
+       <button class="taf-btn taf-btn--success" :disabled="telemetry.flying || telemetry.takingOff || pstart.state.active" @click="confirmTakeoff">🛫 {{ t('actions.takeoff') }}</button>
+       <button class="taf-btn" :class="{ 'taf-btn--danger': telemetry.landing }" :disabled="pstart.state.active || (!telemetry.flying && !telemetry.landing)" @click="landOrCancel">🛬 {{ telemetry.landing ? t('actions.cancelLand') : t('actions.land') }}</button>
+       <button class="taf-btn pstart-button" :class="{ 'pstart-button--active': pstart.blinking }" :disabled="!pstart.state.active && (telemetry.flying || telemetry.takingOff)" @click="togglePStart">🎯 {{ t('actions.pstart') }}</button>
+-      <button class="taf-btn" disabled title="Precision Landing ist in dieser Version noch nicht implementiert">🎯 {{ t('actions.planding') }}</button>
++      <button class="taf-btn" :class="{ 'taf-btn--primary': pstart.state.plandPreviewActive }" :disabled="!plandCanPreview && !pstart.state.plandPreviewActive" :title="plandHint" @click="togglePLandPreview">🎯 {{ pstart.state.plandPreviewActive ? 'PLand-Anzeige AUS' : 'PLand-Anzeige' }}</button>
+       <button class="taf-btn" :class="{ 'taf-btn--danger': telemetry.returning }" :disabled="pstart.state.active || (!telemetry.flying && !telemetry.returning)" @click="rthOrCancel">🏠 {{ telemetry.returning ? t('actions.cancelRth') : t('actions.rth') }}</button>
+       <button class="taf-btn taf-btn--danger" @click="openEmergencyConfirm">⛔ {{ t('actions.emergency') }}</button>
+     </div>
++    <div v-if="pstart.state.phase === 'COMPLETE'" class="pstart-status">PLand-Anzeige nach PStart verfügbar – nur Vorschau, keine automatische Landung.</div>
+     <div v-if="pstart.state.status" class="pstart-status" :class="{ 'pstart-status--error': pstart.state.phase === 'ABORTED' }">
+       <strong>PStart:</strong> {{ pstart.state.status }}
+     </div>
+@@ -35,7 +36,7 @@
+ </template>
+ 
+ <script setup lang="ts">
+-import { ref } from 'vue'
++import { ref, computed } from 'vue'
+ import { DroneControlService } from '../../services/DroneControlService'
+ import { useDroneStore } from '../../stores/useDroneStore'
+ import { useCameraStore } from '../../stores/useCameraStore'
+@@ -48,6 +49,13 @@
+ const pstart = usePrecisionStartStore()
+ const { telemetry } = store
+ const emergencyConfirmOpen = ref(false)
++const plandCanPreview = computed(() => pstart.state.phase === 'COMPLETE' && !pstart.state.active && !telemetry.landing && !telemetry.returning)
++const plandHint = computed(() => pstart.state.plandPreviewActive ? 'PLand-Modellanzeige ausschalten (kein Landebefehl)' : plandCanPreview.value ? 'PLand-Modellanzeige aktivieren, nur visuell' : 'Erst PStart erfolgreich abschließen; während Landung/RTH nicht verfügbar')
++function togglePLandPreview() {
++  if (!pstart.state.plandPreviewActive && !plandCanPreview.value) return
++  pstart.state.plandPreviewActive = !pstart.state.plandPreviewActive
++  store.addLog('INFO', `[PLand] display-only preview ${pstart.state.plandPreviewActive ? 'activated' : 'deactivated'}; no flight commands`)
++}
+ 
+ function confirmTakeoff() {
+   if (window.confirm(t('actions.takeoffConfirm'))) DroneControlService.takeoff()
+--- a/webui/src/components/cockpit/VideoPlayer.vue
++++ b/webui/src/components/cockpit/VideoPlayer.vue
+@@ -158,7 +158,7 @@
+ </template>
+ 
+ <script setup lang="ts">
+-import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
++import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
+ import { useDroneStore } from '../../stores/useDroneStore'
+ import { useCameraStore } from '../../stores/useCameraStore'
+ import { DroneControlService } from '../../services/DroneControlService'
+@@ -166,6 +166,7 @@
+ import { WebCodecsPlayer, VideoPlayerStats } from '../../video/WebCodecsPlayer'
+ import { useI18n } from '../../i18n'
+ import { useLandingAssistSettings } from '../../composables/useLandingAssistSettings'
++import { usePrecisionStartStore } from '../../stores/usePrecisionStartStore'
+ 
+ const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
+ const compact = computed(() => props.compact)
+@@ -174,11 +175,14 @@
+ const { t } = useI18n()
+ const { crosshairVisible } = useLandingAssistSettings()
+ const markerDisplayMode = ref<'off'|'measured'|'ideal'|'compare'>('off')
++const plandStart = usePrecisionStartStore()
++watch(() => plandStart.state.plandPreviewActive, active => { markerDisplayMode.value = active ? 'measured' : 'off' })
+ const markerOverlayUrl = ref('')
+ // Vector reference: relative normalized geometry, without a claimed physical dimension.
+ // It is schematic until dimensions have been separately measured/confirmed.
+ const idealMarkerSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560"><rect x="80" y="80" width="400" height="400" fill="white"/><rect x="94" y="94" width="372" height="372" fill="none" stroke="#111" stroke-width="24"/><path d="M396 396H466V466H396Z" fill="#111"/><rect x="185" y="185" width="190" height="190" fill="none" stroke="#222" stroke-width="10"/><path d="M280 222V338M222 280H338" stroke="#222" stroke-width="12"/></svg>`
+-const idealMarkerUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(idealMarkerSvg)
++const pportIdealSvg = ref('')
++const idealMarkerUrl = computed(() => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(pportIdealSvg.value || idealMarkerSvg))
+ const markerModelId = ref('')
+ const markerOverlayStatus = ref('Kein Modell geladen')
+ const cameraForModel = useCameraStore()
+@@ -218,6 +222,7 @@
+     const data = await r.json()
+     if (!data.available) { markerOverlayStatus.value='Kein PPort-Modell';return }
+     markerModelId.value = data.id
++    pportIdealSvg.value = typeof data.idealSvg === 'string' && data.idealSvg.startsWith('<svg ' ) ? data.idealSvg : ''
+     markerScale.value=data.scale
+     markerWeighting.value=data.weighting
+     markerOverlayStatus.value=data.model?.status || 'UNVERIFIED'

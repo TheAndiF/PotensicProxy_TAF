@@ -283,6 +283,8 @@ export class PStartPostProcessingService {
             gpsFormula:'1-opticalWeight',p0Px:100,qualitySource:'LIVE_GEOMETRY_REQUIRED',
             qualityWhenUnverified:0,status:'PROVISIONAL_NOT_VALIDATED',use:'DISPLAY_ONLY'}
           const jsonBlob = (data:unknown)=>new Blob([JSON.stringify(data,null,2)],{type:'application/json'})
+          const idealSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560"><rect x="80" y="80" width="400" height="400" fill="white"/><rect x="94" y="94" width="372" height="372" fill="none" stroke="#111" stroke-width="24"/><path d="M396 396H466V466H396Z" fill="#111"/><rect x="185" y="185" width="190" height="190" fill="none" stroke="#222" stroke-width="10"/><path d="M280 222V338M222 280H338" stroke="#222" stroke-width="12"/></svg>'
+          const idealMetadata = {schemaVersion:1,kind:'SCHEMATIC_IDEAL_REFERENCE',unit:'normalized',viewBox:[0,0,560,560],markerBounds:[80,80,400,400],dominantBlackCorner:'bottom-right',physicalSizeVerified:false,geometryVerified:false,source:'PLand reference sketch',use:'DISPLAY_ONLY',svgFile:'marker_ideal.svg'}
           await save('marker_pattern_analysis.png',new Blob([pixels],{type:'image/png'}))
           await save('marker_model_analysis.json',jsonBlob(model))
           await save('marker_scale_analysis.json',jsonBlob(scale))
@@ -294,7 +296,8 @@ export class PStartPostProcessingService {
               const files: Record<string,string> = {}
               for (const [name,data] of [['marker_pattern.png',new Blob([pixels],{type:'image/png'})],
                   ['marker_model.json',jsonBlob({...model,patternFile:'marker_pattern.png',scaleFile:'marker_scale.json',qualityFile:'marker_quality.json',weightingFile:'marker_weighting.json'})],['marker_scale.json',jsonBlob(scale)],
-                  ['marker_quality.json',jsonBlob(quality)],['marker_weighting.json',jsonBlob(weighting)]] as const) {
+                  ['marker_quality.json',jsonBlob(quality)],['marker_weighting.json',jsonBlob(weighting)],
+                  ['marker_ideal.svg',new Blob([idealSvg],{type:'image/svg+xml'})],['marker_ideal.json',jsonBlob(idealMetadata)]] as const) {
                 const arr = new Uint8Array(await data.arrayBuffer())
                 let raw=''; for (let i=0;i<arr.length;i+=8192) raw += String.fromCharCode(...arr.subarray(i,i+8192))
                 files[name]=btoa(raw)

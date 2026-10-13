@@ -5,10 +5,11 @@
       <button class="taf-btn taf-btn--success" :disabled="telemetry.flying || telemetry.takingOff || pstart.state.active" @click="confirmTakeoff">🛫 {{ t('actions.takeoff') }}</button>
       <button class="taf-btn" :class="{ 'taf-btn--danger': telemetry.landing }" :disabled="pstart.state.active || (!telemetry.flying && !telemetry.landing)" @click="landOrCancel">🛬 {{ telemetry.landing ? t('actions.cancelLand') : t('actions.land') }}</button>
       <button class="taf-btn pstart-button" :class="{ 'pstart-button--active': pstart.blinking }" :disabled="!pstart.state.active && (telemetry.flying || telemetry.takingOff)" @click="togglePStart">🎯 {{ t('actions.pstart') }}</button>
-      <button class="taf-btn" disabled title="Precision Landing ist in dieser Version noch nicht implementiert">🎯 {{ t('actions.planding') }}</button>
+      <button class="taf-btn" :class="{ 'taf-btn--primary': pstart.state.plandPreviewActive }" :disabled="!plandCanPreview && !pstart.state.plandPreviewActive" :title="plandHint" @click="togglePLandPreview">🎯 {{ pstart.state.plandPreviewActive ? 'PLand-Anzeige AUS' : 'PLand-Anzeige' }}</button>
       <button class="taf-btn" :class="{ 'taf-btn--danger': telemetry.returning }" :disabled="pstart.state.active || (!telemetry.flying && !telemetry.returning)" @click="rthOrCancel">🏠 {{ telemetry.returning ? t('actions.cancelRth') : t('actions.rth') }}</button>
       <button class="taf-btn taf-btn--danger" @click="openEmergencyConfirm">⛔ {{ t('actions.emergency') }}</button>
     </div>
+    <div v-if="pstart.state.phase === 'COMPLETE'" class="pstart-status">PLand-Anzeige nach PStart verfügbar – nur Vorschau, keine automatische Landung.</div>
     <div v-if="pstart.state.status" class="pstart-status" :class="{ 'pstart-status--error': pstart.state.phase === 'ABORTED' }">
       <strong>PStart:</strong> {{ pstart.state.status }}
     </div>
@@ -35,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { DroneControlService } from '../../services/DroneControlService'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { useCameraStore } from '../../stores/useCameraStore'
@@ -48,6 +49,13 @@ const camera = useCameraStore()
 const pstart = usePrecisionStartStore()
 const { telemetry } = store
 const emergencyConfirmOpen = ref(false)
+const plandCanPreview = computed(() => pstart.state.phase === 'COMPLETE' && !pstart.state.active && !telemetry.landing && !telemetry.returning)
+const plandHint = computed(() => pstart.state.plandPreviewActive ? 'PLand-Modellanzeige ausschalten (kein Landebefehl)' : plandCanPreview.value ? 'PLand-Modellanzeige aktivieren, nur visuell' : 'Erst PStart erfolgreich abschließen; während Landung/RTH nicht verfügbar')
+function togglePLandPreview() {
+  if (!pstart.state.plandPreviewActive && !plandCanPreview.value) return
+  pstart.state.plandPreviewActive = !pstart.state.plandPreviewActive
+  store.addLog('INFO', `[PLand] display-only preview ${pstart.state.plandPreviewActive ? 'activated' : 'deactivated'}; no flight commands`)
+}
 
 function confirmTakeoff() {
   if (window.confirm(t('actions.takeoffConfirm'))) DroneControlService.takeoff()

@@ -3,6 +3,7 @@ import { computed, reactive } from '../../vendor/vue.js';
 export const usePrecisionStartStore = defineStore('precision-start', () => {
     const state = reactive({
         active: false,
+        plandPreviewActive: false,
         phase: 'IDLE',
         sessionId: '',
         status: '',
@@ -21,6 +22,7 @@ export const usePrecisionStartStore = defineStore('precision-start', () => {
     const blinking = computed(() => state.active);
     function begin(sessionId) {
         state.active = true;
+        state.plandPreviewActive = false;
         state.phase = 'STEP0_CHECK';
         state.sessionId = sessionId;
         state.status = 'Schritt 0: Voraussetzungen werden geprüft.';
@@ -45,6 +47,7 @@ export const usePrecisionStartStore = defineStore('precision-start', () => {
     }
     function abort(reason) {
         state.active = false;
+        state.plandPreviewActive = false;
         state.phase = 'ABORTED';
         state.abortReason = reason;
         state.status = `PStart abgebrochen: ${reason}`;

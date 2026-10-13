@@ -47,36 +47,37 @@ const _hoisted_26 = {
     "aria-label": "PLand Mustermodelle, nur Anzeige"
 };
 const _hoisted_27 = ["src"];
-const _hoisted_28 = { class: "pport-marker-status" };
-const _hoisted_29 = {
+const _hoisted_28 = ["src"];
+const _hoisted_29 = { class: "pport-marker-status" };
+const _hoisted_30 = {
     key: 4,
     class: "video-osd"
 };
-const _hoisted_30 = { class: "osd-left" };
-const _hoisted_31 = { class: "osd-tag" };
-const _hoisted_32 = {
-    key: 0,
-    class: "osd-tag"
-};
+const _hoisted_31 = { class: "osd-left" };
+const _hoisted_32 = { class: "osd-tag" };
 const _hoisted_33 = {
-    key: 1,
+    key: 0,
     class: "osd-tag"
 };
 const _hoisted_34 = {
+    key: 1,
+    class: "osd-tag"
+};
+const _hoisted_35 = {
     key: 2,
     class: "osd-tag highlight-tag"
 };
-const _hoisted_35 = ["title"];
-const _hoisted_36 = {
+const _hoisted_36 = ["title"];
+const _hoisted_37 = {
     key: 0,
     class: "drawer-actions"
 };
-const _hoisted_37 = {
+const _hoisted_38 = {
     class: "osd-action-btn",
     for: "pland-model-mode"
 };
-const _hoisted_38 = ["title"];
-import { ref, reactive, onMounted, onUnmounted, computed } from '../../../vendor/vue.js';
+const _hoisted_39 = ["title"];
+import { ref, reactive, onMounted, onUnmounted, computed, watch } from '../../../vendor/vue.js';
 import { useDroneStore } from '../../stores/useDroneStore.js';
 import { useCameraStore } from '../../stores/useCameraStore.js';
 import { DroneControlService } from '../../services/DroneControlService.js';
@@ -84,6 +85,7 @@ import { VideoExtractor } from '../../protocol/VideoExtractor.js';
 import { WebCodecsPlayer } from '../../video/WebCodecsPlayer.js';
 import { useI18n } from '../../i18n/index.js';
 import { useLandingAssistSettings } from '../../composables/useLandingAssistSettings.js';
+import { usePrecisionStartStore } from '../../stores/usePrecisionStartStore.js';
 const idealMarkerSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560"><rect x="80" y="80" width="400" height="400" fill="white"/><rect x="94" y="94" width="372" height="372" fill="none" stroke="#111" stroke-width="24"/><path d="M396 396H466V466H396Z" fill="#111"/><rect x="185" y="185" width="190" height="190" fill="none" stroke="#222" stroke-width="10"/><path d="M280 222V338M222 280H338" stroke="#222" stroke-width="12"/></svg>`;
 export default /*@__PURE__*/ _defineComponent({
     __name: 'VideoPlayer',
@@ -98,10 +100,13 @@ export default /*@__PURE__*/ _defineComponent({
         const { t } = useI18n();
         const { crosshairVisible } = useLandingAssistSettings();
         const markerDisplayMode = ref('off');
+        const plandStart = usePrecisionStartStore();
+        watch(() => plandStart.state.plandPreviewActive, active => { markerDisplayMode.value = active ? 'measured' : 'off'; });
         const markerOverlayUrl = ref('');
         // Vector reference: relative normalized geometry, without a claimed physical dimension.
         // It is schematic until dimensions have been separately measured/confirmed.
-        const idealMarkerUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(idealMarkerSvg);
+        const pportIdealSvg = ref('');
+        const idealMarkerUrl = computed(() => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(pportIdealSvg.value || idealMarkerSvg));
         const markerModelId = ref('');
         const markerOverlayStatus = ref('Kein Modell geladen');
         const cameraForModel = useCameraStore();
@@ -149,6 +154,7 @@ export default /*@__PURE__*/ _defineComponent({
                     return;
                 }
                 markerModelId.value = data.id;
+                pportIdealSvg.value = typeof data.idealSvg === 'string' && data.idealSvg.startsWith('<svg ') ? data.idealSvg : '';
                 markerScale.value = data.scale;
                 markerWeighting.value = data.weighting;
                 markerOverlayStatus.value = data.model?.status || 'UNVERIFIED';
@@ -591,13 +597,13 @@ export default /*@__PURE__*/ _defineComponent({
                             (markerDisplayMode.value === 'ideal' || markerDisplayMode.value === 'compare')
                                 ? (_openBlock(), _createElementBlock("img", {
                                     key: 1,
-                                    src: idealMarkerUrl,
+                                    src: idealMarkerUrl.value,
                                     class: "pport-marker-pattern",
                                     style: _normalizeStyle({ width: markerPreviewPx.value + 'px', height: markerPreviewPx.value + 'px', opacity: markerDisplayMode.value === 'compare' ? 0.32 : 0.44, outline: markerDisplayMode.value === 'compare' ? '2px dashed #4fe3c1' : 'none' }),
                                     alt: "Schematisches Idealmodell des Landemusters"
-                                }, null, 4 /* STYLE */))
+                                }, null, 12 /* STYLE, PROPS */, _hoisted_28))
                                 : _createCommentVNode("v-if", true),
-                            _createElementVNode("div", _hoisted_28, [
+                            _createElementVNode("div", _hoisted_29, [
                                 _createElementVNode("div", null, "PLand " + _toDisplayString(markerDisplayMode.value === 'ideal' ? 'Idealmodell (schematisch)' : markerDisplayMode.value === 'compare' ? 'PStart + Ideal (Vergleich)' : 'PStart-Modell') + " · " + _toDisplayString(markerOverlayStatus.value), 1 /* TEXT */),
                                 _createElementVNode("div", null, "Modell " + _toDisplayString(markerModelId.value || '–') + " · " + _toDisplayString(markerScaleAvailable.value ? markerDisplayPx.value.toFixed(0) + ' px (Kalibrierbereich)' : 'Maßstab unbekannt – unmaßstäbliche Vorschau'), 1 /* TEXT */),
                                 _createElementVNode("div", null, "Telemetriehöhe: " + _toDisplayString(Number(_unref(store).telemetry.altitude).toFixed(1)) + " m (Quelle nicht verifiziert)", 1 /* TEXT */),
@@ -608,20 +614,20 @@ export default /*@__PURE__*/ _defineComponent({
                         : _createCommentVNode("v-if", true),
                     _createCommentVNode(" Transparent status overlay; controls live in the collapsible side drawer. "),
                     (!compact.value)
-                        ? (_openBlock(), _createElementBlock("div", _hoisted_29, [
-                            _createElementVNode("div", _hoisted_30, [
+                        ? (_openBlock(), _createElementBlock("div", _hoisted_30, [
+                            _createElementVNode("div", _hoisted_31, [
                                 _createElementVNode("span", {
                                     class: _normalizeClass(["osd-tag", hasFrame.value ? 'live' : 'waiting'])
                                 }, _toDisplayString(hasFrame.value ? '● Live Video' : '○ Waiting for Stream'), 3 /* TEXT, CLASS */),
-                                _createElementVNode("span", _hoisted_31, "Render: " + _toDisplayString(mode.value.toUpperCase()), 1 /* TEXT */),
+                                _createElementVNode("span", _hoisted_32, "Render: " + _toDisplayString(mode.value.toUpperCase()), 1 /* TEXT */),
                                 (resolution.value)
-                                    ? (_openBlock(), _createElementBlock("span", _hoisted_32, _toDisplayString(resolution.value), 1 /* TEXT */))
+                                    ? (_openBlock(), _createElementBlock("span", _hoisted_33, _toDisplayString(resolution.value), 1 /* TEXT */))
                                     : _createCommentVNode("v-if", true),
                                 (fps.value > 0)
-                                    ? (_openBlock(), _createElementBlock("span", _hoisted_33, _toDisplayString(fps.value) + " FPS", 1 /* TEXT */))
+                                    ? (_openBlock(), _createElementBlock("span", _hoisted_34, _toDisplayString(fps.value) + " FPS", 1 /* TEXT */))
                                     : _createCommentVNode("v-if", true),
                                 (hasFrame.value && mode.value === 'webcodecs')
-                                    ? (_openBlock(), _createElementBlock("span", _hoisted_34, _toDisplayString((decoderStats.codecType || 'h265').toUpperCase()) + " HW Decode", 1 /* TEXT */))
+                                    ? (_openBlock(), _createElementBlock("span", _hoisted_35, _toDisplayString((decoderStats.codecType || 'h265').toUpperCase()) + " HW Decode", 1 /* TEXT */))
                                     : _createCommentVNode("v-if", true)
                             ])
                         ]))
@@ -636,9 +642,9 @@ export default /*@__PURE__*/ _defineComponent({
                                 type: "button",
                                 title: controlsOpen.value ? 'Hide LiveView controls' : 'Show LiveView controls',
                                 onClick: _cache[0] || (_cache[0] = ($event) => (controlsOpen.value = !controlsOpen.value))
-                            }, _toDisplayString(controlsOpen.value ? '›' : '‹'), 9 /* TEXT, PROPS */, _hoisted_35),
+                            }, _toDisplayString(controlsOpen.value ? '›' : '‹'), 9 /* TEXT, PROPS */, _hoisted_36),
                             (controlsOpen.value)
-                                ? (_openBlock(), _createElementBlock("div", _hoisted_36, [
+                                ? (_openBlock(), _createElementBlock("div", _hoisted_37, [
                                     _createElementVNode("button", {
                                         class: "osd-action-btn success",
                                         onClick: activateSelectedLiveView
@@ -651,7 +657,7 @@ export default /*@__PURE__*/ _defineComponent({
                                         class: "osd-action-btn",
                                         onClick: toggleNextMode
                                     }, "🔀 " + _toDisplayString(mode.value.toUpperCase()), 1 /* TEXT */),
-                                    _createElementVNode("label", _hoisted_37, [
+                                    _createElementVNode("label", _hoisted_38, [
                                         _cache[6] || (_cache[6] = _createTextVNode("◫ Muster ", -1 /* CACHED */)),
                                         _withDirectives(_createElementVNode("select", {
                                             id: "pland-model-mode",
@@ -670,7 +676,7 @@ export default /*@__PURE__*/ _defineComponent({
                                         class: "osd-action-btn",
                                         onClick: toggleFullscreen,
                                         title: _unref(t)('video.fullscreenTitle')
-                                    }, "⛶ " + _toDisplayString(_unref(t)('video.fullscreen')), 9 /* TEXT, PROPS */, _hoisted_38)
+                                    }, "⛶ " + _toDisplayString(_unref(t)('video.fullscreen')), 9 /* TEXT, PROPS */, _hoisted_39)
                                 ]))
                                 : _createCommentVNode("v-if", true)
                         ], 2 /* CLASS */))
