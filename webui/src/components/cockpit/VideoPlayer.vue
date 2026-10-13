@@ -104,6 +104,18 @@
         <span class="crosshair-center"></span>
       </div>
 
+      <!-- Display-only: no connection to DroneControlService or flight correction. -->
+      <div v-if="!compact && markerOverlayEnabled && hasFrame" class="pport-model-overlay" aria-label="PPort Referenzmuster, unverifiziert">
+        <img v-if="markerOverlayUrl && markerDisplayPx > 0" :src="markerOverlayUrl" class="pport-marker-pattern"
+          :style="{width: markerDisplayPx + 'px',height: markerDisplayPx + 'px'}" alt="Höhenabhängiges Referenzmuster" />
+        <div class="pport-marker-status">
+          <div>PPort {{ markerModelId || '–' }} · {{ markerOverlayStatus }}</div>
+          <div>Höhe: {{ Number(store.telemetry.altitude).toFixed(1) }} m · {{ markerZoomRole }} · {{ markerExpectedPx > 0 ? markerExpectedPx.toFixed(0) : 'nicht belegbar' }} px</div>
+          <div>Optik: {{ markerOpticalPercent }} % · GPS: {{ 100 - markerOpticalPercent }} %</div>
+          <div>Nur Anzeige · keine Regelung</div>
+        </div>
+      </div>
+
       <!-- Transparent status overlay; controls live in the collapsible side drawer. -->
       <div v-if="!compact" class="video-osd">
         <div class="osd-left">
@@ -123,6 +135,7 @@
           <button class="osd-action-btn success" @click="activateSelectedLiveView">⚡ Stream</button>
           <button class="osd-action-btn" @click="requestIdr">🔄 I-Frame</button>
           <button class="osd-action-btn" @click="toggleNextMode">🔀 {{ mode.toUpperCase() }}</button>
+          <button class="osd-action-btn" @click="toggleMarkerOverlay" :title="markerOverlayStatus">◫ Muster {{ markerOverlayEnabled ? 'AN' : 'AUS' }}</button>
           <button class="osd-action-btn" @click="toggleFullscreen" :title="t('video.fullscreenTitle')">⛶ {{ t('video.fullscreen') }}</button>
         </div>
       </div>
@@ -133,6 +146,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { useDroneStore } from '../../stores/useDroneStore'
+import { useCameraStore } from '../../stores/useCameraStore'
 import { DroneControlService } from '../../services/DroneControlService'
 import { VideoExtractor, ExtractedVideoFrame } from '../../protocol/VideoExtractor'
 import { WebCodecsPlayer, VideoPlayerStats } from '../../video/WebCodecsPlayer'
@@ -145,6 +159,46 @@ const controlsOpen = ref(false)
 const store = useDroneStore()
 const { t } = useI18n()
 const { crosshairVisible } = useLandingAssistSettings()
+const markerOverlayEnabled = ref(false)
+const markerOverlayUrl = ref('')
+const markerModelId = ref('')
+const markerOverlayStatus = ref('Kein Modell geladen')
+const cameraForModel = useCameraStore()
+const markerZoomRole = computed<'MIN'|'MAX'>(() => (cameraForModel.zoomActual ?? cameraForModel.zoomTarget) > 1.01 ? 'MAX' : 'MIN')
+const markerScale = ref<any>(null)
+const markerWeighting = ref<any>(null)
+const markerExpectedPx = computed(() => {
+  const h = Number(store.telemetry.altitude)
+  const group = markerScale.value?.groups?.[markerZoomRole.value]
+  if (cameraForModel.zoomActual == null || !Number.isFinite(h) || h <= 0 || !group?.heightRangeM ||
+    h < group.heightRangeM[0] || h > group.heightRangeM[1]) return 0
+  const k = Number(group.kPixelMeters)
+  return Number.isFinite(k) && k > 0 ? k/h : 0
+})
+const markerDisplayPx = computed(() => Math.min(1200,Math.max(0,markerExpectedPx.value*1.4)))
+const markerOpticalPercent = computed(() => {
+  // A candidate model MUST NEVER receive verified optical weight.
+  if (markerOverlayStatus.value !== 'VERIFIED') return 0
+  const p = markerExpectedPx.value
+  const p0 = Number(markerWeighting.value?.p0Px)
+  return p > 0 && p0 > 0 ? Math.round(100*p*p/(p*p+p0*p0)) : 0
+})
+async function toggleMarkerOverlay() {
+  markerOverlayEnabled.value = !markerOverlayEnabled.value
+  if (!markerOverlayEnabled.value) return
+  try {
+    const r = await fetch('/api/pport/models/latest',{cache:'no-store'})
+    if (!r.ok) throw new Error('HTTP '+r.status)
+    const data = await r.json()
+    if (!data.available) { markerOverlayStatus.value='Kein PPort-Modell';return }
+    markerModelId.value = data.id
+    markerScale.value=data.scale
+    markerWeighting.value=data.weighting
+    markerOverlayStatus.value=data.model?.status || 'UNVERIFIED'
+    markerOverlayUrl.value='data:image/png;base64,'+data.patternBase64
+  } catch(e) { markerOverlayStatus.value='Ladefehler: '+String(e) }
+}
+
 const containerRef = ref<HTMLDivElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 
@@ -686,4 +740,10 @@ onUnmounted(() => {
 .drawer-actions .osd-action-btn{width:94px;background:rgba(0,0,0,.35)}
 :fullscreen .video-osd{top:14px;left:14px;right:14px}
 
+</style>
+
+<style scoped>
+.pport-model-overlay{position:absolute;inset:0;pointer-events:none;z-index:13;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.pport-marker-pattern{position:absolute;object-fit:fill;opacity:.32;max-width:none;max-height:none}
+.pport-marker-status{position:absolute;left:8px;bottom:8px;background:rgba(12,20,24,.82);color:white;font:12px/1.5 sans-serif;padding:7px;border-radius:5px;max-width:85%}
 </style>

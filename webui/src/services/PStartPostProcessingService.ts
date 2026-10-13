@@ -6,7 +6,7 @@ export interface PStartReference {
   targetHeightM: number | null; actualHeightM: number | null; zoomRole: string
   captureTimestampMs: number | null; telemetryTimestampMs: number | null; timestampDeltaMs: number | null
   centerPx: [number, number] | null; outerCornersPx: [number, number][] | null; homography: number[][] | null
-  markerWidthPx: null; quality: { sharpness: number | null; contrast: number | null; detectionConfidence: number | null }
+  markerWidthPx: number | null; quality: { sharpness: number | null; contrast: number | null; detectionConfidence: number | null }
   status: 'candidate' | 'unverified' | 'metadata_only' | 'error'; warnings: string[]
   patternScore?: number | null; candidateAmbiguous?: boolean; seriesRole?: 'anchor' | 'corroborated' | 'unverified'; seriesReferenceImageId?: string | null; seriesQualityScore?: number | null
 }
@@ -161,9 +161,9 @@ export class PStartPostProcessingService {
       const r = await fetch('/api/version', { cache: 'no-store' })
       const v = await r.json()
       this.record('INFO', 'BACKEND_VERSION', '', JSON.stringify(v))
-      if (!r.ok || !JSON.stringify(v).includes('0.9843')) this.record('ERROR', 'VERSION_MISMATCH', '', 'Expected backend 0.9843: ' + JSON.stringify(v))
+      if (!r.ok || !JSON.stringify(v).includes('0.9845')) this.record('ERROR', 'VERSION_MISMATCH', '', 'Expected backend 0.9845: ' + JSON.stringify(v))
     } catch (e) { this.record('ERROR', 'VERSION_CHECK_FAILED', '', String(e)) }
-    this.record('INFO', 'FRONTEND_ANALYZER', '', 'webui-ts-v0.9843')
+    this.record('INFO', 'FRONTEND_ANALYZER', '', 'webui-ts-v0.9845')
     if (!items.length) this.record('WARN', 'EMPTY_INPUT', '', 'No JPEG images found')
     const refs: PStartReference[] = []
     const pendingCopies: { name: string; bytes: ArrayBuffer; ref: PStartReference }[] = []
@@ -241,6 +241,67 @@ export class PStartPostProcessingService {
           const binary = atob(output.pngBase64 || "")
           const pixels = Uint8Array.from(binary, c => c.charCodeAt(0))
           await save('reference_marker_analysis_normalized.png', new Blob([pixels], { type: 'image/png' }))
+          // The normalized candidate is the sole pattern source; never blend multiple photographs.
+          const scalePoints = refs.filter(r => r.status === 'candidate' && r.outerCornersPx?.length === 4 &&
+            (r.actualHeightM ?? r.targetHeightM) != null && (r.actualHeightM ?? r.targetHeightM)! > 0 &&
+            ['MIN','MAX'].includes(r.zoomRole)).map(r => {
+            const c = r.outerCornersPx!
+            const dist = (a: number[], b: number[]) => Math.hypot(a[0]-b[0],a[1]-b[1])
+            const widthPx = (dist(c[0],c[1])+dist(c[1],c[2])+dist(c[2],c[3])+dist(c[3],c[0])) / 4
+            return { imageId:r.imageId, heightM:(r.actualHeightM ?? r.targetHeightM) as number, zoomRole:r.zoomRole,
+              widthPx, ambiguous:!!r.candidateAmbiguous, patternScore:r.patternScore ?? null }
+          })
+          const groups: Record<string, any> = {}
+          for (const role of ['MIN','MAX']) {
+            const points = scalePoints.filter(p=>p.zoomRole===role)
+            // Least-squares p=k/h, with no fabricated observations or extrapolation claims.
+            const sum = points.reduce((a,p)=>a+p.widthPx/p.heightM,0)
+            const denominator = points.reduce((a,p)=>a+1/(p.heightM*p.heightM),0)
+            const k = denominator > 0 ? sum/denominator : null
+            groups[role] = { points, kPixelMeters:k, heightRangeM: points.length ?
+              [Math.min(...points.map(p=>p.heightM)),Math.max(...points.map(p=>p.heightM))] : null,
+              residuals: k == null ? [] : points.map(p=>({imageId:p.imageId,observedPx:p.widthPx,
+                predictedPx:k/p.heightM,errorPx:p.widthPx-k/p.heightM})),
+              status:'CANDIDATE_UNVERIFIED' }
+          }
+          const model = { schemaVersion:1, modelType:'normalized_square_marker', sourceImage:chosen.name,
+            sourceSha256: chosen.ref.imageSha256, orientationCorner:'BOTTOM_RIGHT',
+            origin:[0,0], corners:[[-0.5,-0.5],[0.5,-0.5],[0.5,0.5],[-0.5,0.5]],
+            patternFile:'marker_pattern_analysis.png', scaleFile:'marker_scale_analysis.json',
+            qualityFile:'marker_quality_analysis.json', weightingFile:'marker_weighting_analysis.json',
+            status:'CANDIDATE_UNVERIFIED', metricCalibration:false, flightControlEnabled:false }
+          const scale = {schemaVersion:1, formula:'widthPx=kPixelMeters/heightM', groups,
+            limitations:['Measured candidate corners unverified','Fit residuals are not independent validation',
+              'Height must refer to marker plane; camera and zoom must match']}
+          const quality = {schemaVersion:1, modelStatus:'CANDIDATE_UNVERIFIED',
+            sourceImage:chosen.name, observations:scalePoints, independentValidation:false,
+            note:'In-sample checks only. No geometry or GPS/optical accuracy certified.'}
+          const weighting = {schemaVersion:1, formula:'Q*p*p/(p*p+p0*p0)',
+            gpsFormula:'1-opticalWeight',p0Px:100,qualitySource:'LIVE_GEOMETRY_REQUIRED',
+            qualityWhenUnverified:0,status:'PROVISIONAL_NOT_VALIDATED',use:'DISPLAY_ONLY'}
+          const jsonBlob = (data:unknown)=>new Blob([JSON.stringify(data,null,2)],{type:'application/json'})
+          await save('marker_pattern_analysis.png',new Blob([pixels],{type:'image/png'}))
+          await save('marker_model_analysis.json',jsonBlob(model))
+          await save('marker_scale_analysis.json',jsonBlob(scale))
+          await save('marker_quality_analysis.json',jsonBlob(quality))
+          await save('marker_weighting_analysis.json',jsonBlob(weighting))
+          this.record('INFO','MODEL_CANDIDATE',chosen.name,`scalePoints=${scalePoints.length}; status=CANDIDATE_UNVERIFIED`)
+          if (sessionId !== 'offline-import' && sessionId !== 'offline-saf') {
+            try {
+              const files: Record<string,string> = {}
+              for (const [name,data] of [['marker_pattern.png',new Blob([pixels],{type:'image/png'})],
+                  ['marker_model.json',jsonBlob(model)],['marker_scale.json',jsonBlob(scale)],
+                  ['marker_quality.json',jsonBlob(quality)],['marker_weighting.json',jsonBlob(weighting)]] as const) {
+                const arr = new Uint8Array(await data.arrayBuffer())
+                let raw=''; for (let i=0;i<arr.length;i+=8192) raw += String.fromCharCode(...arr.subarray(i,i+8192))
+                files[name]=btoa(raw)
+              }
+              const copy = await fetch('/api/pport/models/'+encodeURIComponent(sessionId),{method:'POST',
+                headers:{'Content-Type':'application/json'},body:JSON.stringify({files})})
+              if (!copy.ok) throw new Error(await copy.text())
+              this.record('INFO','PPORT_MODEL_COPY',chosen.name,'Stored as unverified candidate; PLand must display warning')
+            } catch(e) { this.record('ERROR','PPORT_MODEL_COPY',chosen.name,String(e)) }
+          }
           delete output.pngBase64
           if (typeof output.diagnosticPngBase64 === 'string') {
             const diagnostic = Uint8Array.from(atob(output.diagnosticPngBase64), c => c.charCodeAt(0))

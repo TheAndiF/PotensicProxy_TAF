@@ -503,6 +503,22 @@ class WebServer(
                     }
                 }
 
+                // PPort: immutable model folders, newest model can be previewed without control access.
+                post("/api/pport/models/{id}") {
+                    try {
+                        val id = call.parameters["id"] ?: ""
+                        val payload = JSONObject(call.receiveText())
+                        val saved = withContext(Dispatchers.IO) { PPortModelStorage.store(appContext, id, payload) }
+                        call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    }
+                }
+                get("/api/pport/models/latest") {
+                    val result = withContext(Dispatchers.IO) { PPortModelStorage.latest(appContext) }
+                    call.respondText(result.toString(), ContentType.Application.Json)
+                }
+
                 // Analysis outputs are additive, scoped to the session and hash-verified by MediaStore.
                 post("/api/pstart/analysis/artifact") {
                     call.response.header("Access-Control-Allow-Origin", "*")

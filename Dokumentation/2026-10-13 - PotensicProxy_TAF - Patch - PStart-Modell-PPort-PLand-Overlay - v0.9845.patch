@@ -1,0 +1,454 @@
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -24,7 +24,7 @@
+         minSdk = 26
+         targetSdk = 36
+         versionCode = 68
+-        versionName = "0.9843"
++        versionName = "0.9845"
+     }
+ 
+     signingConfigs {
+--- a/app/src/main/java/com/potensic/proxy/WebServer.kt
++++ b/app/src/main/java/com/potensic/proxy/WebServer.kt
+@@ -501,6 +501,22 @@
+                             .put("errorType",e.javaClass.name).toString(), ContentType.Application.Json,
+                             if (e is IllegalArgumentException) HttpStatusCode.BadRequest else HttpStatusCode.InternalServerError)
+                     }
++                }
++
++                // PPort: immutable model folders, newest model can be previewed without control access.
++                post("/api/pport/models/{id}") {
++                    try {
++                        val id = call.parameters["id"] ?: ""
++                        val payload = JSONObject(call.receiveText())
++                        val saved = withContext(Dispatchers.IO) { PPortModelStorage.store(appContext, id, payload) }
++                        call.respondText(saved.toString(), ContentType.Application.Json, HttpStatusCode.Created)
++                    } catch (e: Exception) {
++                        call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
++                    }
++                }
++                get("/api/pport/models/latest") {
++                    val result = withContext(Dispatchers.IO) { PPortModelStorage.latest(appContext) }
++                    call.respondText(result.toString(), ContentType.Application.Json)
+                 }
+ 
+                 // Analysis outputs are additive, scoped to the session and hash-verified by MediaStore.
+--- /dev/null
++++ b/app/src/main/java/com/potensic/proxy/PPortModelStorage.kt
+@@ -0,0 +1,49 @@
++package com.potensic.proxy
++
++import android.content.Context
++import android.util.Base64
++import org.json.JSONObject
++import java.io.File
++import java.security.MessageDigest
++
++/** App-private PPort cache. Only data artifacts; never issues flight commands. */
++object PPortModelStorage {
++    private val names = setOf("marker_pattern.png", "marker_model.json", "marker_scale.json", "marker_quality.json", "marker_weighting.json")
++    private fun root(ctx: Context) = File(ctx.filesDir, "PPort").apply { mkdirs() }
++    private fun validId(id: String) = id.matches(Regex("[A-Za-z0-9_-]{1,120}"))
++    @Synchronized fun store(ctx: Context, id: String, payload: JSONObject): JSONObject {
++        require(validId(id)) { "Invalid model ID" }
++        val src = payload.getJSONObject("files")
++        require(names.all { src.has(it) }) { "Incomplete model files" }
++        val destination = File(root(ctx), "PStart_$id")
++        require(!destination.exists()) { "Model ID already exists" }
++        val temp = File(root(ctx), ".pending_$id")
++        require(!temp.exists() && temp.mkdir()) { "Cannot create staging directory" }
++        try {
++            for (name in names) {
++                val bytes = Base64.decode(src.getString(name), Base64.DEFAULT)
++                require(bytes.isNotEmpty() && bytes.size < 12_000_000) { "Invalid model file size: $name" }
++                File(temp, name).writeBytes(bytes)
++            }
++            val model = JSONObject(File(temp, "marker_model.json").readText())
++            require(model.optString("status") == "CANDIDATE_UNVERIFIED") { "Unexpected model status" }
++            require(temp.renameTo(destination)) { "Cannot commit model folder" }
++            return JSONObject().put("stored",true).put("id",id).put("verified",false)
++        } finally { if (temp.exists()) temp.deleteRecursively() }
++    }
++    @Synchronized fun latest(ctx: Context): JSONObject {
++        val folders = root(ctx).listFiles()?.filter { it.isDirectory && it.name.startsWith("PStart_") } ?: emptyList()
++        for (dir in folders.sortedByDescending { it.lastModified() }) {
++            try {
++                val model = JSONObject(File(dir,"marker_model.json").readText())
++                val scale = JSONObject(File(dir,"marker_scale.json").readText())
++                val weighting = JSONObject(File(dir,"marker_weighting.json").readText())
++                val png = File(dir,"marker_pattern.png").readBytes()
++                return JSONObject().put("available",true).put("id",dir.name)
++                    .put("model",model).put("scale",scale).put("weighting",weighting)
++                    .put("patternBase64",Base64.encodeToString(png,Base64.NO_WRAP))
++            } catch (_: Exception) { /* Ignore incomplete folders */ }
++        }
++        return JSONObject().put("available",false)
++    }
++}
+--- a/webui/src/services/PStartPostProcessingService.ts
++++ b/webui/src/services/PStartPostProcessingService.ts
+@@ -6,7 +6,7 @@
+   targetHeightM: number | null; actualHeightM: number | null; zoomRole: string
+   captureTimestampMs: number | null; telemetryTimestampMs: number | null; timestampDeltaMs: number | null
+   centerPx: [number, number] | null; outerCornersPx: [number, number][] | null; homography: number[][] | null
+-  markerWidthPx: null; quality: { sharpness: number | null; contrast: number | null; detectionConfidence: number | null }
++  markerWidthPx: number | null; quality: { sharpness: number | null; contrast: number | null; detectionConfidence: number | null }
+   status: 'candidate' | 'unverified' | 'metadata_only' | 'error'; warnings: string[]
+   patternScore?: number | null; candidateAmbiguous?: boolean; seriesRole?: 'anchor' | 'corroborated' | 'unverified'; seriesReferenceImageId?: string | null; seriesQualityScore?: number | null
+ }
+@@ -161,9 +161,9 @@
+       const r = await fetch('/api/version', { cache: 'no-store' })
+       const v = await r.json()
+       this.record('INFO', 'BACKEND_VERSION', '', JSON.stringify(v))
+-      if (!r.ok || !JSON.stringify(v).includes('0.9843')) this.record('ERROR', 'VERSION_MISMATCH', '', 'Expected backend 0.9843: ' + JSON.stringify(v))
++      if (!r.ok || !JSON.stringify(v).includes('0.9845')) this.record('ERROR', 'VERSION_MISMATCH', '', 'Expected backend 0.9845: ' + JSON.stringify(v))
+     } catch (e) { this.record('ERROR', 'VERSION_CHECK_FAILED', '', String(e)) }
+-    this.record('INFO', 'FRONTEND_ANALYZER', '', 'webui-ts-v0.9843')
++    this.record('INFO', 'FRONTEND_ANALYZER', '', 'webui-ts-v0.9845')
+     if (!items.length) this.record('WARN', 'EMPTY_INPUT', '', 'No JPEG images found')
+     const refs: PStartReference[] = []
+     const pendingCopies: { name: string; bytes: ArrayBuffer; ref: PStartReference }[] = []
+@@ -241,6 +241,67 @@
+           const binary = atob(output.pngBase64 || "")
+           const pixels = Uint8Array.from(binary, c => c.charCodeAt(0))
+           await save('reference_marker_analysis_normalized.png', new Blob([pixels], { type: 'image/png' }))
++          // The normalized candidate is the sole pattern source; never blend multiple photographs.
++          const scalePoints = refs.filter(r => r.status === 'candidate' && r.outerCornersPx?.length === 4 &&
++            (r.actualHeightM ?? r.targetHeightM) != null && (r.actualHeightM ?? r.targetHeightM)! > 0 &&
++            ['MIN','MAX'].includes(r.zoomRole)).map(r => {
++            const c = r.outerCornersPx!
++            const dist = (a: number[], b: number[]) => Math.hypot(a[0]-b[0],a[1]-b[1])
++            const widthPx = (dist(c[0],c[1])+dist(c[1],c[2])+dist(c[2],c[3])+dist(c[3],c[0])) / 4
++            return { imageId:r.imageId, heightM:(r.actualHeightM ?? r.targetHeightM) as number, zoomRole:r.zoomRole,
++              widthPx, ambiguous:!!r.candidateAmbiguous, patternScore:r.patternScore ?? null }
++          })
++          const groups: Record<string, any> = {}
++          for (const role of ['MIN','MAX']) {
++            const points = scalePoints.filter(p=>p.zoomRole===role)
++            // Least-squares p=k/h, with no fabricated observations or extrapolation claims.
++            const sum = points.reduce((a,p)=>a+p.widthPx/p.heightM,0)
++            const denominator = points.reduce((a,p)=>a+1/(p.heightM*p.heightM),0)
++            const k = denominator > 0 ? sum/denominator : null
++            groups[role] = { points, kPixelMeters:k, heightRangeM: points.length ?
++              [Math.min(...points.map(p=>p.heightM)),Math.max(...points.map(p=>p.heightM))] : null,
++              residuals: k == null ? [] : points.map(p=>({imageId:p.imageId,observedPx:p.widthPx,
++                predictedPx:k/p.heightM,errorPx:p.widthPx-k/p.heightM})),
++              status:'CANDIDATE_UNVERIFIED' }
++          }
++          const model = { schemaVersion:1, modelType:'normalized_square_marker', sourceImage:chosen.name,
++            sourceSha256: chosen.ref.imageSha256, orientationCorner:'BOTTOM_RIGHT',
++            origin:[0,0], corners:[[-0.5,-0.5],[0.5,-0.5],[0.5,0.5],[-0.5,0.5]],
++            patternFile:'marker_pattern_analysis.png', scaleFile:'marker_scale_analysis.json',
++            qualityFile:'marker_quality_analysis.json', weightingFile:'marker_weighting_analysis.json',
++            status:'CANDIDATE_UNVERIFIED', metricCalibration:false, flightControlEnabled:false }
++          const scale = {schemaVersion:1, formula:'widthPx=kPixelMeters/heightM', groups,
++            limitations:['Measured candidate corners unverified','Fit residuals are not independent validation',
++              'Height must refer to marker plane; camera and zoom must match']}
++          const quality = {schemaVersion:1, modelStatus:'CANDIDATE_UNVERIFIED',
++            sourceImage:chosen.name, observations:scalePoints, independentValidation:false,
++            note:'In-sample checks only. No geometry or GPS/optical accuracy certified.'}
++          const weighting = {schemaVersion:1, formula:'Q*p*p/(p*p+p0*p0)',
++            gpsFormula:'1-opticalWeight',p0Px:100,qualitySource:'LIVE_GEOMETRY_REQUIRED',
++            qualityWhenUnverified:0,status:'PROVISIONAL_NOT_VALIDATED',use:'DISPLAY_ONLY'}
++          const jsonBlob = (data:unknown)=>new Blob([JSON.stringify(data,null,2)],{type:'application/json'})
++          await save('marker_pattern_analysis.png',new Blob([pixels],{type:'image/png'}))
++          await save('marker_model_analysis.json',jsonBlob(model))
++          await save('marker_scale_analysis.json',jsonBlob(scale))
++          await save('marker_quality_analysis.json',jsonBlob(quality))
++          await save('marker_weighting_analysis.json',jsonBlob(weighting))
++          this.record('INFO','MODEL_CANDIDATE',chosen.name,`scalePoints=${scalePoints.length}; status=CANDIDATE_UNVERIFIED`)
++          if (sessionId !== 'offline-import' && sessionId !== 'offline-saf') {
++            try {
++              const files: Record<string,string> = {}
++              for (const [name,data] of [['marker_pattern.png',new Blob([pixels],{type:'image/png'})],
++                  ['marker_model.json',jsonBlob(model)],['marker_scale.json',jsonBlob(scale)],
++                  ['marker_quality.json',jsonBlob(quality)],['marker_weighting.json',jsonBlob(weighting)]] as const) {
++                const arr = new Uint8Array(await data.arrayBuffer())
++                let raw=''; for (let i=0;i<arr.length;i+=8192) raw += String.fromCharCode(...arr.subarray(i,i+8192))
++                files[name]=btoa(raw)
++              }
++              const copy = await fetch('/api/pport/models/'+encodeURIComponent(sessionId),{method:'POST',
++                headers:{'Content-Type':'application/json'},body:JSON.stringify({files})})
++              if (!copy.ok) throw new Error(await copy.text())
++              this.record('INFO','PPORT_MODEL_COPY',chosen.name,'Stored as unverified candidate; PLand must display warning')
++            } catch(e) { this.record('ERROR','PPORT_MODEL_COPY',chosen.name,String(e)) }
++          }
+           delete output.pngBase64
+           if (typeof output.diagnosticPngBase64 === 'string') {
+             const diagnostic = Uint8Array.from(atob(output.diagnosticPngBase64), c => c.charCodeAt(0))
+--- a/webui/src/components/cockpit/VideoPlayer.vue
++++ b/webui/src/components/cockpit/VideoPlayer.vue
+@@ -104,6 +104,18 @@
+         <span class="crosshair-center"></span>
+       </div>
+ 
++      <!-- Display-only: no connection to DroneControlService or flight correction. -->
++      <div v-if="!compact && markerOverlayEnabled && hasFrame" class="pport-model-overlay" aria-label="PPort Referenzmuster, unverifiziert">
++        <img v-if="markerOverlayUrl && markerDisplayPx > 0" :src="markerOverlayUrl" class="pport-marker-pattern"
++          :style="{width: markerDisplayPx + 'px',height: markerDisplayPx + 'px'}" alt="Höhenabhängiges Referenzmuster" />
++        <div class="pport-marker-status">
++          <div>PPort {{ markerModelId || '–' }} · {{ markerOverlayStatus }}</div>
++          <div>Höhe: {{ Number(store.telemetry.altitude).toFixed(1) }} m · {{ markerZoomRole }} · {{ markerExpectedPx > 0 ? markerExpectedPx.toFixed(0) : 'nicht belegbar' }} px</div>
++          <div>Optik: {{ markerOpticalPercent }} % · GPS: {{ 100 - markerOpticalPercent }} %</div>
++          <div>Nur Anzeige · keine Regelung</div>
++        </div>
++      </div>
++
+       <!-- Transparent status overlay; controls live in the collapsible side drawer. -->
+       <div v-if="!compact" class="video-osd">
+         <div class="osd-left">
+@@ -123,6 +135,7 @@
+           <button class="osd-action-btn success" @click="activateSelectedLiveView">⚡ Stream</button>
+           <button class="osd-action-btn" @click="requestIdr">🔄 I-Frame</button>
+           <button class="osd-action-btn" @click="toggleNextMode">🔀 {{ mode.toUpperCase() }}</button>
++          <button class="osd-action-btn" @click="toggleMarkerOverlay" :title="markerOverlayStatus">◫ Muster {{ markerOverlayEnabled ? 'AN' : 'AUS' }}</button>
+           <button class="osd-action-btn" @click="toggleFullscreen" :title="t('video.fullscreenTitle')">⛶ {{ t('video.fullscreen') }}</button>
+         </div>
+       </div>
+@@ -133,6 +146,7 @@
+ <script setup lang="ts">
+ import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
+ import { useDroneStore } from '../../stores/useDroneStore'
++import { useCameraStore } from '../../stores/useCameraStore'
+ import { DroneControlService } from '../../services/DroneControlService'
+ import { VideoExtractor, ExtractedVideoFrame } from '../../protocol/VideoExtractor'
+ import { WebCodecsPlayer, VideoPlayerStats } from '../../video/WebCodecsPlayer'
+@@ -145,6 +159,46 @@
+ const store = useDroneStore()
+ const { t } = useI18n()
+ const { crosshairVisible } = useLandingAssistSettings()
++const markerOverlayEnabled = ref(false)
++const markerOverlayUrl = ref('')
++const markerModelId = ref('')
++const markerOverlayStatus = ref('Kein Modell geladen')
++const cameraForModel = useCameraStore()
++const markerZoomRole = computed<'MIN'|'MAX'>(() => (cameraForModel.zoomActual ?? cameraForModel.zoomTarget) > 1.01 ? 'MAX' : 'MIN')
++const markerScale = ref<any>(null)
++const markerWeighting = ref<any>(null)
++const markerExpectedPx = computed(() => {
++  const h = Number(store.telemetry.altitude)
++  const group = markerScale.value?.groups?.[markerZoomRole.value]
++  if (cameraForModel.zoomActual == null || !Number.isFinite(h) || h <= 0 || !group?.heightRangeM ||
++    h < group.heightRangeM[0] || h > group.heightRangeM[1]) return 0
++  const k = Number(group.kPixelMeters)
++  return Number.isFinite(k) && k > 0 ? k/h : 0
++})
++const markerDisplayPx = computed(() => Math.min(1200,Math.max(0,markerExpectedPx.value*1.4)))
++const markerOpticalPercent = computed(() => {
++  // A candidate model MUST NEVER receive verified optical weight.
++  if (markerOverlayStatus.value !== 'VERIFIED') return 0
++  const p = markerExpectedPx.value
++  const p0 = Number(markerWeighting.value?.p0Px)
++  return p > 0 && p0 > 0 ? Math.round(100*p*p/(p*p+p0*p0)) : 0
++})
++async function toggleMarkerOverlay() {
++  markerOverlayEnabled.value = !markerOverlayEnabled.value
++  if (!markerOverlayEnabled.value) return
++  try {
++    const r = await fetch('/api/pport/models/latest',{cache:'no-store'})
++    if (!r.ok) throw new Error('HTTP '+r.status)
++    const data = await r.json()
++    if (!data.available) { markerOverlayStatus.value='Kein PPort-Modell';return }
++    markerModelId.value = data.id
++    markerScale.value=data.scale
++    markerWeighting.value=data.weighting
++    markerOverlayStatus.value=data.model?.status || 'UNVERIFIED'
++    markerOverlayUrl.value='data:image/png;base64,'+data.patternBase64
++  } catch(e) { markerOverlayStatus.value='Ladefehler: '+String(e) }
++}
++
+ const containerRef = ref<HTMLDivElement | null>(null)
+ const canvasRef = ref<HTMLCanvasElement | null>(null)
+ 
+@@ -687,3 +741,9 @@
+ :fullscreen .video-osd{top:14px;left:14px;right:14px}
+ 
+ </style>
++
++<style scoped>
++.pport-model-overlay{position:absolute;inset:0;pointer-events:none;z-index:13;display:flex;align-items:center;justify-content:center;overflow:hidden}
++.pport-marker-pattern{position:absolute;object-fit:fill;opacity:.32;max-width:none;max-height:none}
++.pport-marker-status{position:absolute;left:8px;bottom:8px;background:rgba(12,20,24,.82);color:white;font:12px/1.5 sans-serif;padding:7px;border-radius:5px;max-width:85%}
++</style>
+--- a/webui/package.json
++++ b/webui/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "potensic-proxy-webui",
+-  "version": "0.9843",
++  "version": "0.9845",
+   "private": true,
+   "type": "module",
+   "scripts": {
+--- a/webui/index.html
++++ b/webui/index.html
+@@ -5,7 +5,7 @@
+     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚁</text></svg>">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+     <title>Potensic Proxy - TAF</title>
+-    <script defer src="/assets/taf-pairing-runtime-v0.9843.js"></script>
++    <script defer src="/assets/taf-pairing-runtime-v0.9845.js"></script>
+   </head>
+   <body>
+     <div id="app"></div>
+--- /dev/null
++++ b/webui/public/assets/taf-pairing-runtime-v0.9845.js
+@@ -0,0 +1,157 @@
++(() => {
++  'use strict'
++
++  const VERSION = '0.9845'
++  const CARD_SELECTOR = '[data-taf-pairing-runtime="0.9845"]'
++  const NATIVE_PAIRING_SELECTOR = '.pairing-card:not(.taf-runtime-pairing-card)'
++  let pollTimer = null
++
++  function patchFrontendVersionBadge() {
++    const candidates = document.querySelectorAll('.version-badge, .el-tag')
++    for (const el of candidates) {
++      const text = (el.textContent || '').trim()
++      if (!/frontend/i.test(text)) continue
++      const replaced = text.replace(/v\d+\.\d+(?:\.\d+)?/i, `v${VERSION}`)
++      if (replaced !== text) el.textContent = replaced
++    }
++    document.documentElement.dataset.tafEmbeddedFrontend = VERSION
++  }
++
++  function ensureStyles() {
++    if (document.getElementById('taf-pairing-runtime-style')) return
++    const style = document.createElement('style')
++    style.id = 'taf-pairing-runtime-style'
++    style.textContent = `
++      .taf-runtime-pairing-card { border-color: rgba(64, 158, 255, .65) !important; }
++      .taf-pairing-runtime-badge { display:inline-flex; align-items:center; min-height:22px; padding:0 9px; border-radius:4px; font-size:12px; font-weight:700; color:#fff; background:#909399; }
++      .taf-pairing-runtime-badge[data-state="waiting"], .taf-pairing-runtime-badge[data-state="pairing"] { background:#e6a23c; }
++      .taf-pairing-runtime-badge[data-state="success"] { background:#67c23a; }
++      .taf-pairing-runtime-badge[data-state="failed"], .taf-pairing-runtime-badge[data-state="timeout"] { background:#f56c6c; }
++      .taf-pairing-runtime-message { margin:8px 0 10px; padding:8px 10px; border:1px solid rgba(144,147,153,.3); border-radius:4px; font-size:12px; line-height:1.45; word-break:break-word; }
++      .taf-pairing-runtime-actions { display:flex; gap:8px; flex-wrap:wrap; }
++      .taf-pairing-runtime-note { margin-top:7px; opacity:.72; font-size:11px; line-height:1.4; }
++    `
++    document.head.appendChild(style)
++  }
++
++  function stateLabel(state) {
++    return String(state || 'idle').toUpperCase()
++  }
++
++  function getRuntimeCard() {
++    return document.querySelector(CARD_SELECTOR)
++  }
++
++  function renderPairing(state, message, rawHex) {
++    const card = getRuntimeCard()
++    if (!card) return
++    const normalized = String(state || 'idle').toLowerCase()
++    const badge = card.querySelector('[data-taf-pairing-badge]')
++    const msg = card.querySelector('[data-taf-pairing-message]')
++    const start = card.querySelector('[data-taf-pairing-start]')
++    if (badge) {
++      badge.dataset.state = normalized
++      badge.textContent = stateLabel(normalized)
++    }
++    if (msg) {
++      msg.textContent = message || 'No pairing session started'
++      msg.title = rawHex || ''
++    }
++    if (start) {
++      const busy = normalized === 'waiting' || normalized === 'pairing'
++      start.disabled = busy
++      start.textContent = busy ? 'Pairing in progress…' : '🔗 Re-pair Controller / Aircraft'
++    }
++  }
++
++  async function pollStatus() {
++    if (!getRuntimeCard()) return
++    try {
++      const response = await fetch(`/api/status?_tafPairing=${Date.now()}`, { cache: 'no-store' })
++      if (!response.ok) throw new Error(`HTTP ${response.status}`)
++      const data = await response.json()
++      if (data && data.pairing) {
++        renderPairing(data.pairing.state, data.pairing.lastMessage, data.pairing.resultRawHex)
++      }
++    } catch (_) {
++      // Keep the last known status. The normal application connection indicator already exposes backend outages.
++    }
++  }
++
++  async function startPairing() {
++    const ok = window.confirm(
++      'Start ATOM controller / aircraft pairing?\n\n' +
++      'The controller will enter MiniPair mode. Afterwards put the aircraft into frequency-pairing mode using its power button.'
++    )
++    if (!ok) return
++
++    renderPairing('waiting', 'Sending pairing command to the controller…')
++    try {
++      const response = await fetch('/api/cmd/pair', { method: 'POST', cache: 'no-store' })
++      const text = await response.text()
++      if (!response.ok) throw new Error(text || `HTTP ${response.status}`)
++      renderPairing('waiting', 'Pairing command sent; waiting for controller pairing mode')
++      await pollStatus()
++    } catch (error) {
++      renderPairing('failed', `Could not start pairing: ${error instanceof Error ? error.message : String(error)}`)
++    }
++  }
++
++  async function resetPairing() {
++    try {
++      await fetch('/api/cmd/pair/reset', { method: 'POST', cache: 'no-store' })
++    } catch (_) {}
++    renderPairing('idle', 'No pairing session started')
++  }
++
++  function ensurePairingCard() {
++    patchFrontendVersionBadge()
++
++    // A freshly rebuilt Vue bundle already contains the native pairing panel.
++    // In that case this compatibility bridge deliberately stays out of the UI.
++    if (document.querySelector(NATIVE_PAIRING_SELECTOR)) {
++      const runtime = getRuntimeCard()
++      if (runtime) runtime.remove()
++      return
++    }
++
++    if (getRuntimeCard()) return
++    const panel = document.querySelector('.fpv-pane .fpv-controls-col .panel-box')
++    if (!panel) return
++
++    ensureStyles()
++    const card = document.createElement('div')
++    card.className = 'action-card highlight-card pairing-card taf-runtime-pairing-card'
++    card.dataset.tafPairingRuntime = VERSION
++    card.innerHTML = `
++      <div class="act-header">
++        <span class="act-name">ATOM Controller / Aircraft Pairing</span>
++        <span class="taf-pairing-runtime-badge" data-taf-pairing-badge data-state="idle">IDLE</span>
++      </div>
++      <p class="act-desc">
++        Starts the PotensicPro MiniPair sequence (FE 0x16 / function 0x18). After starting, put the aircraft into frequency-pairing mode using its power button.
++      </p>
++      <div class="taf-pairing-runtime-message" data-taf-pairing-message>No pairing session started</div>
++      <div class="taf-pairing-runtime-actions">
++        <button type="button" class="el-button el-button--primary el-button--small" data-taf-pairing-start>🔗 Re-pair Controller / Aircraft</button>
++        <button type="button" class="el-button el-button--small is-plain" data-taf-pairing-reset>Reset Status</button>
++      </div>
++      <div class="taf-pairing-runtime-note">Status and result are monitored by the Android backend from 0x1715 / 0x1718 and are written to the Live Log.</div>
++    `
++
++    const title = panel.querySelector('.box-title')
++    if (title && title.parentElement === panel) title.insertAdjacentElement('afterend', card)
++    else panel.prepend(card)
++
++    card.querySelector('[data-taf-pairing-start]')?.addEventListener('click', startPairing)
++    card.querySelector('[data-taf-pairing-reset]')?.addEventListener('click', resetPairing)
++
++    if (!pollTimer) pollTimer = window.setInterval(pollStatus, 1000)
++    pollStatus()
++  }
++
++  const observer = new MutationObserver(() => ensurePairingCard())
++  observer.observe(document.documentElement, { childList: true, subtree: true })
++  window.addEventListener('load', ensurePairingCard, { once: true })
++  ensurePairingCard()
++})()

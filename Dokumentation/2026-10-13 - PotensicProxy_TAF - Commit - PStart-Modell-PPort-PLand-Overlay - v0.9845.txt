@@ -1,0 +1,27 @@
+BS_Add PStart marker model and display-only PLand preview
+
+Date: 2026-10-13
+
+Summary:
+- Create a single normalized marker model without multi-image pattern blending.
+- Fit unverified height/pixel scale observations per zoom role and save fitting residuals.
+- Store the GPS/optical weighting proposal separately as diagnostic-only data.
+- Archive model artifacts in immutable PPort ID folders.
+- Display the latest PPort candidate in a manually enabled, centered, transparent video preview.
+- Never issue flight control instructions from the preview.
+
+Changed files:
+- app/build.gradle.kts
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- app/src/main/java/com/potensic/proxy/PPortModelStorage.kt
+- webui/src/services/PStartPostProcessingService.ts
+- webui/src/components/cockpit/VideoPlayer.vue
+- webui/package.json
+- webui/index.html
+- webui/public/assets/taf-pairing-runtime-v0.9845.js
+
+Validation:
+- TypeScript type check passed.
+- Full frontend build blocked by missing Linux Rollup native dependency.
+- Android compilation and device validation not completed.
+- Candidate model is NOT geometrically verified; overlay is NOT calibrated.
