@@ -6,6 +6,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.DocumentsContract
+import android.os.Build
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -27,15 +29,58 @@ object PStartSafStorage {
         val permission = context.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission && it.isWritePermission }
         return if (permission) uri else null
     }
+    /** Read the display name via the provider; document IDs are opaque, not filesystem paths. */
+    private fun selectedDisplayName(context: Context, treeUri: Uri): String {
+        val rootDocument = DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri))
+        context.contentResolver.query(rootDocument, arrayOf(
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE
+        ), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                require(cursor.getString(1) == DocumentsContract.Document.MIME_TYPE_DIR) { "Selected item is not a directory" }
+                return cursor.getString(0) ?: ""
+            }
+        }
+        error("Selected SAF directory metadata could not be read")
+    }
+
     fun selected(context: Context, uri: Uri, intentFlags: Int) {
         val flags = intentFlags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-        val folderName = DocumentsContract.getTreeDocumentId(uri).substringAfterLast('/')
-        require(folderName == "PotensicProxy") { "Select or create a folder named exactly PotensicProxy" }
         require(flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0 && flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0) { "Read/write access required" }
+        val name = selectedDisplayName(context, uri)
+        require(name == "PotensicProxy") { "Selected folder '$name'; expected PotensicProxy" }
+        // Where the standard external-storage provider exposes a path-like ID, also
+        // enforce the intended parent. Other providers use opaque IDs and cannot be
+        // verified by interpreting their IDs as paths; never pretend otherwise.
+        val id = DocumentsContract.getTreeDocumentId(uri)
+        require(uri.authority == "com.android.externalstorage.documents" && id == "primary:Documents/PotensicProxy") {
+            "Please select internal storage/Documents/PotensicProxy (selected provider=${uri.authority}, ID=$id)"
+        }
         context.contentResolver.takePersistableUriPermission(uri, flags)
+        // Probe the exact selected directory before enabling flight-related writes.
+        try {
+            val root = DocumentsContract.buildDocumentUriUsingTree(uri, id)
+            val test = DocumentsContract.createDocument(context.contentResolver, root, "application/octet-stream", "potensicproxy_saf_probe.tmp")
+                ?: error("Cannot create test document")
+            try {
+                val bytes = "PotensicProxy SAF v1".toByteArray(Charsets.UTF_8)
+                context.contentResolver.openOutputStream(test, "wt")?.use { it.write(bytes) }
+                    ?: error("Cannot write test document")
+                val read = context.contentResolver.openInputStream(test)?.use { it.readBytes() }
+                    ?: error("Cannot read test document")
+                check(bytes.contentEquals(read)) { "SAF test document readback mismatch" }
+            } finally {
+                check(DocumentsContract.deleteDocument(context.contentResolver, test)) { "Cannot remove SAF test document" }
+            }
+        } catch (e: Exception) {
+            Log.e("PStartSAF", "Probe failed for $uri", e)
+            throw IllegalStateException("Folder write/read verification failed: ${e.message}", e)
+        }
         context.getSharedPreferences("pstart_saf", Context.MODE_PRIVATE).edit().putString(KEY, uri.toString()).apply()
         state = "READY"
+        Log.i("PStartSAF", "SAF permission verified for folder=$name uri=$uri")
     }
+
     fun cancelled() { state = "CANCELLED" }
     fun failed(message: String) { state = "ERROR: " + message.take(180) }
     fun request(context: Context) {
@@ -161,6 +206,11 @@ class PStartFolderPickerActivity : Activity() {
         if (savedInstanceState != null) return
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            // Hint only: OEM document pickers may ignore the initial URI.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val initial = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Documents/PotensicProxy")
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, initial)
+            }
         }
         startActivityForResult(intent, 4201)
     }
@@ -172,7 +222,7 @@ class PStartFolderPickerActivity : Activity() {
                 if (resultCode == RESULT_OK && data?.data != null) PStartSafStorage.selected(this, data.data!!, data.flags)
                 else PStartSafStorage.cancelled()
             } catch (e: Exception) {
-                android.util.Log.w("PStartSAF", "Permission failed: ${e.message}")
+                android.util.Log.e("PStartSAF", "Permission failed", e)
                 PStartSafStorage.failed(e.message ?: e.javaClass.simpleName)
                 android.widget.Toast.makeText(this, e.message ?: "Ordnerfreigabe fehlgeschlagen", android.widget.Toast.LENGTH_LONG).show()
             }
