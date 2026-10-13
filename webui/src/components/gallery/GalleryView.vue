@@ -30,7 +30,7 @@
           <span class="taf-status-field">Gallery: {{ camera.galleryState }}</span>
           <span v-if="camera.download.active" class="taf-status-field">Downloading {{ camera.download.fileName }} · {{ camera.download.progress }}%</span>
         </div>
-        <small class="path-note">Photos → Pictures/PotensicProxy/Camera/ · Videos → Movies/PotensicProxy/Camera/</small>
+        <small class="path-note">Photos → Documents/PotensicProxy/Exporte/Bilder/ · Videos → Documents/PotensicProxy/Exporte/Videos/</small>
       </div>
 
       <div v-if="camera.galleryError" class="download-error ui-card"><strong>Gallery error:</strong> {{ camera.galleryError }}</div>
@@ -63,7 +63,7 @@
         <strong>Download failed:</strong> {{ camera.download.error }}
       </div>
 
-      <div class="protocol-note">Normal Camera path remains unchanged: camera/SD media is managed here. Saving a photo creates an Android copy in Pictures/PotensicProxy/Camera/ and does not automatically delete the drone source.</div>
+      <div class="protocol-note">Normal Camera path remains unchanged: camera/SD media is managed here. Saving a photo creates an Android copy in Documents/PotensicProxy/Exporte/Bilder/ and does not automatically delete the drone source.</div>
     </template>
 
     <template v-else>
@@ -99,7 +99,7 @@
           <button :class="['filter-btn', { active: recoFilter === 'drone' }]" @click="recoFilter = 'drone'">Drone <span>{{ droneRecoCount }}</span></button>
         </div>
         <div class="gallery-status">
-          <span class="taf-status-field">Pictures/PotensicProxy/Recognition/</span>
+          <span class="taf-status-field">Documents/PotensicProxy/RECO/Bilder/</span>
           <span v-if="recoBusy" class="taf-status-field">{{ recoStatus }}</span>
         </div>
       </div>

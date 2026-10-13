@@ -31,7 +31,10 @@
         <strong>PStart – Referenzauswertung (experimentell)</strong>
         <p>Automatisch nach PStart oder offline über einen JPEG-Ordner. Schreibzugriff speichert JSON, JSONL-Logs und JPEG-Kopien mit Analyse-XMP direkt im Rohdatenordner. Die einfache Ordnerauswahl ist nur lesend. Die native Android-SAF-Ordnerfreigabe erfolgt auf dem Handy; danach kann der Ordner direkt ausgewertet und beschrieben werden. Keine Flugfreigabe.</p>
         <input type="file" accept="image/jpeg" multiple webkitdirectory directory @change="folderChosen" aria-label="Offline-Ordner auswählen" />
-        <button type="button" :disabled="busy" @click="requestSaf">Android-Ordner freigeben (SAF)</button>
+        <p aria-live="polite"><b>Android-Speicher PotensicProxy:</b> {{ storageState === 'READY' ? 'Freigegeben ✓' : storageState === 'LOADING' ? 'Prüfung läuft …' : 'Nicht freigegeben (' + storageState + ')' }}</p>
+        <p>Bitte unter Documents den Ordner <b>PotensicProxy</b> auswählen oder dort neu anlegen. Die einmalige Schreib-/Lesefreigabe gilt dauerhaft, solange Android sie nicht widerruft.</p>
+        <button type="button" @click="requestSaf">PotensicProxy freigeben (Android SAF)</button>
+        <button type="button" @click="refreshStorage">Freigabe prüfen</button>
         <button type="button" :disabled="busy" @click="analyzeSaf">Android-Ordner auswerten und speichern</button>
         <button type="button" :disabled="busy" @click="analyzeWritable">Ordner mit Schreibzugriff auswerten</button>
         <button type="button" :disabled="busy" @click="analyzeLast">Letzte gespeicherte Sitzung auswerten</button>
@@ -76,9 +79,11 @@ const { endHeight, heightStep, stabilizationSeconds, positionWarningMeters, posi
 
 const analysis = ref<PStartProgress>(PStartPostProcessingService.progress)
 const errorText = ref('')
+const storageState = ref('LOADING')
 const busy = computed(() => !['WAITING','COMPLETED','COMPLETED_WITH_WARNINGS','FAILED'].includes(analysis.value.state))
 let unsubscribe: (() => void) | null = null
 onMounted(() => {
+  void refreshStorage()
   try { const saved = localStorage.getItem('taf.pstart.analysis.latest'); if (saved && !analysis.value.profile) analysis.value = { state: 'COMPLETED_WITH_WARNINGS', completed: 0, total: 0, message: 'Letztes lokal gespeichertes Ergebnis', profile: JSON.parse(saved) } } catch { /* optional storage */ }
   unsubscribe = PStartPostProcessingService.subscribe(v => { if (v.profile || v.state !== 'WAITING') analysis.value = v })
 })
@@ -99,7 +104,23 @@ async function analyzeLast() {
     await PStartPostProcessingService.analyzeSavedSession(match[1])
   } catch (e) { errorText.value = String(e) }
 }
-async function requestSaf() { errorText.value = ""; try { await PStartPostProcessingService.requestAndroidFolder() } catch (e) { errorText.value = String(e) } }
+async function refreshStorage() {
+  try {
+    const response = await fetch('/api/pstart/saf/status', { cache: 'no-store' })
+    if (!response.ok) throw new Error('HTTP ' + response.status)
+    const status = await response.json() as { state: string }
+    storageState.value = status.state
+  } catch (e) { storageState.value = 'ERROR'; errorText.value = String(e) }
+}
+async function requestSaf() {
+  errorText.value = ''
+  try {
+    await PStartPostProcessingService.requestAndroidFolder()
+    storageState.value = 'PICKER_REQUESTED'
+    // The native Android picker is asynchronous. The user can also press "Freigabe prüfen".
+    window.setTimeout(() => { void refreshStorage() }, 3500)
+  } catch (e) { errorText.value = String(e) }
+}
 async function analyzeSaf() { errorText.value = ""; try { await PStartPostProcessingService.analyzeAndroidFolder() } catch (e) { errorText.value = String(e) } }
 async function analyzeWritable() { errorText.value = ''; try { await PStartPostProcessingService.analyzeWritableFolder() } catch (e) { errorText.value = String(e) } }
 function exportResult() { if (analysis.value.profile) PStartPostProcessingService.exportProfile(analysis.value.profile) }

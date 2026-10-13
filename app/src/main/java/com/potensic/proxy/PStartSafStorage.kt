@@ -16,7 +16,8 @@ object PStartSafStorage {
     @Volatile private var state: String = "NOT_SELECTED"
     fun status(context: Context): JSONObject {
         val uri = tree(context)
-        return JSONObject().put("state", if (uri != null) "READY" else state)
+        return JSONObject().put("state", if (uri != null) "READY" else if (state == "READY") "NOT_SELECTED" else state)
+            .put("folder", "PotensicProxy")
             .put("treeUri", uri?.toString() ?: JSONObject.NULL)
     }
     private fun tree(context: Context): Uri? {
@@ -27,6 +28,9 @@ object PStartSafStorage {
     }
     fun selected(context: Context, uri: Uri, intentFlags: Int) {
         val flags = intentFlags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        val folderName = DocumentsContract.getTreeDocumentId(uri).substringAfterLast('/')
+        require(folderName == "PotensicProxy") { "Select or create a folder named exactly PotensicProxy" }
+        require(flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0 && flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0) { "Read/write access required" }
         context.contentResolver.takePersistableUriPermission(uri, flags)
         context.getSharedPreferences("pstart_saf", Context.MODE_PRIVATE).edit().putString(KEY, uri.toString()).apply()
         state = "READY"
@@ -36,12 +40,72 @@ object PStartSafStorage {
         state = "PICKER_REQUESTED"
         context.startActivity(Intent(context, PStartFolderPickerActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
+    /** A single user-granted PotensicProxy tree for every persistent Android export. */
+    fun requireRoot(context: Context): Uri = root(context)
+
+    fun putFile(context: Context, path: String, filename: String, mime: String, bytes: ByteArray): JSONObject {
+        require(path.split('/').all { safe(it) } && path.isNotEmpty()) { "Invalid storage path" }
+        require(safe(filename)) { "Invalid filename" }
+        val resolver = context.contentResolver
+        val grant = tree(context) ?: throw SecurityException("PotensicProxy folder permission missing. Grant access in PStart settings.")
+        var directory = root(context)
+        for (part in path.split('/')) {
+            val existing = findChild(context, grant, directory, part, DocumentsContract.Document.MIME_TYPE_DIR)
+            directory = existing ?: DocumentsContract.createDocument(resolver, directory, DocumentsContract.Document.MIME_TYPE_DIR, part)
+                ?: throw IllegalStateException("Cannot create folder: $part")
+        }
+        // Never overwrite original media or an existing analysis run.
+        require(findChild(context, grant, directory, filename, null) == null) { "File already exists: $filename" }
+        val file = DocumentsContract.createDocument(resolver, directory, mime, filename)
+            ?: throw IllegalStateException("Cannot create file: $filename")
+        try {
+            resolver.openOutputStream(file, "wt")?.use { it.write(bytes) } ?: error("Storage output failed")
+            val actual = resolver.openInputStream(file)?.use { it.readBytes() } ?: error("Storage readback failed")
+            if (!actual.contentEquals(bytes)) error("Stored file differs from source")
+            return JSONObject().put("uri", file.toString()).put("name", filename)
+                .put("relativePath", "Documents/PotensicProxy/$path")
+                .put("size", bytes.size).put("sha256", MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) })
+                .put("verified", true)
+        } catch (e: Exception) {
+            try { DocumentsContract.deleteDocument(resolver, file) } catch (_: Exception) {}
+            throw e
+        }
+    }
+
+    private fun findChild(context: Context, grant: Uri, parent: Uri, name: String, mime: String?): Uri? {
+        val childUri = DocumentsContract.buildChildDocumentsUriUsingTree(grant, DocumentsContract.getDocumentId(parent))
+        context.contentResolver.query(childUri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+            while (cursor.moveToNext()) {
+                if (cursor.getString(1) == name && (mime == null || mime == cursor.getString(2))) {
+                    return DocumentsContract.buildDocumentUriUsingTree(grant, cursor.getString(0))
+                }
+            }
+        }
+        return null
+    }
+
     private fun root(context: Context): Uri {
-        val uri = tree(context) ?: throw SecurityException("No persistent SAF read/write permission; select folder on Android device")
+        val uri = tree(context) ?: throw SecurityException("PotensicProxy folder not permitted. Open PStart settings and grant Android folder access")
         return DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
     }
+    private fun latestPStartDirectory(context: Context): Uri {
+        val grant = tree(context) ?: error("PotensicProxy not permitted")
+        val root = root(context)
+        val auto = findChild(context, grant, root, "Auto", DocumentsContract.Document.MIME_TYPE_DIR) ?: return root
+        val pstart = findChild(context, grant, auto, "PStart", DocumentsContract.Document.MIME_TYPE_DIR) ?: return root
+        val childUri = DocumentsContract.buildChildDocumentsUriUsingTree(grant, DocumentsContract.getDocumentId(pstart))
+        val sessions = mutableListOf<Pair<String, Uri>>()
+        context.contentResolver.query(childUri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+            while (cursor.moveToNext()) if (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR)
+                sessions.add(cursor.getString(1) to DocumentsContract.buildDocumentUriUsingTree(grant, cursor.getString(0)))
+        }
+        return sessions.maxByOrNull { it.first }?.second ?: root
+    }
+
     private fun children(context: Context): List<Pair<String, Uri>> {
-        val base = root(context)
+        val base = latestPStartDirectory(context)
         val tree = tree(context)!!
         val result = mutableListOf<Pair<String, Uri>>()
         val uri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getDocumentId(base))
@@ -68,7 +132,7 @@ object PStartSafStorage {
         require(bytes.size <= 30_000_000) { "Artifact too large" }
         require(children(context).none { it.first == name }) { "Artifact already exists; use a new run ID" }
         val type = if (name.endsWith(".jpg")) "image/jpeg" else "application/json"
-        val uri = DocumentsContract.createDocument(context.contentResolver, root(context), type, name) ?: throw IllegalStateException("Could not create artifact")
+        val uri = DocumentsContract.createDocument(context.contentResolver, latestPStartDirectory(context), type, name) ?: throw IllegalStateException("Could not create artifact")
         try {
             context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) } ?: throw IllegalStateException("SAF output failed")
             val sha = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }

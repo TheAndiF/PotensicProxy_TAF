@@ -28,12 +28,12 @@ import kotlin.math.roundToLong
 /**
  * Android-owned image storage for the two intentionally separate media paths:
  *
- *  - camera      -> Pictures/PotensicProxy/Camera
- *  - recognition -> Pictures/PotensicProxy/Recognition
+ *  - camera      -> Documents/PotensicProxy/Exporte/Bilder
+ *  - recognition -> Documents/PotensicProxy/RECO/Bilder
  *
  * Every image receives an app-owned index record. Recognition captures may attach
  * a rich JSON metadata snapshot (telemetry, gimbal, controls, camera state, etc.).
- * The repository verifies the MediaStore copy by reading it back and comparing its
+ * The repository verifies the SAF copy by reading it back and comparing its
  * byte count and SHA-256 digest before reporting verified=true.
  */
 class AndroidMediaRepository(
@@ -41,9 +41,9 @@ class AndroidMediaRepository(
     filesDir: File,
 ) {
     companion object {
-        private const val CAMERA_DIR = "Pictures/PotensicProxy/Camera"
-        private const val RECOGNITION_DIR = "Pictures/PotensicProxy/Recognition"
-        private const val CAMERA_VIDEO_DIR = "Movies/PotensicProxy/Camera"
+        private const val CAMERA_DIR = "Documents/PotensicProxy/Exporte/Bilder"
+        private const val RECOGNITION_DIR = "Documents/PotensicProxy/RECO/Bilder"
+        private const val CAMERA_VIDEO_DIR = "Documents/PotensicProxy/Exporte/Videos"
         private const val MAX_INDEX_ITEMS = 1000
         private val PSTART_PROTOCOL_SIGNATURE = "POTENSIC_PSTART_PROTOCOL\u0000".toByteArray(Charsets.UTF_8)
     }
@@ -61,7 +61,7 @@ class AndroidMediaRepository(
         sessionId: String? = null,
     ): JSONObject {
         require(bytes.isNotEmpty()) { "Image payload is empty" }
-        ensureLegacyWritePermission()
+        PStartSafStorage.requireRoot(context)
 
         val normalizedLibrary = normalizeLibrary(library)
         val relativeDir = if (
@@ -78,80 +78,25 @@ class AndroidMediaRepository(
 
         val finalizedBytes = finalizeImageBytes(bytes, mimeType, metadata, captureTime)
 
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
-            put(MediaStore.Images.Media.MIME_TYPE, mimeType)
-            put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000L)
-            put(MediaStore.Images.Media.DATE_TAKEN, captureTime)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, relativeDir)
-                put(MediaStore.Images.Media.IS_PENDING, 1)
-            } else {
-                @Suppress("DEPRECATION")
-                val publicDir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                    relativeDir.removePrefix("Pictures/"),
-                ).apply { mkdirs() }
-                @Suppress("DEPRECATION")
-                put(MediaStore.Images.Media.DATA, File(publicDir, displayName).absolutePath)
-            }
-        }
-
-        val resolver = context.contentResolver
-        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            ?: throw IllegalStateException("Android MediaStore rejected image insert")
-
-        try {
-            resolver.openOutputStream(uri, "w")?.use { it.write(finalizedBytes) }
-                ?: throw IllegalStateException("Could not open Android MediaStore output stream")
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val ready = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
-                resolver.update(uri, ready, null, null)
-            }
-        } catch (e: Exception) {
-            try { resolver.delete(uri, null, null) } catch (_: Exception) {}
-            throw e
-        }
-
-        // Verification is deliberately performed before callers are allowed to delete
-        // a Drone Reco source file from the drone SD card.
+        val saf = PStartSafStorage.putFile(context, relativeDir.removePrefix("Documents/PotensicProxy/"), displayName, mimeType, finalizedBytes)
+        val uri = Uri.parse(saf.getString("uri"))
         val sourceHash = sha256(finalizedBytes)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         try { BitmapFactory.decodeByteArray(finalizedBytes, 0, finalizedBytes.size, bounds) } catch (_: Exception) {}
-        val storedBytes = try {
-            resolver.openInputStream(uri)?.use { it.readBytes() }
-        } catch (_: Exception) {
-            null
-        }
-        val storedHash = storedBytes?.let(::sha256)
-        val verified = storedBytes != null && storedBytes.size == finalizedBytes.size && storedHash == sourceHash
-
         val item = JSONObject().apply {
-            put("id", UUID.randomUUID().toString())
-            put("name", displayName)
-            put("mimeType", mimeType)
-            put("size", finalizedBytes.size)
-            put("source", source)
-            put("library", normalizedLibrary)
-            put("createdAt", System.currentTimeMillis())
-            put("captureTime", captureTime)
-            put("uri", uri.toString())
-            put("relativePath", relativeDir)
-            put("sha256", sourceHash)
-            put("verified", verified)
-            put("image", JSONObject().apply {
-                put("width", if (bounds.outWidth > 0) bounds.outWidth else JSONObject.NULL)
-                put("height", if (bounds.outHeight > 0) bounds.outHeight else JSONObject.NULL)
-                put("format", mimeType)
-                put("byteSize", finalizedBytes.size)
-                put("sha256", sourceHash)
-            })
+            put("id", UUID.randomUUID().toString()); put("name", displayName); put("mimeType", mimeType)
+            put("size", finalizedBytes.size); put("source", source); put("library", normalizedLibrary)
+            put("createdAt", System.currentTimeMillis()); put("captureTime", captureTime)
+            put("uri", uri.toString()); put("relativePath", relativeDir)
+            put("sha256", sourceHash); put("verified", true)
+            put("image", JSONObject().put("width", if (bounds.outWidth > 0) bounds.outWidth else JSONObject.NULL)
+                .put("height", if (bounds.outHeight > 0) bounds.outHeight else JSONObject.NULL)
+                .put("format", mimeType).put("byteSize", finalizedBytes.size).put("sha256", sourceHash))
             if (metadata != null) put("metadata", metadata)
         }
         appendToIndex(item)
-        Log.i("[MediaStore] Saved ${finalizedBytes.size} bytes as $displayName [$normalizedLibrary/$source] verified=$verified metadataEmbedded=${metadata != null && mimeType == "image/jpeg"} -> $uri")
         return item
+
     }
 
     @Synchronized
@@ -161,7 +106,7 @@ class AndroidMediaRepository(
         source: String = "camera-download",
     ): JSONObject {
         require(bytes.isNotEmpty()) { "Video payload is empty" }
-        ensureLegacyWritePermission()
+        PStartSafStorage.requireRoot(context)
 
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         val raw = requestedName
@@ -173,61 +118,13 @@ class AndroidMediaRepository(
         val safeBase = raw.replace(Regex("[^A-Za-z0-9._-]"), "_")
         val displayName = if (safeBase.endsWith(".mp4", ignoreCase = true)) safeBase else "$safeBase.mp4"
         val mimeType = "video/mp4"
-        val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
-            put(MediaStore.Video.Media.MIME_TYPE, mimeType)
-            put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000L)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Video.Media.RELATIVE_PATH, CAMERA_VIDEO_DIR)
-                put(MediaStore.Video.Media.IS_PENDING, 1)
-            } else {
-                @Suppress("DEPRECATION")
-                val publicDir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
-                    CAMERA_VIDEO_DIR.removePrefix("Movies/"),
-                ).apply { mkdirs() }
-                @Suppress("DEPRECATION")
-                put(MediaStore.Video.Media.DATA, File(publicDir, displayName).absolutePath)
-            }
-        }
-
-        val resolver = context.contentResolver
-        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-            ?: throw IllegalStateException("Android MediaStore rejected video insert")
-        try {
-            resolver.openOutputStream(uri, "w")?.use { it.write(bytes) }
-                ?: throw IllegalStateException("Could not open Android MediaStore video output stream")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val ready = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
-                resolver.update(uri, ready, null, null)
-            }
-        } catch (e: Exception) {
-            try { resolver.delete(uri, null, null) } catch (_: Exception) {}
-            throw e
-        }
-
-        val sourceHash = sha256(bytes)
-        val storedBytes = try { resolver.openInputStream(uri)?.use { it.readBytes() } } catch (_: Exception) { null }
-        val verified = storedBytes != null && storedBytes.size == bytes.size && sha256(storedBytes) == sourceHash
-        val item = JSONObject().apply {
-            put("id", UUID.randomUUID().toString())
-            put("name", displayName)
-            put("mimeType", mimeType)
-            put("size", bytes.size)
-            put("source", source)
-            put("library", "camera")
-            put("createdAt", System.currentTimeMillis())
-            put("uri", uri.toString())
-            put("relativePath", CAMERA_VIDEO_DIR)
-            put("sha256", sourceHash)
-            put("verified", verified)
-        }
+        val saved = PStartSafStorage.putFile(context, "Exporte/Videos", displayName, mimeType, bytes)
+        val item = JSONObject(saved.toString()).put("id", UUID.randomUUID().toString())
+            .put("mimeType", mimeType).put("source", source).put("library", "camera")
+            .put("createdAt", System.currentTimeMillis())
         appendToIndex(item)
-        Log.i("[MediaStore] Saved video ${bytes.size} bytes as $displayName verified=$verified -> $uri")
         return item
     }
-
-
 
     /**
      * Publishes the finalized PStart JSONL protocol into the same public session
@@ -235,74 +132,12 @@ class AndroidMediaRepository(
      * write using byte count and SHA-256, just like image storage.
      */
     @Synchronized
-    fun savePStartSessionProtocol(
-        sessionId: String,
-        protocol: String,
-        requestedName: String? = null,
-    ): JSONObject {
-        require(sessionId.isNotBlank()) { "PStart session id is required" }
-        require(protocol.isNotEmpty()) { "PStart protocol is empty" }
-        ensureLegacyWritePermission()
-
-        val relativeDir = pstartRelativeDir(sessionId)
-        val rawName = requestedName
-            ?.substringAfterLast('/')
-            ?.substringAfterLast('\\')
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
+    fun savePStartSessionProtocol(sessionId: String, protocol: String, requestedName: String? = null): JSONObject {
+        require(sessionId.isNotBlank() && protocol.isNotEmpty()) { "Missing PStart session or protocol" }
+        val filename = requestedName?.takeIf { it.matches(Regex("[A-Za-z0-9._-]{1,180}\\.jsonl")) }
             ?: "PStart_${sanitizeSessionId(sessionId)}_session.jsonl"
-        val safeBase = rawName.replace(Regex("[^A-Za-z0-9._-]"), "_")
-        val displayName = if (safeBase.endsWith(".jsonl", ignoreCase = true)) safeBase else "$safeBase.jsonl"
-        val bytes = protocol.toByteArray(Charsets.UTF_8)
-        val mimeType = "application/x-ndjson"
-
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-            put(MediaStore.MediaColumns.DATE_ADDED, System.currentTimeMillis() / 1000L)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, relativeDir)
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
-            } else {
-                @Suppress("DEPRECATION")
-                val publicDir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                    relativeDir.removePrefix("Pictures/"),
-                ).apply { mkdirs() }
-                @Suppress("DEPRECATION")
-                put(MediaStore.MediaColumns.DATA, File(publicDir, displayName).absolutePath)
-            }
-        }
-
-        val resolver = context.contentResolver
-        val collection = MediaStore.Files.getContentUri("external")
-        val uri = resolver.insert(collection, values)
-            ?: throw IllegalStateException("Android MediaStore rejected PStart protocol insert")
-        try {
-            resolver.openOutputStream(uri, "w")?.use { it.write(bytes) }
-                ?: throw IllegalStateException("Could not open Android MediaStore protocol output stream")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val ready = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-                resolver.update(uri, ready, null, null)
-            }
-        } catch (e: Exception) {
-            try { resolver.delete(uri, null, null) } catch (_: Exception) {}
-            throw e
-        }
-
-        val sourceHash = sha256(bytes)
-        val storedBytes = try { resolver.openInputStream(uri)?.use { it.readBytes() } } catch (_: Exception) { null }
-        val verified = storedBytes != null && storedBytes.size == bytes.size && sha256(storedBytes) == sourceHash
-        return JSONObject().apply {
-            put("name", displayName)
-            put("mimeType", mimeType)
-            put("size", bytes.size)
-            put("createdAt", System.currentTimeMillis())
-            put("uri", uri.toString())
-            put("relativePath", relativeDir)
-            put("sha256", sourceHash)
-            put("verified", verified)
-        }
+        return PStartSafStorage.putFile(context, pstartRelativeDir(sessionId).removePrefix("Documents/PotensicProxy/"),
+            filename, "application/x-ndjson", protocol.toByteArray(Charsets.UTF_8))
     }
 
     /**
@@ -374,41 +209,15 @@ class AndroidMediaRepository(
     fun savePStartAnalysisArtifact(sessionId: String, name: String, bytes: ByteArray): JSONObject {
         require(sessionId.isNotBlank()) { "session id missing" }
         require(bytes.isNotEmpty() && bytes.size <= 25_000_000) { "artifact empty or too large" }
-        require(Regex("[A-Za-z0-9._-]{1,180}").matches(name)) { "invalid artifact filename" }
-        require(name.contains("_analysis_", ignoreCase = true)) { "analysis artifact name required" }
-        ensureLegacyWritePermission()
-        val relativeDir = pstartRelativeDir(sessionId)
+        require(Regex("[A-Za-z0-9._-]{1,180}").matches(name) && name.contains("_analysis_", true)) { "invalid analysis filename" }
         val mime = when {
             name.endsWith(".jpg", true) || name.endsWith(".jpeg", true) -> "image/jpeg"
             name.endsWith(".json", true) -> "application/json"
             name.endsWith(".jsonl", true) -> "application/x-ndjson"
             name.endsWith(".xmp", true) -> "application/rdf+xml"
-            else -> throw IllegalArgumentException("unsupported extension")
+            else -> throw IllegalArgumentException("unsupported analysis artifact")
         }
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, mime)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, relativeDir)
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
-            } else {
-                @Suppress("DEPRECATION")
-                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), relativeDir.removePrefix("Pictures/")).apply { mkdirs() }
-                @Suppress("DEPRECATION")
-                put(MediaStore.MediaColumns.DATA, File(dir, name).absolutePath)
-            }
-        }
-        val resolver = context.contentResolver
-        val collection = if (mime == "image/jpeg") MediaStore.Images.Media.EXTERNAL_CONTENT_URI else MediaStore.Files.getContentUri("external")
-        val uri = resolver.insert(collection, values) ?: throw IllegalStateException("MediaStore rejected artifact")
-        try {
-            resolver.openOutputStream(uri, "w")?.use { it.write(bytes) } ?: error("could not open artifact")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
-            val stored = resolver.openInputStream(uri)?.use { it.readBytes() }
-            if (stored == null || !stored.contentEquals(bytes)) error("artifact verification failed")
-        } catch (e: Exception) { try { resolver.delete(uri, null, null) } catch (_: Exception) {} ; throw e }
-        return JSONObject().put("name", name).put("uri", uri.toString()).put("relativePath", relativeDir)
-            .put("sha256", sha256(bytes)).put("size", bytes.size).put("verified", true)
+        return PStartSafStorage.putFile(context, pstartRelativeDir(sessionId).removePrefix("Documents/PotensicProxy/"), name, mime, bytes)
     }
 
     @Synchronized
@@ -462,7 +271,7 @@ class AndroidMediaRepository(
         .ifBlank { "unknown" }
 
     private fun pstartRelativeDir(sessionId: String): String =
-        "$RECOGNITION_DIR/PStart_${sanitizeSessionId(sessionId)}"
+        "Documents/PotensicProxy/Auto/PStart/${sanitizeSessionId(sessionId)}"
 
     private fun normalizedNameAndMime(requestedName: String?, library: String): Pair<String, String> {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
