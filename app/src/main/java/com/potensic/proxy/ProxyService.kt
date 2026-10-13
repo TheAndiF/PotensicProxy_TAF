@@ -71,6 +71,10 @@ class ProxyService : Service(), UsbAccessoryManager.Listener {
         super.onCreate()
         instance = this
         Log.i("[Service] onCreate")
+        // Warm up the native OpenCV runtime on service startup, independent of PStart.
+        val openCvState = PStartOpenCvAnalyzer.selfTest()
+        if (openCvState.optBoolean("ready")) Log.i("[PStartOpenCV] native self-test OK")
+        else Log.w("[PStartOpenCV] native self-test failed: ${openCvState.optString("error")}")
 
         createNotificationChannel()
 

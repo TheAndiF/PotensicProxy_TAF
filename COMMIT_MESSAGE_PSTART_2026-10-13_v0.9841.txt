@@ -1,0 +1,22 @@
+BL_Improve PStart OpenCV diagnostics and MAX image analysis
+
+Date: 2026-10-13
+
+Summary:
+- Initialize OpenCV at Android startup and expose an independent health check.
+- Return detailed diagnostics for analyzer failures.
+- Use the Android SHA-256 endpoint when crypto.subtle is unavailable.
+- Include REF01-REF05 MIN and MAX images in optical analysis.
+- Keep REF00 MIN and MAX images as XMP metadata sources only.
+- Preserve PStart session result and diagnostics logging.
+- Include versioned PDF and editable DOCX project documentation.
+- Keep the existing project root and software version 0.9841.
+- Android build and device validation remain outstanding.
+
+Changed files:
+- app/src/main/java/com/potensic/proxy/ProxyService.kt
+- app/src/main/java/com/potensic/proxy/WebServer.kt
+- app/src/main/java/com/potensic/proxy/PStartOpenCvAnalyzer.kt
+- app/src/main/assets/web/assets/modules/services/PStartPostProcessingService.js
+- DOCUMENTATION/2026-10-13 - PotensicProxy_TAF - Projektdokumentation - PStart-OpenCV-MAX-REF00 - v0.9841.pdf
+- DOCUMENTATION/2026-10-13 - PotensicProxy_TAF - Projektdokumentation - PStart-OpenCV-MAX-REF00 - v0.9841.docx

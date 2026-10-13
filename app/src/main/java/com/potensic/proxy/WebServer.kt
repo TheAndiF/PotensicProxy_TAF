@@ -454,15 +454,26 @@ class WebServer(
                     } catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
                 }
 
-                // CPU-heavy offline detector. Never issues flight commands.
+                // Offline diagnostics: no PStart session and no flight commands required.
+                get("/api/pstart/analysis/opencv/health") {
+                    val result = withContext(Dispatchers.Default) { PStartOpenCvAnalyzer.selfTest() }
+                    call.respondText(result.toString(), ContentType.Application.Json,
+                        if (result.optBoolean("ready")) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable)
+                }
+                // CPU-heavy offline detector. Errors are returned with machine-readable diagnostics.
                 post("/api/pstart/analysis/opencv") {
                     try {
                         val body = call.receiveStream().use { it.readBytes() }
                         val result = withContext(Dispatchers.Default) { PStartOpenCvAnalyzer.inspect(body) }
                         call.respondText(result.toString(), ContentType.Application.Json)
-                    } catch (e: Exception) {
-                        Log.w("[PStartOpenCV] Marker analysis failed: ${e.message}")
-                        call.respondText(JSONObject().put("error", e.message ?: "OpenCV failed").toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
+                    } catch (e: Throwable) {
+                        val id = java.util.UUID.randomUUID().toString().take(8)
+                        Log.e("[PStartOpenCV] analysis failure id=$id type=${e.javaClass.name}", e)
+                        val result = JSONObject().put("error", e.message ?: "OpenCV analysis failed")
+                            .put("errorType", e.javaClass.name).put("diagnosticId", id)
+                            .put("stage", "native-analysis").put("ready", PStartOpenCvAnalyzer.selfTest().optBoolean("ready"))
+                        val status = if (e is IllegalArgumentException) HttpStatusCode.BadRequest else HttpStatusCode.InternalServerError
+                        call.respondText(result.toString(), ContentType.Application.Json, status)
                     }
                 }
 

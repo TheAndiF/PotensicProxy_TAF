@@ -1,0 +1,5 @@
+PotensicProxy_TAF – Auslieferungshinweis – v0.9841 (13.10.2026)
+Ausgangspaket: PotensicProxy_TAF (4).zip, Version 0.9841.
+Änderungsumfang: OpenCV Initialisierung/Health/Fehlerdiagnose, SHA-256 Fallback, MAX Bilder, REF00 Metadaten-only.
+Status: Quellcode; kein Android Build oder signierte APK; Gerätetests ausstehend.
+Dokumentation: DOCUMENTATION/2026-10-13 - PotensicProxy_TAF - Projektdokumentation - PStart-OpenCV-MAX-REF00 - v0.9841.pdf und .docx

@@ -4,13 +4,37 @@ import android.graphics.BitmapFactory
 import org.json.JSONArray
 import org.json.JSONObject
 import org.opencv.android.Utils
+import org.opencv.android.OpenCVLoader
 import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
 import java.util.ArrayList
 
 /** Offline, read-only marker extraction. No access to drone control paths. */
 object PStartOpenCvAnalyzer {
+    @Volatile private var ready = false
+    @Volatile private var lastError: String? = null
+
+    @Synchronized fun selfTest(): JSONObject {
+        try {
+            if (!ready) {
+                check(OpenCVLoader.initLocal()) { "OpenCVLoader.initLocal() returned false" }
+                val probe = Mat.eye(2, 2, CvType.CV_8UC1)
+                try { check(Core.countNonZero(probe) == 2) { "OpenCV native matrix test failed" } }
+                finally { probe.release() }
+                ready = true
+            }
+            lastError = null
+            return JSONObject().put("ready", true).put("engine", "OpenCV Android 4.10.0")
+        } catch (e: Throwable) {
+            lastError = "${e.javaClass.simpleName}: ${e.message ?: "unknown native failure"}"
+            return JSONObject().put("ready", false).put("error", lastError)
+        }
+    }
+
     fun inspect(jpeg: ByteArray): JSONObject {
+        val state = selfTest()
+        check(state.optBoolean("ready")) { "OpenCV initialization failed: ${state.optString("error")}" }
+
         require(jpeg.size <= 25 * 1024 * 1024) { "JPEG exceeds 25 MiB analysis limit" }
         val bmp = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
             ?: throw IllegalArgumentException("Invalid JPEG")
