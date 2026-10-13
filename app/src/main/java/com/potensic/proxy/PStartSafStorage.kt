@@ -53,9 +53,17 @@ object PStartSafStorage {
         // enforce the intended parent. Other providers use opaque IDs and cannot be
         // verified by interpreting their IDs as paths; never pretend otherwise.
         val id = DocumentsContract.getTreeDocumentId(uri)
-        require(uri.authority == "com.android.externalstorage.documents" && id == "primary:Documents/PotensicProxy") {
-            "Please select internal storage/Documents/PotensicProxy (selected provider=${uri.authority}, ID=$id)"
+        // Android's ExternalStorageProvider exposes the Documents root through
+        // two valid identifiers: primary:Documents/... and home:...
+        // The `home:` alias represents the Documents directory, not storage root.
+        // Accept ONLY this provider and these two exact target IDs; a matching
+        // display name alone must not grant access to an unrelated location.
+        val correctLocation = uri.authority == "com.android.externalstorage.documents" &&
+            (id == "primary:Documents/PotensicProxy" || id == "home:PotensicProxy")
+        require(correctLocation) {
+            "Please select internal storage/Documents/PotensicProxy (selected provider=${uri.authority}, ID=$id, displayName=$name)"
         }
+        Log.i("PStartSAF", "Selected location verified: provider=${uri.authority}, id=$id, name=$name")
         context.contentResolver.takePersistableUriPermission(uri, flags)
         // Probe the exact selected directory before enabling flight-related writes.
         try {
