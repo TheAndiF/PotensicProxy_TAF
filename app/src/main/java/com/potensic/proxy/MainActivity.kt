@@ -1,6 +1,7 @@
 package com.potensic.proxy
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -23,7 +24,7 @@ class MainActivity : Activity() {
             startService(serviceIntent)
         }
 
-        Log.i("[MainActivity] ProxyService started, finishing activity")
+        Log.i("[MainActivity] ProxyService started; checking SAF setup")
         Log.i("[MainActivity] Open http://<phone-ip>:9090 for web UI")
 
         // Show a toast with the URL
@@ -33,6 +34,19 @@ class MainActivity : Activity() {
         Log.i("[MainActivity] Phone IP: $ip")
         android.widget.Toast.makeText(this, getString(R.string.toast_web_ui, ip), android.widget.Toast.LENGTH_LONG).show()
 
-        finish()
+        if (PStartSafStorage.hasPermission(this)) {
+            finish()
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle("PotensicProxy – Speicherfreigabe")
+                .setMessage("Für PStart-Aufnahmen und gespeicherte Kameramedien wird der Ordner Documents/PotensicProxy benötigt. Bitte diesen Ordner im Android-Dateidialog auswählen oder erstellen und den Zugriff erlauben. Die Freigabe bleibt gespeichert. Web-Downloads bleiben unverändert.")
+                .setPositiveButton("Ordner freigeben") { _, _ ->
+                    PStartSafStorage.request(this)
+                    finish()
+                }
+                .setNegativeButton("Später") { _, _ -> finish() }
+                .setCancelable(false)
+                .show()
+        }
     }
 }

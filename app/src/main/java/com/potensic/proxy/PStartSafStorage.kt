@@ -14,6 +14,7 @@ import java.security.MessageDigest
 object PStartSafStorage {
     private const val KEY = "pstart_saf_tree"
     @Volatile private var state: String = "NOT_SELECTED"
+    fun hasPermission(context: Context): Boolean = tree(context) != null
     fun status(context: Context): JSONObject {
         val uri = tree(context)
         return JSONObject().put("state", if (uri != null) "READY" else if (state == "READY") "NOT_SELECTED" else state)
@@ -36,7 +37,9 @@ object PStartSafStorage {
         state = "READY"
     }
     fun cancelled() { state = "CANCELLED" }
+    fun failed(message: String) { state = "ERROR: " + message.take(180) }
     fun request(context: Context) {
+        if (hasPermission(context)) { state = "READY"; return }
         state = "PICKER_REQUESTED"
         context.startActivity(Intent(context, PStartFolderPickerActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
@@ -155,6 +158,7 @@ object PStartSafStorage {
 class PStartFolderPickerActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState != null) return
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }
@@ -167,7 +171,11 @@ class PStartFolderPickerActivity : Activity() {
             try {
                 if (resultCode == RESULT_OK && data?.data != null) PStartSafStorage.selected(this, data.data!!, data.flags)
                 else PStartSafStorage.cancelled()
-            } catch (e: Exception) { android.util.Log.w("PStartSAF", "Permission failed: ${e.message}"); PStartSafStorage.cancelled() }
+            } catch (e: Exception) {
+                android.util.Log.w("PStartSAF", "Permission failed: ${e.message}")
+                PStartSafStorage.failed(e.message ?: e.javaClass.simpleName)
+                android.widget.Toast.makeText(this, e.message ?: "Ordnerfreigabe fehlgeschlagen", android.widget.Toast.LENGTH_LONG).show()
+            }
             finish()
         }
     }
