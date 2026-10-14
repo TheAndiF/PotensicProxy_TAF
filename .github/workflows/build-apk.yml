@@ -20,6 +20,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Reject unresolved Git merge markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(app/build.gradle.kts settings.gradle.kts build.gradle.kts gradle.properties)
+          files+=(.github/workflows/*.yml .github/workflows/*.yaml)
+          failed=0
+          for file in "${files[@]}"; do
+            [[ -f "$file" ]] || continue
+            if grep -nE '^(<<<<<<< |======= *$|>>>>>>> )' "$file"; then
+              echo "::error file=$file::Unresolved Git merge conflict; resolve and commit before building."
+              failed=1
+            fi
+          done
+          exit "$failed"
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:

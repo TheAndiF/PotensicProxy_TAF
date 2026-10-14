@@ -31,11 +31,9 @@ android {
         applicationId = "com.potensic.proxy"
         minSdk = 26
         targetSdk = 36
-<<<<<<< HEAD
-        versionCode = (System.getenv("TAF_BUILD_VERSION_CODE")?.toIntOrNull()?.plus(1_900_000) ?: 68)
-=======
+        // CI supplies the raw run number; BA adds its dedicated offset in the workflow.
+        // Do not combine conflicting Git branches or duplicate the channel offset here.
         versionCode = (System.getenv("TAF_BUILD_VERSION_CODE")?.toIntOrNull()?.plus(100_000) ?: 68)
->>>>>>> 5a48670 (BA_ fix versionCode parity across APK build, validation and release)
         versionName = webuiVersion
     }
 
