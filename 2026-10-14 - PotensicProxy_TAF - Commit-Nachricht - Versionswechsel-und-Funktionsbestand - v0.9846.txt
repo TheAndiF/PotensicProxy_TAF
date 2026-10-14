@@ -1,0 +1,14 @@
+BA_ Align all active application versions to 0.9846 and preserve system features
+
+Changed files:
+- webui/package.json
+- webui/package-lock.json
+- webui/index.html
+- webui/scripts/pairing-runtime-source.js
+- webui/public/assets/taf-pairing-runtime-v0.9846.js
+- app/src/main/assets/web/index.html
+- app/src/main/assets/web/assets/taf-pairing-runtime-v0.9846.js
+- DOCUMENTATION/2026-10-14 - PotensicProxy_TAF - Aenderungshistorie-ab-0.9845 - v0.9846.md
+- webui/public/assets/taf-pairing-runtime-v0.9845.7.js (renamed)
+
+Android versionName follows the shared package version. Historical changelogs remain unchanged.
