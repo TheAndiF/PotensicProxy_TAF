@@ -2,17 +2,14 @@
   <div class="debug-console-container">
     <!-- Sub-navigation Header -->
     <div class="debug-header">
-      <div class="tab-selectors">
-        <el-radio-group v-model="debugStore.activeSubTab" size="small">
-          <el-radio-button value="view">🖥️ Ansicht</el-radio-button>
-          <el-radio-button value="flight">✈️ {{ t('system.flight') }}</el-radio-button>
-          <el-radio-button value="pstart">🎯 {{ t('pstart.tab') }}</el-radio-button>
-          <el-radio-button value="camera">📷 {{ t('engineering.camera') }}</el-radio-button>
-          <el-radio-button value="fpv">📶 {{ t('engineering.fpv') }}</el-radio-button>
-          <el-radio-button value="sensor">⚖️ {{ t('engineering.sensor') }}</el-radio-button>
-          <el-radio-button value="rid">📡 {{ t('engineering.rid') }}</el-radio-button>
-          <el-radio-button value="relay">🌐 {{ t('engineering.relay') }}</el-radio-button>
-          <el-radio-button value="logs">📋 {{ t('engineering.logs') }}</el-radio-button>
+      <div class="tab-selectors system-navigation" data-taf-system-navigation="app-drone-web-v1">
+        <el-radio-group v-model="systemGroup" size="small" aria-label="Systembereich">
+          <el-radio-button value="app">📱 App</el-radio-button>
+          <el-radio-button value="drone">✈️ Drohne</el-radio-button>
+          <el-radio-button value="web">🌐 Web</el-radio-button>
+        </el-radio-group>
+        <el-radio-group v-model="selectedSystemTab" size="small" aria-label="Systemfunktion">
+          <el-radio-button v-for="entry in visibleSystemTabs" :key="entry.value" :value="entry.value">{{ entry.label }}</el-radio-button>
         </el-radio-group>
       </div>
 
@@ -29,14 +26,15 @@
       </div>
     </div>
 
-    <DroneProfilePanel />
-    <AppUpdateSettings />
-    <LanguagePanel />
+    <!-- Keep settings components mounted; only their visibility/navigation changes. -->
 
     <!-- Main Content Area -->
     <div class="debug-body">
+      <div v-show="systemGroup === 'app' && selectedSystemTab === 'language'" class="sub-tab-pane"><LanguagePanel /></div>
+      <div v-show="systemGroup === 'app' && selectedSystemTab === 'updates'" class="sub-tab-pane"><AppUpdateSettings /></div>
+      <div v-show="systemGroup === 'drone' && selectedSystemTab === 'protocol'" class="sub-tab-pane"><DroneProfilePanel /></div>
       <!-- System > Ansicht: alle Anzeige- und Stream-Einstellungen an einem Ort -->
-      <div v-show="debugStore.activeSubTab === 'view'" class="sub-tab-pane view-settings-pane">
+      <div v-show="selectedSystemTab === 'view'" class="sub-tab-pane view-settings-pane">
         <DisplaySettingsPanel />
         <section class="view-stream-settings">
           <h3>Videoausgabe und virtuelle Webcam</h3>
@@ -45,16 +43,16 @@
       </div>
 
       <!-- ================= System: flight limits, smart modes and calibration ================= -->
-      <div v-show="debugStore.activeSubTab === 'flight'" class="sub-tab-pane system-flight-pane">
+      <div v-show="selectedSystemTab === 'flight'" class="sub-tab-pane system-flight-pane">
         <AdvancedFlightPanel />
       </div>
 
-      <div v-show="debugStore.activeSubTab === 'pstart'" class="sub-tab-pane system-flight-pane">
+      <div v-show="selectedSystemTab === 'pstart'" class="sub-tab-pane system-flight-pane">
         <PrecisionStartSettings />
       </div>
 
       <!-- ================= Sub-tab 1: Camera command console ================= -->
-      <div v-show="debugStore.activeSubTab === 'camera'" class="sub-tab-pane camera-pane">
+      <div v-show="selectedSystemTab === 'camera'" class="sub-tab-pane camera-pane">
         <!-- Chip Temperatures Bar -->
         <div class="temp-cards-bar">
           <div class="temp-card">
@@ -169,7 +167,7 @@
       </div>
 
       <!-- ================= Sub-tab 2: Video and RF low-level tools ================= -->
-      <div v-show="debugStore.activeSubTab === 'fpv'" class="sub-tab-pane fpv-pane">
+      <div v-show="selectedSystemTab === 'fpv'" class="sub-tab-pane fpv-pane">
         <!-- Left: Quick RF Actions -->
         <div class="fpv-controls-col">
           <div class="panel-box">
@@ -462,7 +460,7 @@
       </div>
 
       <!-- ================= Sub-tab 3: Sensors and calibration ================= -->
-      <div v-show="debugStore.activeSubTab === 'sensor'" class="sub-tab-pane sensor-pane">
+      <div v-show="selectedSystemTab === 'sensor'" class="sub-tab-pane sensor-pane">
         <!-- IMU 6-Axis Calibration Card -->
         <div class="panel-box">
           <div class="box-title-row">
@@ -628,7 +626,7 @@
       </div>
 
       <!-- ================= Sub-tab 4: Remote ID and system ================= -->
-      <div v-show="debugStore.activeSubTab === 'rid'" class="sub-tab-pane rid-pane">
+      <div v-show="selectedSystemTab === 'rid'" class="sub-tab-pane rid-pane">
         <div class="panel-box">
           <div class="box-title-row">
             <span class="box-title">📡 Drone Remote ID (RID) Status</span>
@@ -669,12 +667,12 @@
       </div>
 
       <!-- ================= Sub-tab 5: Remote / Relay ================= -->
-      <div v-show="debugStore.activeSubTab === 'relay'" class="sub-tab-pane relay-pane">
+      <div v-show="selectedSystemTab === 'relay'" class="sub-tab-pane relay-pane">
         <RemoteRelayPanel />
       </div>
 
       <!-- ================= Sub-tab 6: System logs ================= -->
-      <div v-show="debugStore.activeSubTab === 'logs'" class="sub-tab-pane logs-pane">
+      <div v-show="selectedSystemTab === 'logs'" class="sub-tab-pane logs-pane">
         <LogConsole />
       </div>
     </div>
@@ -685,7 +683,7 @@
 import AdvancedFlightPanel from '../cockpit/AdvancedFlightPanel.vue'
 import PrecisionStartSettings from '../settings/PrecisionStartSettings.vue'
 import AppUpdateSettings from '../settings/AppUpdateSettings.vue'
-import { ref, nextTick, watch, onMounted } from 'vue'
+import { ref, computed, nextTick, watch, onMounted } from 'vue'
 import { useDebugStore } from '../../stores/useDebugStore'
 import { DroneControlService } from '../../services/DroneControlService'
 import { ElMessage } from 'element-plus'
@@ -700,6 +698,50 @@ import { MapService } from '../../services/MapService'
 import { FRONTEND_VERSION } from '../../version'
 
 const debugStore = useDebugStore()
+// Navigation changes only presentation, not drone commands, settings or telemetry.
+type SystemGroup = 'app' | 'drone' | 'web'
+type SystemTab = 'language' | 'updates' | 'logs' | 'protocol' | 'flight' | 'pstart' | 'camera' | 'fpv' | 'sensor' | 'rid' | 'view' | 'relay'
+const systemTabs: Record<SystemGroup, { value: SystemTab; label: string }[]> = {
+  app: [
+    { value: 'language', label: '🌐 Sprache' },
+    { value: 'updates', label: '🔄 App-Updates' },
+    { value: 'logs', label: '📋 Protokolle & Diagnose' }
+  ],
+  drone: [
+    { value: 'protocol', label: '📡 Kommunikationsprotokoll' },
+    { value: 'flight', label: '✈️ Flug & Kalibrierung' },
+    { value: 'pstart', label: '🎯 PStart / PLand' },
+    { value: 'camera', label: '📷 Kamera-Konsole' },
+    { value: 'fpv', label: '📶 Video & RF' },
+    { value: 'sensor', label: '⚖️ Sensoren' },
+    { value: 'rid', label: '📡 Remote ID' }
+  ],
+  web: [
+    { value: 'view', label: '🖥️ Ansicht & Streams' },
+    { value: 'relay', label: '🌐 Remote / Relay' }
+  ]
+}
+const groupForTab = (tab: string): SystemGroup =>
+  (tab === 'language' || tab === 'updates' || tab === 'logs') ? 'app' :
+  (tab === 'view' || tab === 'relay') ? 'web' : 'drone'
+const systemGroup = ref<SystemGroup>(groupForTab(debugStore.activeSubTab))
+const selectedSystemTab = ref<SystemTab>(debugStore.activeSubTab)
+const visibleSystemTabs = computed(() => systemTabs[systemGroup.value])
+watch(systemGroup, group => {
+  if (!systemTabs[group].some(item => item.value === selectedSystemTab.value)) {
+    selectedSystemTab.value = systemTabs[group][0].value
+  }
+})
+watch(selectedSystemTab, tab => {
+  // The existing store is retained so previous components remain compatible.
+  if (tab !== 'language' && tab !== 'updates' && tab !== 'protocol') debugStore.activeSubTab = tab
+})
+watch(() => debugStore.activeSubTab, tab => {
+  if (tab !== selectedSystemTab.value) {
+    systemGroup.value = groupForTab(tab)
+    selectedSystemTab.value = tab
+  }
+})
 const { t } = useI18n()
 const backendVersion = ref('loading...')
 
@@ -1626,4 +1668,9 @@ function onQueryRemoteId() {
 .view-settings-pane{overflow-y:auto;padding:16px;box-sizing:border-box}
 .view-stream-settings{max-width:780px;margin:16px auto;padding:18px;border:1px solid var(--border);border-radius:8px;background:var(--card-bg)}
 .view-stream-settings h3{margin:0 0 14px;font-size:16px;color:var(--ui-text)}
+</style>
+
+<style scoped>
+.system-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.system-navigation :deep(.el-radio-group) { flex-wrap: wrap; row-gap: 5px; }
 </style>

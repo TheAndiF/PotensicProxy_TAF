@@ -1,0 +1,1 @@
+Die eingebettete WebUI muss durch einen stabilen Render-Marker und Quellstrukturpruefung nachgewiesen werden. Reine Suche nach lokalisierten Labels im minifizierten Bundle ist nicht ausreichend.
