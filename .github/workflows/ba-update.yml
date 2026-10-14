@@ -119,6 +119,8 @@ jobs:
           TAF_DEBUG_KEY_ALIAS: ${{ secrets.TAF_DEBUG_KEY_ALIAS }}
           TAF_DEBUG_KEY_PASSWORD: ${{ secrets.TAF_DEBUG_KEY_PASSWORD }}
         run: |
+          # BA: Gradle adds the common 100000 offset; supply the BA channel offset here.
+          export TAF_BUILD_VERSION_CODE=$((1900000 + GITHUB_RUN_NUMBER))
           chmod +x gradlew
           ./gradlew --no-build-cache :app:assembleDebug --stacktrace
 

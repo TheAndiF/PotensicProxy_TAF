@@ -12,7 +12,7 @@ assert repo == 'TheAndiF/PotensicProxy_TAF', 'Unexpected public update repositor
 assert len(a.sha) == 40 and all(c in '0123456789abcdef' for c in a.sha.lower())
 run = int(a.run_number)
 assert run > 0
-code = 2000000 + run  # BA_: (1900000 + run) + 100000 in app/build.gradle.kts
+code = 2000000 + run  # BA_: TAF_BUILD_VERSION_CODE=(1900000+run), Gradle adds 100000
 out = pathlib.Path(a.output)
 out.mkdir(parents=True, exist_ok=True)
 name = f'PotensicProxy_TAF-BA-{code}.apk'
