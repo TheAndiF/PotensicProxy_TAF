@@ -58,6 +58,9 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         put("versionCode", BuildConfig.VERSION_CODE)
         put("channel", if (BuildConfig.DEBUG) "BA_" else "stable")
         put("autoMode", prefs.getString("auto_mode", "notify"))
+        put("installMethod", prefs.getString("install_method", "android"))
+        put("headlessEnabled", prefs.getBoolean("headless_enabled", false))
+        put("automaticInstall", prefs.getBoolean("automatic_install", false))
         put("phase", phase); put("progress", percent); put("error", error)
         put("pending", destination.isFile)
         put("blocker", safetyReason() ?: JSONObject.NULL)
@@ -68,6 +71,42 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         require(mode in listOf("off", "notify", "download")) { "Invalid automatic update mode" }
         prefs.edit().putString("auto_mode", mode).apply()
     }
+    fun setInstallOptions(method: String, headlessEnabled: Boolean, automaticInstall: Boolean) {
+        require(method in listOf("android", "magisk", "auto")) { "Invalid installation method" }
+        prefs.edit().putString("install_method", method).putBoolean("headless_enabled", headlessEnabled).putBoolean("automatic_install", automaticInstall).apply()
+    }
+
+    private fun rootAvailable(): Boolean = try {
+        val proc = ProcessBuilder("su", "-c", "id -u").redirectErrorStream(true).start()
+        val uid = proc.inputStream.bufferedReader().readText().trim()
+        proc.waitFor() == 0 && uid == "0"
+    } catch (_: Exception) { false }
+
+    private fun startRootInstall() {
+        require(prefs.getBoolean("headless_enabled", false)) { "Headless installation has not been explicitly authorized" }
+        safetyReason()?.let { throw IllegalStateException(it) }
+        verifyStagedUpdate()
+        require(rootAvailable()) { "Magisk root not available or not authorized" }
+        // Only the internally staged and cryptographically verified APK is accepted.
+        // No user-supplied shell commands or paths are supported.
+        val apk = destination.canonicalPath
+        require(destination.canonicalFile.parentFile == storage.canonicalFile) { "Untrusted update location" }
+        require(apk.matches(Regex("[a-zA-Z0-9_./-]+"))) { "Unsafe APK path" }
+        phase = "installing_root"
+        val installer = Thread {
+            try {
+                // Root process runs separately; Android may terminate the app during replacement.
+                val process = ProcessBuilder("su", "-c", "pm install -r --user 0 $apk")
+                    .redirectErrorStream(true).start()
+                val output = process.inputStream.bufferedReader().readText().take(1000)
+                val result = process.waitFor()
+                if (result != 0) { phase = "error"; error = "Magisk installation failed ($result): $output" }
+            } catch (e: Exception) { phase = "error"; error = e.message ?: "Root installation failed" }
+        }
+        installer.isDaemon = false
+        installer.start()
+    }
+
     private fun connection(url: String): HttpURLConnection {
         require(url.startsWith("https://")) { "Only HTTPS updates are permitted" }
         return (URL(url).openConnection() as HttpURLConnection).apply {
@@ -206,6 +245,17 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
     }
     fun abort() { cancel = true; if (!busy.get()) { destination.delete(); phase = "cancelled" } }
     fun requestInstall(): JSONObject {
+        val method = prefs.getString("install_method", "android") ?: "android"
+        if (method != "android" && prefs.getBoolean("headless_enabled", false)) {
+            safetyReason()?.let { throw IllegalStateException(it) }
+            verifyStagedUpdate()
+            if (rootAvailable()) {
+                startRootInstall()
+                return status()
+            }
+            if (method == "magisk") throw IllegalStateException("Magisk root unavailable; select Android or automatic fallback")
+        }
+
         require(destination.isFile) { "No verified update prepared" }
         require(!busy.get()) { "Update currently downloading" }
         safetyReason()?.let { throw IllegalStateException(it) }

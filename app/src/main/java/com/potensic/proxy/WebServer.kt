@@ -91,7 +91,7 @@ class WebServer(
                     }
                 }
 
-                // APK updates are Android-owned: no flight commands or silent installs.
+                // APK updates: Android installer or explicitly authorized Magisk installer; no flight commands.
                 get("/api/updates/status") {
                     call.respondText(updateManager.status().toString(), ContentType.Application.Json)
                 }
@@ -103,6 +103,13 @@ class WebServer(
                     try {
                         val mode = JSONObject(call.receiveText()).getString("autoMode")
                         updateManager.setMode(mode)
+                        call.respondText(updateManager.status().toString(), ContentType.Application.Json)
+                    } catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
+                }
+                post("/api/updates/install-settings") {
+                    try {
+                        val settings = JSONObject(call.receiveText())
+                        updateManager.setInstallOptions(settings.getString("installMethod"), settings.getBoolean("headlessEnabled"), settings.getBoolean("automaticInstall"))
                         call.respondText(updateManager.status().toString(), ContentType.Application.Json)
                     } catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
                 }

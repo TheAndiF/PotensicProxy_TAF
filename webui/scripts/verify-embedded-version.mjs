@@ -83,7 +83,7 @@ if (!jsContainsVersion) fail(`Embedded JavaScript does not contain frontend vers
 // emitted marker, so the check cannot pass merely because a marker was copied.
 const systemSourcePath = path.join(webui, 'src', 'components', 'debug', 'DebugConsoleView.vue')
 const systemSource = fs.readFileSync(systemSourcePath, 'utf8')
-const navigationMarker = 'app-drone-web-v1'
+const navigationMarker = 'app-drone-web-v2'
 if (!systemSource.includes(`data-taf-system-navigation="${navigationMarker}"`)) {
   fail('System navigation marker missing from DebugConsoleView.vue')
 }

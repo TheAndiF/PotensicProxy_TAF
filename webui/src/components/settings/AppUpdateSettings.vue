@@ -9,6 +9,18 @@
         <option value="download">Automatisch herunterladen</option>
       </select>
     </label>
+    <label>Installationsverfahren
+      <select v-model="installMethod" @change="saveInstallOptions">
+        <option value="android">Android-Installer (ohne Root)</option>
+        <option value="magisk">Headless über Magisk</option>
+        <option value="auto">Automatisch (Magisk, sonst Android)</option>
+      </select>
+    </label>
+    <label v-if="installMethod !== 'android'">
+      <input type="checkbox" v-model="headlessEnabled" @change="saveInstallOptions" />
+      Unbeaufsichtigte Root-Installation ausdrücklich erlauben
+    </label>
+    <label><input type="checkbox" v-model="automaticInstall" @change="saveInstallOptions" /> Installation nach geprüftem Download automatisch anfordern (nur bei ausdrücklicher Freigabe)</label>
     <div class="actions">
       <button type="button" :disabled="working" @click="check">Updates prüfen</button>
       <button type="button" :disabled="working || !candidate" @click="download">Herunterladen</button>
@@ -21,16 +33,19 @@
     <progress v-if="working" :value="status.progress || 0" max="100" />
     <p v-if="status.blocker" class="warning">Installation gesperrt: {{ status.blocker }}</p>
     <p v-if="message" class="message">{{ message }}</p>
-    <small>Installation nur am Android-Gerät und nach Android-Bestätigung. Während aktiver Drohnenverbindung gesperrt. Mehr als 40 % Handy-Akku erforderlich. Android kann ein installiertes Update nicht jederzeit abbrechen oder garantiert zurücksetzen.</small>
+    <small>Bei Android-Installation ist eine Bestätigung erforderlich. Magisk-Installation nur nach ausdrücklicher Aktivierung und Root-Freigabe. Während aktiver Drohnenverbindung gesperrt. Mehr als 40 % Handy-Akku erforderlich. Android kann ein installiertes Update nicht jederzeit abbrechen oder garantiert zurücksetzen.</small>
   </section>
 </template>
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 type Candidate = { versionCode:number, versionName:string, apkUrl:string, sha256:string, channel:string, packageName:string, buildId?:string, buildDate?:string }
-type State = { version?:string, versionCode?:number, channel?:string, autoMode?:string, phase?:string, progress?:number, pending?:boolean, blocker?:string | null }
+type State = { version?:string, versionCode?:number, channel?:string, autoMode?:string, installMethod?:string, headlessEnabled?:boolean, automaticInstall?:boolean, phase?:string, progress?:number, pending?:boolean, blocker?:string | null }
 const status = ref<State>({})
 const candidate = ref<Candidate | null>(null)
 const mode = ref('notify')
+const installMethod = ref('android')
+const headlessEnabled = ref(false)
+const automaticInstall = ref(false)
 const working = ref(false)
 const message = ref('')
 let tick: ReturnType<typeof setInterval> | undefined
@@ -42,7 +57,7 @@ async function api(path:string, body?:unknown) {
   return j
 }
 async function refresh() {
-  try { status.value = await api('status'); mode.value = status.value.autoMode || 'notify' }
+  try { status.value = await api('status'); mode.value = status.value.autoMode || 'notify'; installMethod.value = status.value.installMethod || 'android'; headlessEnabled.value = !!status.value.headlessEnabled; automaticInstall.value = !!status.value.automaticInstall }
   catch(e) { message.value = String(e) }
 }
 async function check() {
@@ -60,7 +75,11 @@ async function doDownload() {
   if (!candidate.value) return
   message.value = 'Update wird heruntergeladen und überprüft …'
   await api('download', candidate.value)
-  message.value = 'APK geprüft. Installation am Handy kann angefordert werden.'
+  message.value = 'APK geprüft. Installation kann angefordert werden.'
+  if (automaticInstall.value) {
+    try { await api('install', {}); message.value = 'Automatische Installationsanforderung gestartet.' }
+    catch(e) { message.value = 'Automatische Installation nicht gestartet: ' + String(e) }
+  }
 }
 async function download() {
   working.value = true
@@ -73,9 +92,13 @@ async function cancel() {
   await refresh()
 }
 async function install() {
-  try { await api('install', {}); message.value = 'Am Android-Handy die Update-Benachrichtigung antippen und Installation bestätigen.' }
+  try { await api('install', {}); message.value = installMethod.value === 'android' || !headlessEnabled.value ? 'Android-Installationsbenachrichtigung öffnen und bestätigen.' : 'Installationsweg angefordert. Status am Gerät prüfen.' }
   catch(e) { message.value = String(e) }
   await refresh()
+}
+async function saveInstallOptions() {
+  try { await api('install-settings', { installMethod: installMethod.value, headlessEnabled: headlessEnabled.value, automaticInstall: automaticInstall.value }); message.value = 'Installationsverfahren gespeichert.' }
+  catch(e) { message.value = String(e) }
 }
 async function saveMode() {
   try { await api('settings', { autoMode:mode.value }); message.value = 'Updateeinstellung gespeichert.' }

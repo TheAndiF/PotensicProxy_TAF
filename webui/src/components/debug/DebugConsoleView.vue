@@ -2,14 +2,11 @@
   <div class="debug-console-container">
     <!-- Sub-navigation Header -->
     <div class="debug-header">
-      <div class="tab-selectors system-navigation" data-taf-system-navigation="app-drone-web-v1">
+      <div class="system-main-navigation" data-taf-system-navigation="app-drone-web-v2">
         <el-radio-group v-model="systemGroup" size="small" aria-label="Systembereich">
           <el-radio-button value="app">📱 App</el-radio-button>
           <el-radio-button value="drone">✈️ Drohne</el-radio-button>
           <el-radio-button value="web">🌐 Web</el-radio-button>
-        </el-radio-group>
-        <el-radio-group v-model="selectedSystemTab" size="small" aria-label="Systemfunktion">
-          <el-radio-button v-for="entry in visibleSystemTabs" :key="entry.value" :value="entry.value">{{ entry.label }}</el-radio-button>
         </el-radio-group>
       </div>
 
@@ -29,7 +26,14 @@
     <!-- Keep settings components mounted; only their visibility/navigation changes. -->
 
     <!-- Main Content Area -->
-    <div class="debug-body">
+    <div class="system-content-layout">
+      <nav class="system-side-navigation" aria-label="Systemfunktionen">
+        <button v-for="entry in visibleSystemTabs" :key="entry.value" type="button"
+          class="system-side-entry" :class="{ selected: selectedSystemTab === entry.value }"
+          :aria-current="selectedSystemTab === entry.value ? 'page' : undefined"
+          @click="selectedSystemTab = entry.value">{{ entry.label }}</button>
+      </nav>
+      <div class="debug-body">
       <div v-show="systemGroup === 'app' && selectedSystemTab === 'language'" class="sub-tab-pane"><LanguagePanel /></div>
       <div v-show="systemGroup === 'app' && selectedSystemTab === 'updates'" class="sub-tab-pane"><AppUpdateSettings /></div>
       <div v-show="systemGroup === 'drone' && selectedSystemTab === 'protocol'" class="sub-tab-pane"><DroneProfilePanel /></div>
@@ -675,6 +679,7 @@
       <div v-show="selectedSystemTab === 'logs'" class="sub-tab-pane logs-pane">
         <LogConsole />
       </div>
+      </div>
     </div>
   </div>
 </template>
@@ -948,6 +953,7 @@ function onQueryRemoteId() {
 }
 
 .debug-body {
+  min-width: 0;
   flex: 1;
   overflow-y: auto;
   padding: 14px;
@@ -1677,4 +1683,13 @@ function onQueryRemoteId() {
 <style scoped>
 .system-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .system-navigation :deep(.el-radio-group) { flex-wrap: wrap; row-gap: 5px; }
+</style>
+
+<style scoped>
+.system-content-layout{display:flex;flex:1;min-height:0;overflow:hidden}
+.system-side-navigation{display:flex;flex-direction:column;gap:5px;width:215px;min-width:150px;max-width:34%;overflow-y:auto;flex-shrink:0;padding:12px 8px;border-right:1px solid var(--border);background:var(--ui-bg-header)}
+.system-side-entry{padding:10px 9px;min-height:38px;text-align:left;border:1px solid transparent;border-radius:5px;background:transparent;color:inherit;cursor:pointer;overflow-wrap:anywhere}
+.system-side-entry:hover,.system-side-entry.selected{background:var(--panel-bg);border-color:var(--border)}
+.system-side-entry.selected{font-weight:700}
+@media(max-width:600px){.system-side-navigation{width:145px;min-width:115px}.system-side-entry{font-size:12px;padding:7px 5px}.debug-header{flex-wrap:wrap}}
 </style>
