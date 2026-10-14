@@ -76,4 +76,19 @@ function walk(dir) {
 walk(embedded)
 if (!jsContainsVersion) fail(`Embedded JavaScript does not contain frontend version ${version}`)
 
+
+// Release gate: the actual Android-embedded JavaScript must contain the new
+// System > App / Drohne / Web navigation and its primary destinations.
+// This prevents publishing a version-bumped APK with the old System UI.
+const bundleNames = fs.existsSync(assetsDir) ? fs.readdirSync(assetsDir).filter(n => /^index-.*\.js$/.test(n)) : []
+const entryJs = bundleNames.map(n => fs.readFileSync(path.join(assetsDir, n), 'utf8')).join('\n')
+const requiredNavigation = ['Kommunikationsprotokoll', 'App-Updates', 'Remote / Relay', 'Sprache']
+for (const label of requiredNavigation) {
+  if (!entryJs.includes(label)) fail(`Embedded WebUI has no System navigation label: ${label}; rebuild WebUI from current sources`)
+}
+// The group selection names must be embedded in the compiled System navigation.
+if (!entryJs.includes('Systembereich') || !entryJs.includes('Systemfunktion')) {
+  fail('Embedded WebUI does not contain App / Drohne / Web navigation controls')
+}
+
 if (!process.exitCode) console.log(`[embedded-version] OK: frontend/backend/runtime v${version}`)
