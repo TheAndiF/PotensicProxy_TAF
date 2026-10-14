@@ -19,8 +19,23 @@ if (!fs.existsSync(publicAssets)) {
   process.exit(1)
 }
 
+// The canonical runtime is tracked independently of generated public assets.
+// This repairs clean GitHub checkouts in which the versioned public file was not committed.
+const canonicalPath = path.join(here, 'pairing-runtime-source.js')
+if (!fs.existsSync(canonicalPath)) {
+  console.error(`[pairing-runtime] Missing canonical runtime source: ${canonicalPath}`)
+  process.exit(1)
+}
+const canonical = fs.readFileSync(canonicalPath, 'utf8')
+if (!canonical.includes(`const VERSION = '${version}'`) || !canonical.includes(`data-taf-pairing-runtime="${version}"`)) {
+  console.error(`[pairing-runtime] Canonical runtime version does not match v${version}; manual version migration required`)
+  process.exit(1)
+}
 if (!fs.existsSync(expectedPath)) {
-  console.error(`[pairing-runtime] Missing current runtime source: ${expectedName}`)
+  fs.writeFileSync(expectedPath, canonical)
+  console.log(`[pairing-runtime] Restored generated public asset: ${expectedName}`)
+} else if (fs.readFileSync(expectedPath, 'utf8') !== canonical) {
+  console.error(`[pairing-runtime] ${expectedName} differs from canonical runtime; refusing to replace functional code silently`)
   process.exit(1)
 }
 
