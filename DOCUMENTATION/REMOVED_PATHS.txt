@@ -1,0 +1,2 @@
+app/src/main/assets/web/assets/taf-pairing-runtime-v0.9846.js
+webui/public/assets/taf-pairing-runtime-v0.9846.js

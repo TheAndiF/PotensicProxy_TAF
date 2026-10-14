@@ -1,0 +1,8 @@
+Ergaenzung zur Dateibenennung (ab 0.9846.1)
+Verbindlich fuer alle zukuenftigen Projektlieferungen:
+1. Keine Leerzeichen in neu erzeugten Lieferdateinamen.
+2. Keine URL-Kodierungen (%20, _20) in Lieferdateinamen.
+3. Schema: YYYY-MM-DD_PotensicProxy_TAF_Dokumenttyp_vVERSION.Dateiendung.
+4. Betrifft Gesamtprojekt, Aenderungspaket, Release-PDF, Release-DOCX, Git-Patch und Commit-Datei.
+5. Vorhandene Projektpfade und historische Namen nicht ohne technischen Grund umbenennen.
+6. Ausgabe-Dateinamen vor Auslieferung automatisiert auf Leerzeichen und Kodierungen pruefen.

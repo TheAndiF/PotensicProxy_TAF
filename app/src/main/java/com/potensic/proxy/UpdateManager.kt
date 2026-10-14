@@ -163,21 +163,46 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
             throw e
         } finally { busy.set(false) }
     }
+    /**
+     * Android 9/10 package archive inspection may return null SigningInfo for a
+     * correctly signed, not-yet-installed APK. Use archived legacy signatures
+     * as a *read-only fallback*; never skip certificate comparison.
+     */
+    @Suppress("DEPRECATION")
+    private fun signerDigests(info: android.content.pm.PackageInfo): Set<String> {
+        val signatures = if (Build.VERSION.SDK_INT >= 28) {
+            val signing = info.signingInfo
+            val modern = if (signing != null) {
+                signing.apkContentsSigners
+            } else null
+            if (!modern.isNullOrEmpty()) modern else info.signatures
+        } else info.signatures
+        return signatures?.map { signature ->
+            MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+        }?.toSet() ?: emptySet()
+    }
+
     @Suppress("DEPRECATION")
     private fun verifyPackage(file: File, targetVersion: Int) {
         val pm = context.packageManager
-        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        // Request both variants explicitly: Android 10 archive parsing sometimes
+        // populates signatures but not signingInfo (or vice versa).
+        val flags = PackageManager.GET_SIGNATURES or
+            (if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else 0)
         val archive = pm.getPackageArchiveInfo(file.absolutePath, flags)
-            ?: throw IllegalArgumentException("Not a valid Android APK")
+            ?: throw IllegalArgumentException("APK cannot be parsed by Android PackageManager")
         require(archive.packageName == context.packageName) { "APK package name mismatch" }
         val code = if (Build.VERSION.SDK_INT >= 28) archive.longVersionCode else archive.versionCode.toLong()
         require(code == targetVersion.toLong() && code > BuildConfig.VERSION_CODE) { "APK versionCode mismatch" }
         val current = pm.getPackageInfo(context.packageName, flags)
-        val from = if (Build.VERSION.SDK_INT >= 28) current.signingInfo?.apkContentsSigners?.map { it.toCharsString() }?.toSet()
-                   else current.signatures?.map { it.toCharsString() }?.toSet()
-        val to = if (Build.VERSION.SDK_INT >= 28) archive.signingInfo?.apkContentsSigners?.map { it.toCharsString() }?.toSet()
-                 else archive.signatures?.map { it.toCharsString() }?.toSet()
-        require(!from.isNullOrEmpty() && to == from) { "APK signing certificate differs from installed app" }
+        val from = signerDigests(current)
+        val to = signerDigests(archive)
+        require(from.isNotEmpty()) { "Installed APK certificate information unavailable" }
+        require(to.isNotEmpty()) { "Downloaded APK certificate information unavailable; update blocked" }
+        require(to == from) {
+            "APK signing certificate differs from installed app (installed=${from.sorted().joinToString(",")}, update=${to.sorted().joinToString(",")})"
+        }
     }
     fun abort() { cancel = true; if (!busy.get()) { destination.delete(); phase = "cancelled" } }
     fun requestInstall(): JSONObject {

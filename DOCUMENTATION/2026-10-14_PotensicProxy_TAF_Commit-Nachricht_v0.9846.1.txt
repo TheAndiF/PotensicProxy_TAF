@@ -1,0 +1,22 @@
+BA_ Repair Android 10 APK certificate verification (v0.9846.1)
+
+- Compare SHA-256 certificate digests with legacy archive-signature fallback
+- Preserve certificate enforcement and distinguish unavailable signatures from mismatch
+- Align application and pairing runtime version with 0.9846.1
+- Add binding project file naming rules to archived PDF
+- Preserve existing application features and data
+
+Changed files:
+- .projektregeln/Ergaenzung_Dateinamen_v0.9846.1.txt
+- .projektregeln/Regeln_Projektdokumentation_PDF_DOCX_Pflicht_.pdf
+- DOCUMENTATION/2026-10-14_PotensicProxy_TAF_UpdateSignatur_Hotfix_v0.9846.1.md
+- app/src/main/assets/web/assets/taf-pairing-runtime-v0.9846.1.js
+- app/src/main/assets/web/assets/taf-pairing-runtime-v0.9846.js
+- app/src/main/assets/web/index.html
+- app/src/main/java/com/potensic/proxy/UpdateManager.kt
+- webui/index.html
+- webui/package-lock.json
+- webui/package.json
+- webui/public/assets/taf-pairing-runtime-v0.9846.1.js
+- webui/public/assets/taf-pairing-runtime-v0.9846.js
+- webui/scripts/pairing-runtime-source.js
