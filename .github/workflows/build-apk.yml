@@ -4,7 +4,7 @@ on:
   push:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: apk-${{ github.ref }}
@@ -12,8 +12,8 @@ concurrency:
 
 jobs:
   build-apk:
-    name: Build uncached debug APK for BL_ commit
-    if: ${{ startsWith(github.event.head_commit.message, 'BL_') }}
+    name: Build uncached debug APK for BL_ or BA_ commit
+    if: ${{ startsWith(github.event.head_commit.message, 'BL_') || startsWith(github.event.head_commit.message, 'BA_') }}
     runs-on: ubuntu-latest
 
     steps:
@@ -92,8 +92,26 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: Detect stable debug signing configuration
-        id: debug-signing
+      - name: Require stable debug signing credentials for BA_
+        if: ${{ startsWith(github.event.head_commit.message, 'BA_') }}
+        shell: bash
+        env:
+          TAF_DEBUG_KEYSTORE_B64: ${{ secrets.TAF_DEBUG_KEYSTORE_B64 }}
+          TAF_DEBUG_STORE_PASSWORD: ${{ secrets.TAF_DEBUG_STORE_PASSWORD }}
+          TAF_DEBUG_KEY_ALIAS: ${{ secrets.TAF_DEBUG_KEY_ALIAS }}
+          TAF_DEBUG_KEY_PASSWORD: ${{ secrets.TAF_DEBUG_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for key in TAF_DEBUG_KEYSTORE_B64 TAF_DEBUG_STORE_PASSWORD TAF_DEBUG_KEY_ALIAS TAF_DEBUG_KEY_PASSWORD; do
+            test -n "${!key}" || { echo "::error::Missing mandatory BA signing secret: $key"; exit 1; }
+            echo "::add-mask::${!key}"
+          done
+          printf '%s' "$TAF_DEBUG_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/taf-debug.keystore"
+          test -s "$RUNNER_TEMP/taf-debug.keystore"
+          echo "TAF_DEBUG_KEYSTORE=$RUNNER_TEMP/taf-debug.keystore" >> "$GITHUB_ENV"
+
+      - name: Detect optional stable debug signing for BL_
+        if: ${{ startsWith(github.event.head_commit.message, 'BL_') }}
         shell: bash
         env:
           TAF_DEBUG_KEYSTORE_B64: ${{ secrets.TAF_DEBUG_KEYSTORE_B64 }}
@@ -103,25 +121,28 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -n "$TAF_DEBUG_KEYSTORE_B64" && -n "$TAF_DEBUG_STORE_PASSWORD" && -n "$TAF_DEBUG_KEY_ALIAS" && -n "$TAF_DEBUG_KEY_PASSWORD" ]]; then
-            echo "$TAF_DEBUG_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/taf-debug.keystore"
-            test -s "$RUNNER_TEMP/taf-debug.keystore" || { echo "::error::Debug keystore is empty."; exit 1; }
+            printf '%s' "$TAF_DEBUG_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/taf-debug.keystore"
+            test -s "$RUNNER_TEMP/taf-debug.keystore"
             echo "TAF_DEBUG_KEYSTORE=$RUNNER_TEMP/taf-debug.keystore" >> "$GITHUB_ENV"
-            echo "stable=true" >> "$GITHUB_OUTPUT"
-            echo "[signing] Stable debug signing configured. In-app update prerelease eligible."
           else
-            echo "stable=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Stable debug signing is not fully configured (TAF_DEBUG_KEYSTORE_B64, TAF_DEBUG_STORE_PASSWORD, TAF_DEBUG_KEY_ALIAS, TAF_DEBUG_KEY_PASSWORD). Building an ordinary Android debug APK; GitHub update prerelease will be skipped. This APK cannot be relied upon for in-place updates."
+            echo "::warning::No complete stable signing credentials; BL_ will use ordinary debug signing."
           fi
+
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
       - name: Build Android debug APK (includes one WebUI build and verification)
         env:
           TAF_BUILD_VERSION_CODE: ${{ github.run_number }}
+          TAF_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
           TAF_DEBUG_STORE_PASSWORD: ${{ secrets.TAF_DEBUG_STORE_PASSWORD }}
           TAF_DEBUG_KEY_ALIAS: ${{ secrets.TAF_DEBUG_KEY_ALIAS }}
           TAF_DEBUG_KEY_PASSWORD: ${{ secrets.TAF_DEBUG_KEY_PASSWORD }}
-        run: ./gradlew --no-build-cache :app:assembleDebug --stacktrace
+        run: |
+          if [[ "$TAF_COMMIT_MESSAGE" == BA_* ]]; then
+            export TAF_BUILD_VERSION_CODE=$((1900000 + GITHUB_RUN_NUMBER))
+          fi
+          ./gradlew --no-build-cache :app:assembleDebug --stacktrace
 
       - name: Prepare commit-specific APK name
         shell: bash
@@ -136,3 +157,58 @@ jobs:
           path: PotensicProxy_TAF-*.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Verify identity, version and signing
+        if: ${{ startsWith(github.event.head_commit.message, 'BA_') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          BUILD_TOOLS="${ANDROID_HOME}/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/ba-apk-verification.txt"
+          grep -q 'Verified using' "$RUNNER_TEMP/ba-apk-verification.txt"
+          META=$("$BUILD_TOOLS/aapt" dump badging "$APK" | grep '^package:')
+          echo "$META" | grep -q "name='com.potensic.proxy'"
+          EXPECTED=$((2000000 + GITHUB_RUN_NUMBER))
+          echo "$META" | grep -q "versionCode='$EXPECTED'"
+          echo "[BA] package and versionCode verified: $EXPECTED"
+
+      - name: Prepare release payload
+        if: ${{ startsWith(github.event.head_commit.message, 'BA_') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare_ba_release.py \
+            --apk app/build/outputs/apk/debug/app-debug.apk \
+            --output "$RUNNER_TEMP/ba-release" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            --sha "$GITHUB_SHA" \
+            --version-name "$(python3 -c 'import json;print(json.load(open("webui/package.json"))["version"])')"
+
+      - name: Upload BA diagnostics
+        if: ${{ always() && startsWith(github.event.head_commit.message, 'BA_') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: BA-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/ba-apk-verification.txt
+            ${{ runner.temp }}/ba-release/*.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Publish approved BA prerelease
+        if: ${{ startsWith(github.event.head_commit.message, 'BA_') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="ba-debug-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
+          cd "$RUNNER_TEMP/ba-release"
+          gh release create "$TAG" ./*.apk ./*.sha256 taf-update-manifest.json \
+            --prerelease --target "$GITHUB_SHA" \
+            --title "PotensicProxy BA_ debug ${GITHUB_RUN_NUMBER}" \
+            --notes "BA_ automatic debug update from ${GITHUB_SHA::7}; requires the same signing identity as the installed APK."
