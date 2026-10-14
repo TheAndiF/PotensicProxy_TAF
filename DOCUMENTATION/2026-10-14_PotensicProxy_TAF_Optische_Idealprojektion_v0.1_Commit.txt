@@ -1,0 +1,17 @@
+BS_Add display-only PStart ideal marker projection
+
+Date: 2026-10-14
+
+Summary:
+- Create a perspective-fitted candidate ideal-marker overlay for each detected PStart photograph.
+- Compare projected inner features using diagnostic image contrast and preserve source JPEGs.
+- Add an anchor-dependent, telemetry-driven approximate center with explicit calibration and safety limitations.
+- Preserve REF00 metadata-only handling and existing flight-control restrictions.
+- Export timestamped overlays and machine-readable projection diagnostics.
+- Document constraints, test results and deployment scope.
+
+Changed files:
+- webui/src/services/PStartIdealProjection.ts
+- webui/src/services/PStartPostProcessingService.ts
+- docs/releases/2026-10-14_PotensicProxy_TAF_Optische_Idealprojektion_v0.1.pdf
+- docs/releases/2026-10-14_PotensicProxy_TAF_Optische_Idealprojektion_v0.1.docx

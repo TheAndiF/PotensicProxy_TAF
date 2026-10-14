@@ -1,3 +1,4 @@
+import { candidateProjection, createOverlay, telemetryPrediction, type OpticalObservation } from './PStartIdealProjection'
 import { AndroidMediaService } from './AndroidMediaService'
 
 export type PStartAnalysisState = 'WAITING' | 'READING_XMP' | 'CHECKING_IMAGES' | 'DETECTING_MARKER' | 'SAVING_RESULT' | 'COMPLETED' | 'COMPLETED_WITH_WARNINGS' | 'FAILED'
@@ -6,7 +7,7 @@ export interface PStartReference {
   targetHeightM: number | null; actualHeightM: number | null; zoomRole: string
   captureTimestampMs: number | null; telemetryTimestampMs: number | null; timestampDeltaMs: number | null
   centerPx: [number, number] | null; outerCornersPx: [number, number][] | null; homography: number[][] | null
-  markerWidthPx: number | null; quality: { sharpness: number | null; contrast: number | null; detectionConfidence: number | null }
+  markerWidthPx: number | null; opticalMetadata?: any; projection?: { status:string; interiorContrast:number|null; sampleCount:number; predictedCenterPx:[number,number]|null; centerDeltaPx:number|null; limitations:string[] }; quality: { sharpness: number | null; contrast: number | null; detectionConfidence: number | null }
   status: 'candidate' | 'unverified' | 'metadata_only' | 'error'; warnings: string[]
   patternScore?: number | null; candidateAmbiguous?: boolean; seriesRole?: 'anchor' | 'corroborated' | 'unverified'; seriesReferenceImageId?: string | null; seriesQualityScore?: number | null
 }
@@ -184,6 +185,7 @@ export class PStartPostProcessingService {
           this.record('INFO', 'JPEG_CHECK', item.name, `bytes=${bytes.byteLength}; sha256=${ref.imageSha256}`)
           const metadata = this.readXmp(bytes)
           if (!metadata) warnings.push('XMP PayloadJson fehlt oder ist nicht lesbar')
+          ref.opticalMetadata = metadata ? { telemetry:metadata.telemetry, camera:metadata.camera, controls:metadata.controls } : undefined
           const p = metadata?.pstart || {}
           const fileZoom = /_(min|max|zero)\.jpe?g$/i.exec(item.name)?.[1]?.toUpperCase()
           ref.zoomRole = fileZoom === 'MIN' || fileZoom === 'ZERO' ? 'MIN' : fileZoom === 'MAX' ? 'MAX' : String(p.zoomRole || 'UNKNOWN').toUpperCase()
@@ -227,6 +229,37 @@ export class PStartPostProcessingService {
       // never transfer pixel positions between altitudes or zoom roles.
       const series = this.evaluateSeries(refs)
       this.record(series.anchorImageId ? 'INFO' : 'WARN', 'SERIES_ANCHOR', series.anchorImageId || '', JSON.stringify(series))
+      // Candidate reprojection is derived from OpenCV corners, not an independent pose.
+      // Save non-destructive per-photo overlays with an explicitly approximate telemetry crosshair.
+      const anchorRef=refs.find(r=>r.imageId===series.anchorImageId)
+      const asObservation=(r:PStartReference):OpticalObservation=>({imageId:r.imageId,corners:r.outerCornersPx as [number,number][]|null,
+        homography:r.homography,center:r.centerPx,heightM:r.actualHeightM??r.targetHeightM,zoomRole:r.zoomRole,metadata:r.opticalMetadata})
+      const diagnostics:unknown[]=[]
+      for(const item of pendingCopies){
+        const ref=item.ref
+        if(ref.status!=='candidate'||!ref.homography||!ref.outerCornersPx?.length)continue
+        const paths=candidateProjection(ref.homography)
+        if(!paths){this.record('WARN','IDEAL_PROJECTION',ref.imageId,'Invalid homography');continue}
+        try{
+          const prediction=anchorRef?telemetryPrediction(asObservation(anchorRef),asObservation(ref)):null
+          const overlay=await createOverlay(new Blob([item.bytes],{type:'image/jpeg'}),paths,prediction?.centerPx)
+          const delta=prediction&&ref.centerPx?Math.hypot(prediction.centerPx[0]-ref.centerPx[0],prediction.centerPx[1]-ref.centerPx[1]):null
+          ref.projection={status:'CANDIDATE_DISPLAY_ONLY',interiorContrast:overlay.contrast.contrast,
+            sampleCount:overlay.contrast.samples,predictedCenterPx:prediction?.centerPx??null,centerDeltaPx:delta,
+            limitations:prediction?.limitations??['TELEMETRY_PREDICTION_UNAVAILABLE','IMAGE_FITTED_HOMOGRAPHY','UNCALIBRATED','DISPLAY_ONLY']}
+          const safe=ref.imageId.split('/').pop()!.replace(/\.jpe?g$/i,'').replace(/[^a-zA-Z0-9_.-]/g,'_')
+          const name=`${safe}_ideal_overlay_${runId}.png`
+          if(save)await save(name,overlay.blob)
+          diagnostics.push({imageId:ref.imageId,overlayFile:save?name:null,projection:ref.projection,
+            telemetry:prediction?.inputs??null,originalCornerPx:ref.outerCornersPx,projectedPathsPx:paths})
+          this.record('INFO','IDEAL_OVERLAY',ref.imageId,`saved=${!!save}; interiorContrast=${overlay.contrast.contrast}; telemetryDeltaPx=${delta}`)
+        }catch(e){ref.warnings.push('Idealprojektion konnte nicht erzeugt werden');this.record('ERROR','IDEAL_OVERLAY',ref.imageId,String(e))}
+      }
+      if(save && diagnostics.length){try{await save(`PStart_ideal_projections_${runId}.json`,new Blob([JSON.stringify({
+        schemaVersion:1,status:'CANDIDATE_DISPLAY_ONLY',metricCalibration:false,independentPose:false,
+        note:'Green paths fitted to detected outer corners. Amber cross is anchor-based approximate telemetry center; not independent pose.',
+        images:diagnostics},null,2)],{type:'application/json'}))}catch(e){this.record('ERROR','IDEAL_PROJECTION_REPORT','',String(e))}}
+
       // Save a single normalized image from the strongest complete OpenCV candidate.
       // Candidate is deliberately not promoted to verified by successful warping.
       const ranked = pendingCopies.filter(c => c.ref.status === 'candidate' && c.ref.outerCornersPx?.length === 4)
