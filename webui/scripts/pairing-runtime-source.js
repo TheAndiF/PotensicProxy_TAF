@@ -1,8 +1,8 @@
 (() => {
   'use strict'
 
-  const VERSION = '0.9846.2'
-  const CARD_SELECTOR = '[data-taf-pairing-runtime="0.9846.2"]'
+  const VERSION = '0.9846.3'
+  const CARD_SELECTOR = '[data-taf-pairing-runtime="0.9846.3"]'
   const NATIVE_PAIRING_SELECTOR = '.pairing-card:not(.taf-runtime-pairing-card)'
   let pollTimer = null
 

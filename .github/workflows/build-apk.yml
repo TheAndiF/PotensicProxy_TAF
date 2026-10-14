@@ -148,7 +148,32 @@ jobs:
           if [[ "$TAF_COMMIT_MESSAGE" == BA_* ]]; then
             export TAF_BUILD_VERSION_CODE=$((1900000 + GITHUB_RUN_NUMBER))
           fi
-          ./gradlew --no-build-cache :app:assembleDebug --stacktrace
+          # Retry only transient repository/network failures. Do not retry compilation errors.
+          # A fresh Gradle user home is not required: --no-build-cache remains enforced,
+          # while downloaded Maven dependencies may be reused between attempts.
+          set -euo pipefail
+          max_attempts=3
+          for attempt in $(seq 1 "$max_attempts"); do
+            log="$RUNNER_TEMP/gradle-attempt-${attempt}.log"
+            echo "[Gradle] Uncached build attempt ${attempt}/${max_attempts}"
+            if ./gradlew --no-build-cache --no-parallel --max-workers=2 :app:assembleDebug --stacktrace 2>&1 | tee "$log"; then
+              echo "[Gradle] Build succeeded on attempt ${attempt}."
+              exit 0
+            fi
+            # Only known temporary remote-server HTTP errors warrant another attempt.
+            if ! grep -Eqi '(status code (429|502|503|504)|HTTP (429|502|503|504)|Too Many Requests|Read timed out|Connection reset)' "$log"; then
+              echo "::error::Gradle failed without a recognized transient download error; not retrying."
+              exit 1
+            fi
+            if [[ "$attempt" -ge "$max_attempts" ]]; then
+              echo "::error::Gradle dependency download failed after ${max_attempts} attempts."
+              exit 1
+            fi
+            delay=$((attempt * 45))
+            echo "::warning::Temporary dependency download failure; retrying in ${delay}s."
+            sleep "$delay"
+          done
+          exit 1
 
       - name: Prepare commit-specific APK name
         shell: bash

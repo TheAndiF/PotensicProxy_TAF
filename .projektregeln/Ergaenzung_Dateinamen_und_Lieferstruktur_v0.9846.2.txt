@@ -1,0 +1,24 @@
+Verbindliche Ergaenzung: Dateinamen und Lieferstruktur (14.10.2026)
+Status: Projektregel, gilt fuer alle zukuenftigen Lieferungen.
+
+A. Einheitliche Dateinamen
+1. Neue Lieferdateinamen duerfen keine Leerzeichen enthalten.
+2. URL-Kodierungen wie %20 oder _20 sind in Dateinamen verboten.
+3. Muster: YYYY-MM-DD_PotensicProxy_TAF_Dokumenttyp_vVERSION.Dateiendung.
+4. Gilt fuer Gesamtprojekt, Aenderungspaket, PDF, DOCX, Patch und Commit-Datei.
+5. Historische Dateinamen und bestehende Projektpfade nicht ohne Grund aendern.
+6. Ausgabedateien vor Auslieferung automatisiert auf Namenskonformitaet pruefen.
+
+B. Paket- und Projektstruktur
+7. Das Gesamtprojekt-ZIP enthaelt genau den Projektwurzelordner PotensicProxy_TAF als Root.
+8. Alle fuer den Build benoetigten Dateien muessen unterhalb dieses Ordners liegen.
+9. Das Gesamtprojekt muss ohne externen Patch, Begleitdatei oder separate Loeschanweisung eigenstaendig baubar sein.
+10. Release-Dokumentation als PDF und DOCX ist im Projektordner zu archivieren; ggf. weitere Kopien im Lieferpaket sind nur Begleitmaterial.
+11. Das Aenderungspaket enthaelt veraenderte/neue Projektdateien mit ihren Originalpfaden unter PotensicProxy_TAF.
+12. Entfernte Dateien muessen im Aenderungspaket in removed_files.txt mit eindeutigen projektbezogenen Relativpfaden stehen. Diese Liste ist bei der Uebernahme zwingend anzuwenden.
+13. Git-Patch, Commit-Nachricht und separat bereitgestellte Dokumentation sind Begleitdateien; beim vollstaendigen Kopieren des aktuellen Projektordners darf kein Patch zusaetzlich angewendet werden.
+14. Wird ein Aenderungspaket ohne Patch eingespielt, muessen die geaenderten Dateien kopiert UND die in removed_files.txt genannten Dateien entfernt werden.
+15. Vor Freigabe Gesamtprojekt-ZIP, Aenderungspaket, geloeschte Dateien und Dokumentation auf Vollstaendigkeit, Pfade und ZIP-Integritaet pruefen.
+16. Alle bisherigen Funktionen bleiben erhalten, sofern eine Funktionsentfernung nicht ausdruecklich beauftragt und dokumentiert wurde.
+
+Hinweis: Diese Regel aktualisiert die Lieferpraxis, nicht die Android-App-Version.

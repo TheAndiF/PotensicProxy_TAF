@@ -1,4 +1,4 @@
-# PotensicProxy_TAF – 0.9846.2
+# PotensicProxy_TAF – 0.9846.3
 
 Fix: Android package must contain the built System > App / Drohne / Web navigation.
 The GitHub build verifies the compiled WebUI and blocks publication of obsolete System navigation.
