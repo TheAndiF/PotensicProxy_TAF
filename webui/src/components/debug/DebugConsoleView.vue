@@ -724,8 +724,12 @@ const systemTabs: Record<SystemGroup, { value: SystemTab; label: string }[]> = {
 const groupForTab = (tab: string): SystemGroup =>
   (tab === 'language' || tab === 'updates' || tab === 'logs') ? 'app' :
   (tab === 'view' || tab === 'relay') ? 'web' : 'drone'
-const systemGroup = ref<SystemGroup>(groupForTab(debugStore.activeSubTab))
-const selectedSystemTab = ref<SystemTab>(debugStore.activeSubTab)
+// Older persisted navigation can still contain `rf`, which now shares the
+// Video & RF page (`fpv`). Normalize before assigning a SystemTab.
+const normalizeSystemTab = (tab: typeof debugStore.activeSubTab): SystemTab =>
+  tab === 'rf' ? 'fpv' : tab
+const systemGroup = ref<SystemGroup>(groupForTab(normalizeSystemTab(debugStore.activeSubTab)))
+const selectedSystemTab = ref<SystemTab>(normalizeSystemTab(debugStore.activeSubTab))
 const visibleSystemTabs = computed(() => systemTabs[systemGroup.value])
 watch(systemGroup, group => {
   if (!systemTabs[group].some(item => item.value === selectedSystemTab.value)) {
@@ -739,7 +743,7 @@ watch(selectedSystemTab, tab => {
 watch(() => debugStore.activeSubTab, tab => {
   if (tab !== selectedSystemTab.value) {
     systemGroup.value = groupForTab(tab)
-    selectedSystemTab.value = tab
+    selectedSystemTab.value = normalizeSystemTab(tab)
   }
 })
 const { t } = useI18n()
