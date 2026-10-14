@@ -31,11 +31,21 @@ android {
         applicationId = "com.potensic.proxy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 68
+        versionCode = (System.getenv("TAF_BUILD_VERSION_CODE")?.toIntOrNull()?.plus(100000) ?: 68)
         versionName = webuiVersion
     }
 
     signingConfigs {
+        // Stable debug signing is mandatory for in-place GitHub BL_ updates.
+        // Local builds continue to use Android's default debug key when secrets are absent.
+        if (System.getenv("TAF_DEBUG_KEYSTORE") != null) {
+            getByName("debug") {
+                storeFile = rootProject.file(System.getenv("TAF_DEBUG_KEYSTORE"))
+                storePassword = System.getenv("TAF_DEBUG_STORE_PASSWORD")
+                keyAlias = System.getenv("TAF_DEBUG_KEY_ALIAS")
+                keyPassword = System.getenv("TAF_DEBUG_KEY_PASSWORD")
+            }
+        }
         if (hasReleaseSigning) {
             create("release") {
                 storeFile = rootProject.file(releaseKeystoreProperties.getProperty("storeFile"))

@@ -30,6 +30,7 @@
     </div>
 
     <DroneProfilePanel />
+    <AppUpdateSettings />
     <LanguagePanel />
 
     <!-- Main Content Area -->
@@ -683,6 +684,7 @@
 <script setup lang="ts">
 import AdvancedFlightPanel from '../cockpit/AdvancedFlightPanel.vue'
 import PrecisionStartSettings from '../settings/PrecisionStartSettings.vue'
+import AppUpdateSettings from '../settings/AppUpdateSettings.vue'
 import { ref, nextTick, watch, onMounted } from 'vue'
 import { useDebugStore } from '../../stores/useDebugStore'
 import { DroneControlService } from '../../services/DroneControlService'

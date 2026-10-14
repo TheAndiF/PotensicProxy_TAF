@@ -12,9 +12,50 @@ import android.os.Bundle
  */
 class MainActivity : Activity() {
 
+    private fun requestNotificationPermissionOrFinish() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 771)
+        } else finish()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 771) finish()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.action == UpdateManager.ACTION_INSTALL) {
+            try {
+                UpdateManager(this, ProxyService.instance?.droneState
+                    ?: throw IllegalStateException("Flight safety status unavailable"))
+                    .installFromActivity(this)
+            } catch (e: Exception) {
+                AlertDialog.Builder(this).setTitle("Update gesperrt")
+                    .setMessage(e.message ?: "Sicherheitsprüfung fehlgeschlagen")
+                    .setPositiveButton("OK", null).show()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Log.i("[MainActivity] onCreate — intent: ${intent?.action}")
+
+        if (intent?.action == UpdateManager.ACTION_INSTALL) {
+            try {
+                val service = ProxyService.instance
+                val manager = UpdateManager(this, service?.droneState
+                    ?: throw IllegalStateException("Flight safety status not available"))
+                manager.installFromActivity(this)
+            } catch (e: Exception) {
+                AlertDialog.Builder(this).setTitle("Update gesperrt")
+                    .setMessage(e.message ?: "Sicherheitsprüfung fehlgeschlagen")
+                    .setPositiveButton("OK", null).show()
+            }
+            return
+        }
 
         // Start the proxy service
         val serviceIntent = Intent(this, ProxyService::class.java)
@@ -35,7 +76,7 @@ class MainActivity : Activity() {
         android.widget.Toast.makeText(this, getString(R.string.toast_web_ui, ip), android.widget.Toast.LENGTH_LONG).show()
 
         if (PStartSafStorage.hasPermission(this)) {
-            finish()
+            requestNotificationPermissionOrFinish()
         } else {
             AlertDialog.Builder(this)
                 .setTitle("PotensicProxy – Speicherfreigabe")

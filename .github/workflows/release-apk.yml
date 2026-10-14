@@ -1,0 +1,92 @@
+name: Publish signed PotensicProxy release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - name: Verify version tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,os
+          version=json.load(open('webui/package.json'))['version']
+          assert os.environ['GITHUB_REF_NAME'] == 'v'+version, 'Tag differs from package version'
+          PY
+      - name: Prepare original release signing identity
+        env:
+          TAF_RELEASE_KEYSTORE_B64: ${{ secrets.TAF_RELEASE_KEYSTORE_B64 }}
+          TAF_RELEASE_STORE_PASSWORD: ${{ secrets.TAF_RELEASE_STORE_PASSWORD }}
+          TAF_RELEASE_KEY_ALIAS: ${{ secrets.TAF_RELEASE_KEY_ALIAS }}
+          TAF_RELEASE_KEY_PASSWORD: ${{ secrets.TAF_RELEASE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$TAF_RELEASE_KEYSTORE_B64" && test -n "$TAF_RELEASE_STORE_PASSWORD" && test -n "$TAF_RELEASE_KEY_ALIAS" && test -n "$TAF_RELEASE_KEY_PASSWORD" || { echo '::error::Release signing secrets missing'; exit 1; }
+          echo "$TAF_RELEASE_KEYSTORE_B64" | base64 -d > original-release.keystore
+          printf 'storeFile=original-release.keystore\n' > keystore.properties
+          echo 'keystore.properties' >> .git/info/exclude
+      - name: Install reproducible WebUI dependencies
+        working-directory: webui
+        run: npm ci --include=optional --no-audit --no-fund
+      - name: Verify source
+        working-directory: webui
+        run: npm run verify:source
+      - name: Build signed release (Gradle builds WebUI once)
+        env:
+          TAF_RELEASE_STORE_PASSWORD: ${{ secrets.TAF_RELEASE_STORE_PASSWORD }}
+          TAF_RELEASE_KEY_ALIAS: ${{ secrets.TAF_RELEASE_KEY_ALIAS }}
+          TAF_RELEASE_KEY_PASSWORD: ${{ secrets.TAF_RELEASE_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --stacktrace
+      - name: Verify APK package and signers
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner" verify --verbose --print-certs "$APK"
+          cp "$APK" PotensicProxy_TAF-release.apk
+          sha256sum PotensicProxy_TAF-release.apk > PotensicProxy_TAF-release.apk.sha256
+          python3 - <<'PY'
+          import hashlib,json,os
+          apk='PotensicProxy_TAF-release.apk'
+          version=json.load(open('webui/package.json'))['version']
+          code=68 # update this when app/build.gradle.kts versionCode is raised
+          gradle=open('app/build.gradle.kts').read()
+          import re
+          match=re.search(r'\?:\s*(\d+)\)',gradle)
+          assert match, 'Could not determine release versionCode'
+          code=int(match.group(1))
+          obj=dict(channel='stable',packageName='com.potensic.proxy',versionCode=code,versionName=version,sha256=hashlib.sha256(open(apk,'rb').read()).hexdigest(),apkUrl=f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/releases/download/{os.environ["GITHUB_REF_NAME"]}/{apk}')
+          open('taf-update-manifest.json','w').write(json.dumps(obj,indent=2)+'\n')
+          PY
+      - name: Publish approved stable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" PotensicProxy_TAF-release.apk PotensicProxy_TAF-release.apk.sha256 taf-update-manifest.json --title "PotensicProxy_TAF $TAG" --generate-notes --verify-tag

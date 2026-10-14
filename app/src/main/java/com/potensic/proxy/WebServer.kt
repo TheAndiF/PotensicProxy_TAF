@@ -61,6 +61,7 @@ class WebServer(
     private val mapBackend = MapBackend(filesDir)
     private val missionBackend = MissionBackend(filesDir)
     private val androidMedia = AndroidMediaRepository(appContext, filesDir)
+    private val updateManager = UpdateManager(appContext, droneState)
 
     // Requested control state is owned by ControlCoordinator.
 
@@ -88,6 +89,34 @@ class WebServer(
                     } catch (e: Exception) {
                         call.respondText(JSONObject().put("error", "Output server unavailable: ${e.message}").toString(), ContentType.Application.Json, HttpStatusCode.InternalServerError)
                     }
+                }
+
+                // APK updates are Android-owned: no flight commands or silent installs.
+                get("/api/updates/status") {
+                    call.respondText(updateManager.status().toString(), ContentType.Application.Json)
+                }
+                get("/api/updates/check") {
+                    try { call.respondText(updateManager.check().toString(), ContentType.Application.Json) }
+                    catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadGateway) }
+                }
+                post("/api/updates/settings") {
+                    try {
+                        val mode = JSONObject(call.receiveText()).getString("autoMode")
+                        updateManager.setMode(mode)
+                        call.respondText(updateManager.status().toString(), ContentType.Application.Json)
+                    } catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
+                }
+                post("/api/updates/download") {
+                    try {
+                        val manifest = JSONObject(call.receiveText())
+                        val output = updateManager.download(manifest)
+                        call.respondText(output.toString(), ContentType.Application.Json)
+                    } catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest) }
+                }
+                post("/api/updates/cancel") { updateManager.abort(); call.respondText(updateManager.status().toString(), ContentType.Application.Json) }
+                post("/api/updates/install") {
+                    try { call.respondText(updateManager.requestInstall().toString(), ContentType.Application.Json) }
+                    catch (e: Exception) { call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.Conflict) }
                 }
 
                 // Version index. Kept in the backend so the UI can show the version of the actually connected package.
