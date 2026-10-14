@@ -53,7 +53,25 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         return null
     }
 
-    fun status() = JSONObject().apply {
+    // A successful in-place replacement restarts the app. Confirm the installed
+    // version on the next status request instead of assuming pm install success.
+    private fun reconcileInstall() {
+        val requested = prefs.getInt("install_requested_code", -1)
+        if (requested <= 0) return
+        if (BuildConfig.VERSION_CODE == requested) {
+            prefs.edit().remove("install_requested_code").remove("candidate")
+                .remove("candidate_code").remove("candidate_sha256").apply()
+            phase = "installed_verified"
+            destination.delete()
+        } else if (BuildConfig.VERSION_CODE > requested) {
+            prefs.edit().remove("install_requested_code").apply()
+            phase = "installed_newer"
+        }
+    }
+
+    fun status(): JSONObject {
+        reconcileInstall()
+        return JSONObject().apply {
         put("version", BuildConfig.VERSION_NAME)
         put("versionCode", BuildConfig.VERSION_CODE)
         put("channel", if (BuildConfig.DEBUG) "BA_" else "stable")
@@ -66,6 +84,8 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         put("blocker", safetyReason() ?: JSONObject.NULL)
         put("candidate", prefs.getString("candidate", ""))
         put("repository", REPOSITORY)
+        put("installRequestedCode", prefs.getInt("install_requested_code", -1))
+        }
     }
     fun setMode(mode: String) {
         require(mode in listOf("off", "notify", "download")) { "Invalid automatic update mode" }
@@ -92,6 +112,7 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         val apk = destination.canonicalPath
         require(destination.canonicalFile.parentFile == storage.canonicalFile) { "Untrusted update location" }
         require(apk.matches(Regex("[a-zA-Z0-9_./-]+"))) { "Unsafe APK path" }
+        prefs.edit().putInt("install_requested_code", prefs.getInt("candidate_code", -1)).apply()
         phase = "installing_root"
         val installer = Thread {
             try {
@@ -100,7 +121,7 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
                     .redirectErrorStream(true).start()
                 val output = process.inputStream.bufferedReader().readText().take(1000)
                 val result = process.waitFor()
-                if (result != 0) { phase = "error"; error = "Magisk installation failed ($result): $output" }
+                if (result != 0) { phase = "error"; error = "Magisk installation failed ($result): $output" } else { phase = "awaiting_restart" }
             } catch (e: Exception) { phase = "error"; error = e.message ?: "Root installation failed" }
         }
         installer.isDaemon = false
@@ -233,7 +254,7 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
             ?: throw IllegalArgumentException("APK cannot be parsed by Android PackageManager")
         require(archive.packageName == context.packageName) { "APK package name mismatch" }
         val code = if (Build.VERSION.SDK_INT >= 28) archive.longVersionCode else archive.versionCode.toLong()
-        require(code == targetVersion.toLong() && code > BuildConfig.VERSION_CODE) { "APK versionCode mismatch" }
+        require(code == targetVersion.toLong() && code > BuildConfig.VERSION_CODE) { "APK versionCode mismatch (installed=${BuildConfig.VERSION_CODE}, manifest=$targetVersion, apk=$code)" }
         val current = pm.getPackageInfo(context.packageName, flags)
         val from = signerDigests(current)
         val to = signerDigests(archive)
@@ -246,16 +267,23 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
     fun abort() { cancel = true; if (!busy.get()) { destination.delete(); phase = "cancelled" } }
     fun requestInstall(): JSONObject {
         val method = prefs.getString("install_method", "android") ?: "android"
-        if (method != "android" && prefs.getBoolean("headless_enabled", false)) {
-            safetyReason()?.let { throw IllegalStateException(it) }
-            verifyStagedUpdate()
-            if (rootAvailable()) {
-                startRootInstall()
-                return status()
+        // All installation methods share the same staged APK and verification.
+        require(!busy.get()) { "Update currently downloading" }
+        safetyReason()?.let { throw IllegalStateException(it) }
+        verifyStagedUpdate()
+        if (method == "magisk") {
+            require(prefs.getBoolean("headless_enabled", false)) {
+                "Magisk installation selected, but explicit root authorization is disabled"
             }
-            if (method == "magisk") throw IllegalStateException("Magisk root unavailable; select Android or automatic fallback")
+            require(rootAvailable()) { "Magisk root unavailable; choose Android installation explicitly" }
+            startRootInstall()
+            return status()
         }
-
+        if (method == "auto" && prefs.getBoolean("headless_enabled", false) && rootAvailable()) {
+            startRootInstall()
+            return status()
+        }
+        // Android is the explicit fallback for auto, never for selected magisk.
         require(destination.isFile) { "No verified update prepared" }
         require(!busy.get()) { "Update currently downloading" }
         safetyReason()?.let { throw IllegalStateException(it) }
@@ -306,6 +334,8 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
                         setDataAndType(uri, "application/vnd.android.package-archive")
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
+                    prefs.edit().putInt("install_requested_code", prefs.getInt("candidate_code", -1)).apply()
+                    phase = "installing_android"
                     activity.startActivity(intent)
                 } catch (e: Exception) {
                     android.app.AlertDialog.Builder(activity).setTitle("Installation gesperrt")

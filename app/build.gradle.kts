@@ -31,7 +31,7 @@ android {
         applicationId = "com.potensic.proxy"
         minSdk = 26
         targetSdk = 36
-        versionCode = (System.getenv("TAF_BUILD_VERSION_CODE")?.toIntOrNull()?.plus(100000) ?: 68)
+        versionCode = (System.getenv("TAF_BUILD_VERSION_CODE")?.toIntOrNull()?.plus(1_900_000) ?: 68)
         versionName = webuiVersion
     }
 

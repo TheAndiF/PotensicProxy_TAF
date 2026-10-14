@@ -133,7 +133,7 @@ jobs:
           grep -q 'Verified using' "$RUNNER_TEMP/ba-apk-verification.txt"
           META=$("$BUILD_TOOLS/aapt" dump badging "$APK" | grep '^package:')
           echo "$META" | grep -q "name='com.potensic.proxy'"
-          EXPECTED=$((100000 + GITHUB_RUN_NUMBER))
+          EXPECTED=$((2000000 + GITHUB_RUN_NUMBER))
           echo "$META" | grep -q "versionCode='$EXPECTED'"
           echo "[BA] package and versionCode verified: $EXPECTED"
 
