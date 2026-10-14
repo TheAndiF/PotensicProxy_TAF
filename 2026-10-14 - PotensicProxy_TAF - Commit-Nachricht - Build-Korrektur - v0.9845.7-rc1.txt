@@ -1,0 +1,21 @@
+BL_ Make Linux WebUI builds reproducible for v0.9845.7-rc1
+
+Date: 2026-10-14
+Project: PotensicProxy_TAF
+Version: v0.9845.7-rc1
+Status: Release candidate; APK build and device acceptance pending
+
+Summary:
+- Install platform-specific optional npm dependencies from the existing lockfile.
+- Verify the Linux x64 Rollup native binding before the WebUI build.
+- Align package-lock project version metadata with v0.9845.7 without upgrading dependency versions.
+- Deliver release documentation and change package in the original project folder structure.
+- No additional application behavior changes; the PStart/PLand fix remains unverified on device.
+
+Changed or newly delivered files (paths relative to PotensicProxy_TAF/):
+- .github/workflows/build-apk.yml
+- webui/package-lock.json
+- 2026-10-14 - PotensicProxy_TAF - Auslieferungshinweis - Build-Korrektur - v0.9845.7-rc1.md
+- 2026-10-14 - PotensicProxy_TAF - Commit-Nachricht - Build-Korrektur - v0.9845.7-rc1.txt
+- 2026-10-14 - PotensicProxy_TAF - Release-Dokumentation - Build-Korrektur - v0.9845.7-rc1.pdf
+- 2026-10-14 - PotensicProxy_TAF - Release-Dokumentation - Build-Korrektur - v0.9845.7-rc1.docx

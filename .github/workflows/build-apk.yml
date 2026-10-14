@@ -70,7 +70,14 @@ jobs:
 
       - name: Install WebUI dependencies
         working-directory: webui
-        run: npm ci
+        run: npm ci --include=optional --no-audit --no-fund
+
+      - name: Verify Linux Rollup native dependency
+        working-directory: webui
+        shell: bash
+        run: |
+          node -e "const path = require.resolve('@rollup/rollup-linux-x64-gnu'); console.log('[rollup-native] OK: '+path)"
+          node -e "console.log('[rollup] version='+require('rollup/package.json').version)"
 
       - name: Remove stale pairing runtime sources
         working-directory: webui
