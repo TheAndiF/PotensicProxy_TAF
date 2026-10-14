@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build-apk:
-    name: Build signed BA update APK
+    name: Build complete uncached BL-equivalent APK and publish BA update
     if: ${{ (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'BA_')) || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
 
@@ -27,14 +27,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v4
         with:
           node-version: '24.11.1'
-          cache: npm
-          cache-dependency-path: webui/package-lock.json
 
       - name: Verify required map WebUI sources
         shell: bash
@@ -114,7 +111,8 @@ jobs:
           test -s "$RUNNER_TEMP/taf-debug.keystore"
           echo "TAF_DEBUG_KEYSTORE=$RUNNER_TEMP/taf-debug.keystore" >> "$GITHUB_ENV"
 
-      - name: Build BA signed APK
+      # BA_ uses the identical uncached Android build command as BL_ (single build).
+      - name: Build complete BL-equivalent APK without cache (BA signing)
         env:
           TAF_BUILD_VERSION_CODE: ${{ github.run_number }}
           TAF_DEBUG_STORE_PASSWORD: ${{ secrets.TAF_DEBUG_STORE_PASSWORD }}
@@ -122,7 +120,7 @@ jobs:
           TAF_DEBUG_KEY_PASSWORD: ${{ secrets.TAF_DEBUG_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --stacktrace
+          ./gradlew --no-build-cache :app:assembleDebug --stacktrace
 
       - name: Verify identity, version and signing
         shell: bash

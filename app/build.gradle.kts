@@ -36,7 +36,7 @@ android {
     }
 
     signingConfigs {
-        // Stable debug signing is mandatory for in-place GitHub BL_ updates.
+        // Stable debug signing is mandatory for compatible BA_ in-place updates.
         // Local builds continue to use Android's default debug key when secrets are absent.
         if (System.getenv("TAF_DEBUG_KEYSTORE") != null) {
             getByName("debug") {

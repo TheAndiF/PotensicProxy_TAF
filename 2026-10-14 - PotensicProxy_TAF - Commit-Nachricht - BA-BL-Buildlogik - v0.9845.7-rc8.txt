@@ -1,0 +1,10 @@
+BA_ Use complete uncached BL build for automatic updates (v0.9845.7-rc8)
+
+Ensure BA_ builds a single APK using the BL_ full no-cache Gradle command, then signs, validates and publishes the automatic debug update. Keep BL_ and BS_ triggers unchanged.
+
+Changed files:
+- .github/workflows/ba-update.yml
+- app/build.gradle.kts
+- 2026-10-14 - PotensicProxy_TAF - Auslieferungshinweis - BA-BL-Buildlogik - v0.9845.7-rc8.md
+
+Validation: YAML parse and no-cache command checks passed; Android CI/device validation pending.

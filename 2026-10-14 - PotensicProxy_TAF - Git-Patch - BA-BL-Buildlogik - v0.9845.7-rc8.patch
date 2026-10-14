@@ -1,0 +1,81 @@
+--- a/.github/workflows/ba-update.yml
++++ b/.github/workflows/ba-update.yml
+@@ -14,7 +14,7 @@
+ 
+ jobs:
+   build-apk:
+-    name: Build signed BA update APK
++    name: Build complete uncached BL-equivalent APK and publish BA update
+     if: ${{ (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'BA_')) || github.event_name == 'workflow_dispatch' }}
+     runs-on: ubuntu-latest
+ 
+@@ -27,14 +27,11 @@
+         with:
+           distribution: temurin
+           java-version: '17'
+-          cache: gradle
+ 
+       - name: Set up Node.js 24
+         uses: actions/setup-node@v4
+         with:
+           node-version: '24.11.1'
+-          cache: npm
+-          cache-dependency-path: webui/package-lock.json
+ 
+       - name: Verify required map WebUI sources
+         shell: bash
+@@ -114,7 +111,8 @@
+           test -s "$RUNNER_TEMP/taf-debug.keystore"
+           echo "TAF_DEBUG_KEYSTORE=$RUNNER_TEMP/taf-debug.keystore" >> "$GITHUB_ENV"
+ 
+-      - name: Build BA signed APK
++      # BA_ uses the identical uncached Android build command as BL_ (single build).
++      - name: Build complete BL-equivalent APK without cache (BA signing)
+         env:
+           TAF_BUILD_VERSION_CODE: ${{ github.run_number }}
+           TAF_DEBUG_STORE_PASSWORD: ${{ secrets.TAF_DEBUG_STORE_PASSWORD }}
+@@ -122,7 +120,7 @@
+           TAF_DEBUG_KEY_PASSWORD: ${{ secrets.TAF_DEBUG_KEY_PASSWORD }}
+         run: |
+           chmod +x gradlew
+-          ./gradlew :app:assembleDebug --stacktrace
++          ./gradlew --no-build-cache :app:assembleDebug --stacktrace
+ 
+       - name: Verify identity, version and signing
+         shell: bash
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -36,7 +36,7 @@
+     }
+ 
+     signingConfigs {
+-        // Stable debug signing is mandatory for in-place GitHub BL_ updates.
++        // Stable debug signing is mandatory for compatible BA_ in-place updates.
+         // Local builds continue to use Android's default debug key when secrets are absent.
+         if (System.getenv("TAF_DEBUG_KEYSTORE") != null) {
+             getByName("debug") {
+--- a/2026-10-14 - PotensicProxy_TAF - Auslieferungshinweis - BA-BL-Buildlogik - v0.9845.7-rc8.md
++++ b/2026-10-14 - PotensicProxy_TAF - Auslieferungshinweis - BA-BL-Buildlogik - v0.9845.7-rc8.md
+@@ -0,0 +1,22 @@
++# PotensicProxy_TAF – Auslieferungshinweis – BA-BL-Buildlogik – v0.9845.7-rc8
++
++Datum: 2026-10-14 | Status: Entwicklungskandidat – Gerätetest offen
++
++## Verbindliche Buildlogik
++
++- BL_: vollständiger, cachefreier Debug-APK-Build; normales Build-Artefakt.
++- BS_: schneller Debug-APK-Build mit gültigen Caches.
++- BA_: derselbe vollständige, cachefreie Debug-APK-Build wie BL_, ausgeführt **einmal** innerhalb des BA-Workflows, ergänzt um verpflichtende feste Debug-Signierung, APK-/Versionsprüfung, SHA-256, Manifest und GitHub-Prerelease.
++- BA_-Commits lösen keinen zweiten BL_-Workflow-Job aus; der BA-Workflow verwendet den identischen Android-Gradle-Befehl wie BL_.
++
++## Eingriff
++
++BA-Workflow: Gradle-/npm-Cache-Konfigurationen entfernt, Gradle-Aufruf auf `./gradlew --no-build-cache :app:assembleDebug --stacktrace` vereinheitlicht. Signing-/Freigabeprüfungen bleiben erhalten. Kommentar zur BA-Signierung in app/build.gradle.kts korrigiert.
++
++## Bestandsschutz
++
++Keine absichtliche Änderung von applicationId, Programmdaten, SAF-Zugriffen oder Update-Installationslogik. Die Kompatibilität einer vorhandenen APK-Signatur und die Datenübernahme müssen auf einem Gerät geprüft werden.
++
++## Offen
++
++GitHub-Secrets, erfolgreiche Workflow-Ausführung, reale APK-Signatur und Android-Gerätetest sind extern nachzuweisen. Die Versionskennung rc8 ist die Liefer-/Entwicklungskennung; webui/package.json bleibt als bisherige authoritative versionName 0.9845.7 unverändert.
