@@ -49,8 +49,17 @@ if (fs.existsSync(assetsDir)) {
 }
 
 const gradle = fs.readFileSync(path.join(project, 'app', 'build.gradle.kts'), 'utf8')
-const backendVersion = /versionName\s*=\s*"([^"]+)"/.exec(gradle)?.[1]
-if (backendVersion !== version) fail(`Frontend ${version} != Android backend ${backendVersion ?? 'unknown'}`)
+// Android may use a literal versionName or the shared webuiVersion variable.
+// Validate the variable's Gradle definition instead of treating it as "unknown".
+const versionAssignment = /versionName\s*=\s*("[^"]+"|[A-Za-z_][A-Za-z0-9_]*)/.exec(gradle)?.[1]
+let backendVersion
+if (versionAssignment?.startsWith('"')) {
+  backendVersion = versionAssignment.slice(1, -1)
+} else if (versionAssignment === 'webuiVersion') {
+  const sharedSource = /val\s+webuiVersion\s*=\s*\(JsonSlurper\(\)\.parse\(rootProject\.file\("webui\/package\.json"\)\)\s+as\s+Map<\*,\s*\*>\)\["version"\]\.toString\(\)/
+  if (sharedSource.test(gradle)) backendVersion = version
+}
+if (backendVersion !== version) fail(`Frontend ${version} != Android backend ${backendVersion ?? 'unknown'} (versionName: ${versionAssignment ?? 'missing'})`)
 
 let jsContainsVersion = false
 function walk(dir) {
