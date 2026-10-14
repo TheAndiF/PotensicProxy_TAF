@@ -1,12 +1,13 @@
 {
   "name": "potensic-proxy-webui",
-  "version": "0.9845",
+  "version": "0.9845.7",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "node scripts/prepare-pairing-runtime.mjs && vue-tsc && vite build",
     "preview": "vite preview",
+    "verify:source": "node scripts/verify-source-version.mjs",
     "verify:embedded": "node scripts/verify-embedded-version.mjs",
     "prepare:pairing-runtime": "node scripts/prepare-pairing-runtime.mjs"
   },

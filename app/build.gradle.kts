@@ -1,4 +1,5 @@
 import java.io.FileInputStream
+import groovy.json.JsonSlurper
 import java.util.Properties
 
 plugins {
@@ -6,14 +7,21 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val releaseKeystorePropertiesFile = rootProject.file("keystore.properties")
-require(releaseKeystorePropertiesFile.isFile) {
-    "Missing fixed release signing configuration: ${releaseKeystorePropertiesFile.absolutePath}"
-}
+// WebUI package.json is the authoritative application version.
+val webuiVersion = (JsonSlurper().parse(rootProject.file("webui/package.json")) as Map<*, *>)["version"].toString()
 
+// Debug builds must not require a release keystore. A release build still needs
+// the original signing identity, supplied outside the distributed source archive.
+val releaseKeystorePropertiesFile = rootProject.file("keystore.properties")
 val releaseKeystoreProperties = Properties().apply {
-    FileInputStream(releaseKeystorePropertiesFile).use { load(it) }
+    if (releaseKeystorePropertiesFile.isFile) {
+        FileInputStream(releaseKeystorePropertiesFile).use { load(it) }
+    }
 }
+val hasReleaseSigning = releaseKeystoreProperties.getProperty("storeFile") != null &&
+    (System.getenv("TAF_RELEASE_STORE_PASSWORD") ?: releaseKeystoreProperties.getProperty("storePassword")) != null &&
+    (System.getenv("TAF_RELEASE_KEY_ALIAS") ?: releaseKeystoreProperties.getProperty("keyAlias")) != null &&
+    (System.getenv("TAF_RELEASE_KEY_PASSWORD") ?: releaseKeystoreProperties.getProperty("keyPassword")) != null
 
 android {
     namespace = "com.potensic.proxy"
@@ -24,27 +32,24 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 68
-        versionName = "0.9845"
+        versionName = webuiVersion
     }
 
     signingConfigs {
-        create("release") {
-            val configuredStoreFile = releaseKeystoreProperties.getProperty("storeFile")
-                ?: error("storeFile missing in keystore.properties")
-            storeFile = rootProject.file(configuredStoreFile)
-            storePassword = System.getenv("TAF_RELEASE_STORE_PASSWORD")
-                ?: releaseKeystoreProperties.getProperty("storePassword")
-            keyAlias = System.getenv("TAF_RELEASE_KEY_ALIAS")
-                ?: releaseKeystoreProperties.getProperty("keyAlias")
-            keyPassword = System.getenv("TAF_RELEASE_KEY_PASSWORD")
-                ?: releaseKeystoreProperties.getProperty("keyPassword")
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(releaseKeystoreProperties.getProperty("storeFile"))
+                storePassword = System.getenv("TAF_RELEASE_STORE_PASSWORD") ?: releaseKeystoreProperties.getProperty("storePassword")
+                keyAlias = System.getenv("TAF_RELEASE_KEY_ALIAS") ?: releaseKeystoreProperties.getProperty("keyAlias")
+                keyPassword = System.getenv("TAF_RELEASE_KEY_PASSWORD") ?: releaseKeystoreProperties.getProperty("keyPassword")
+            }
         }
     }
 
     buildTypes {
-        release {
+        getByName("release") {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -72,14 +77,35 @@ dependencies {
     implementation("io.ktor:ktor-server-websockets:3.1.3")
 }
 
-// Keep the embedded WebUI synchronized with the frontend sources.
-// Install web dependencies once with `npm ci` in /webui; Android builds then regenerate assets automatically.
+// Single authoritative WebUI build: Gradle owns generation and verification.
+// GitHub installs npm dependencies, then calls Gradle once; local Gradle builds
+// use the same task. Vite clears old assets before replacing them.
 val npmExecutable = if (System.getProperty("os.name").lowercase().contains("windows")) "npm.cmd" else "npm"
 val buildWebUi by tasks.registering(Exec::class) {
-    workingDir = file("../webui")
+    workingDir = rootProject.file("webui")
     commandLine(npmExecutable, "run", "build")
+    doFirst {
+        require(rootProject.file("webui/node_modules").isDirectory) {
+            "[webui] Missing dependencies: run 'cd webui && npm ci --include=optional --no-audit --no-fund'"
+        }
+    }
+}
+val verifyEmbeddedWebUi by tasks.registering(Exec::class) {
+    dependsOn(buildWebUi)
+    workingDir = rootProject.file("webui")
+    commandLine(npmExecutable, "run", "verify:embedded")
+}
+tasks.named("preBuild") {
+    dependsOn(verifyEmbeddedWebUi)
 }
 
-tasks.named("preBuild") {
-    dependsOn(buildWebUi)
+// Never silently ship an unsigned release when original credentials are missing.
+tasks.configureEach {
+    if (name.matches(Regex("(?i).*(assemble|bundle|package).*release.*"))) {
+        doFirst {
+            require(hasReleaseSigning) {
+                "[signing] Missing original release signing configuration. Provide keystore.properties and original key securely."
+            }
+        }
+    }
 }

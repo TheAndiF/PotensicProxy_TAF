@@ -30,7 +30,7 @@ jobs:
       - name: Set up Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '24.11.1'
           cache: npm
           cache-dependency-path: webui/package-lock.json
 
@@ -65,9 +65,6 @@ jobs:
             exit 1
           }
 
-      - name: Remove checked-in WebUI build output
-        run: rm -rf app/src/main/assets/web
-
       - name: Install WebUI dependencies
         working-directory: webui
         run: npm ci --include=optional --no-audit --no-fund
@@ -79,28 +76,29 @@ jobs:
           node -e "const path = require.resolve('@rollup/rollup-linux-x64-gnu'); console.log('[rollup-native] OK: '+path)"
           node -e "console.log('[rollup] version='+require('rollup/package.json').version)"
 
-      - name: Remove stale pairing runtime sources
+      - name: Verify source versions and build prerequisites
         working-directory: webui
-        run: npm run prepare:pairing-runtime
+        run: npm run verify:source
 
-      - name: Verify source pairing runtime reference
+      - name: Check npm dependency security (non-blocking)
         working-directory: webui
+        shell: bash
         run: |
-          node scripts/prepare-pairing-runtime.mjs
-          node -e "const fs=require('fs'); const v=require('./package.json').version; const html=fs.readFileSync('index.html','utf8'); if(!html.includes('taf-pairing-runtime-v'+v+'.js')) process.exit(1)"
+          npm audit --json > npm-audit-report.json || echo "::warning::npm audit reported vulnerabilities; review the uploaded report."
 
-      - name: Build WebUI from source
-        working-directory: webui
-        run: npm run build
-
-      - name: Verify embedded WebUI version sync
-        working-directory: webui
-        run: npm run verify:embedded
+      - name: Upload npm security audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-${{ github.sha }}
+          path: webui/npm-audit-report.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Build Android debug APK from source
+      - name: Build Android debug APK (includes one WebUI build and verification)
         run: ./gradlew :app:assembleDebug --stacktrace
 
       - name: Prepare commit-specific APK name

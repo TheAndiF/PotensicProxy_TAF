@@ -24,3 +24,8 @@ dist/
 *.aab
 
 
+
+# Never commit or distribute release signing credentials
+keystore.properties
+*.jks
+*.keystore
