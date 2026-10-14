@@ -29,3 +29,7 @@ dist/
 keystore.properties
 *.jks
 *.keystore
+
+# BA_ signing material MUST stay outside the source tree
+BA_RC10_PRIVATE/
+*BA*Klartext*Zugangsdaten*

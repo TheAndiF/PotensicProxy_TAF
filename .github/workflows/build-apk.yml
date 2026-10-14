@@ -26,6 +26,30 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Require stable debug signing credentials for BA_
+        if: ${{ startsWith(github.event.head_commit.message, 'BA_') }}
+        shell: bash
+        env:
+          TAF_DEBUG_KEYSTORE_B64: ${{ secrets.TAF_DEBUG_KEYSTORE_B64 }}
+          TAF_DEBUG_STORE_PASSWORD: ${{ secrets.TAF_DEBUG_STORE_PASSWORD }}
+          TAF_DEBUG_KEY_ALIAS: ${{ secrets.TAF_DEBUG_KEY_ALIAS }}
+          TAF_DEBUG_KEY_PASSWORD: ${{ secrets.TAF_DEBUG_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for key in TAF_DEBUG_KEYSTORE_B64 TAF_DEBUG_STORE_PASSWORD TAF_DEBUG_KEY_ALIAS TAF_DEBUG_KEY_PASSWORD; do
+            test -n "${!key}" || { echo "::error::Missing mandatory BA signing secret: $key"; exit 1; }
+            echo "::add-mask::${!key}"
+          done
+          printf '%s' "$TAF_DEBUG_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/taf-debug.keystore"
+          test -s "$RUNNER_TEMP/taf-debug.keystore"
+          keytool -list -v -keystore "$RUNNER_TEMP/taf-debug.keystore" \
+            -storepass "$TAF_DEBUG_STORE_PASSWORD" -alias "$TAF_DEBUG_KEY_ALIAS" \
+            > "$RUNNER_TEMP/ba-keystore-identity.txt"
+          grep -qi '60:0F:D0:95:F4:77:BC:F5:82:A2:A8:28:EF:C4:D0:F4:CF:D7:F8:D6:41:85:82:92:C4:77:63:5A:10:77:32:62' "$RUNNER_TEMP/ba-keystore-identity.txt" || {
+            echo "::error::BA keystore certificate does not match the approved fingerprint"; exit 1;
+          }
+          echo "TAF_DEBUG_KEYSTORE=$RUNNER_TEMP/taf-debug.keystore" >> "$GITHUB_ENV"
+
       - name: Set up Node.js 24
         uses: actions/setup-node@v4
         with:
@@ -92,24 +116,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: Require stable debug signing credentials for BA_
-        if: ${{ startsWith(github.event.head_commit.message, 'BA_') }}
-        shell: bash
-        env:
-          TAF_DEBUG_KEYSTORE_B64: ${{ secrets.TAF_DEBUG_KEYSTORE_B64 }}
-          TAF_DEBUG_STORE_PASSWORD: ${{ secrets.TAF_DEBUG_STORE_PASSWORD }}
-          TAF_DEBUG_KEY_ALIAS: ${{ secrets.TAF_DEBUG_KEY_ALIAS }}
-          TAF_DEBUG_KEY_PASSWORD: ${{ secrets.TAF_DEBUG_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          for key in TAF_DEBUG_KEYSTORE_B64 TAF_DEBUG_STORE_PASSWORD TAF_DEBUG_KEY_ALIAS TAF_DEBUG_KEY_PASSWORD; do
-            test -n "${!key}" || { echo "::error::Missing mandatory BA signing secret: $key"; exit 1; }
-            echo "::add-mask::${!key}"
-          done
-          printf '%s' "$TAF_DEBUG_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/taf-debug.keystore"
-          test -s "$RUNNER_TEMP/taf-debug.keystore"
-          echo "TAF_DEBUG_KEYSTORE=$RUNNER_TEMP/taf-debug.keystore" >> "$GITHUB_ENV"
-
       - name: Detect optional stable debug signing for BL_
         if: ${{ startsWith(github.event.head_commit.message, 'BL_') }}
         shell: bash
@@ -168,6 +174,9 @@ jobs:
           BUILD_TOOLS="${ANDROID_HOME}/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/ba-apk-verification.txt"
           grep -q 'Verified using' "$RUNNER_TEMP/ba-apk-verification.txt"
+          grep -qi '600fd095f477bcf582a2a828efc4d0f4cfd7f8d641858292c477635a10773262' "$RUNNER_TEMP/ba-apk-verification.txt" || {
+            echo "::error::BA APK is signed with an unapproved certificate"; exit 1;
+          }
           META=$("$BUILD_TOOLS/aapt" dump badging "$APK" | grep '^package:')
           echo "$META" | grep -q "name='com.potensic.proxy'"
           EXPECTED=$((2000000 + GITHUB_RUN_NUMBER))
