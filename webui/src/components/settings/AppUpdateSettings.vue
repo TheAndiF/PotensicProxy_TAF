@@ -1,6 +1,6 @@
 <template>
   <section class="updates-panel">
-    <h3>App-Updates (GitHub)</h3>
+    <h3>App-Updates (GitHub · BA_)</h3>
     <p>Installiert: {{ status.version || 'unbekannt' }} (Build {{ status.versionCode || '?' }}) · Kanal: {{ status.channel || 'unbekannt' }}</p>
     <label>Automatische Prüfung und Vorbereitung
       <select v-model="mode" @change="saveMode">
@@ -16,6 +16,7 @@
       <button type="button" :disabled="working || !status.pending || !!status.blocker" @click="install">Installation am Handy anfordern</button>
     </div>
     <p v-if="candidate">Neue Version: {{ candidate.versionName }} (Build {{ candidate.versionCode }})</p>
+    <p v-if="candidate?.buildId">Build: {{ candidate.buildId.slice(0, 12) }} · {{ candidate.buildDate || "Datum unbekannt" }}</p>
     <p>Status: {{ status.phase || 'idle' }} · {{ status.progress || 0 }} %</p>
     <progress v-if="working" :value="status.progress || 0" max="100" />
     <p v-if="status.blocker" class="warning">Installation gesperrt: {{ status.blocker }}</p>
@@ -25,7 +26,7 @@
 </template>
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
-type Candidate = { versionCode:number, versionName:string, apkUrl:string, sha256:string, channel:string, packageName:string }
+type Candidate = { versionCode:number, versionName:string, apkUrl:string, sha256:string, channel:string, packageName:string, buildId?:string, buildDate?:string }
 type State = { version?:string, versionCode?:number, channel?:string, autoMode?:string, phase?:string, progress?:number, pending?:boolean, blocker?:string | null }
 const status = ref<State>({})
 const candidate = ref<Candidate | null>(null)

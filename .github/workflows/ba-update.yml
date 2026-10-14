@@ -1,0 +1,177 @@
+name: PotensicProxy BA automatic debug update
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ba-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-apk:
+    name: Build signed BA update APK
+    if: ${{ (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'BA_')) || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Verify required map WebUI sources
+        shell: bash
+        run: |
+          required=(
+            webui/src/components/cockpit/MapView.vue
+            webui/src/components/settings/MapSettingsView.vue
+            webui/src/composables/useCockpitViewSettings.ts
+            webui/src/services/MapService.ts
+            webui/src/types/map.ts
+          )
+          missing=0
+          for file in "${required[@]}"; do
+            if [[ ! -f "$file" ]]; then
+              echo "::error file=$file::Required map integration source file is missing from the commit/package."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Verify MiniPair protocol source completeness
+        shell: bash
+        run: |
+          grep -q "fun buildFpvMiniPair" app/src/main/java/com/potensic/proxy/DroneProtocol.kt || {
+            echo "::error file=app/src/main/java/com/potensic/proxy/DroneProtocol.kt::Missing DroneProtocol.buildFpvMiniPair implementation required by PotensicProtocol."
+            exit 1
+          }
+          grep -q "fun buildFpvMiniPair" app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt || {
+            echo "::error file=app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt::Missing PotensicProtocol.buildFpvMiniPair forwarding method."
+            exit 1
+          }
+
+      - name: Install WebUI dependencies
+        working-directory: webui
+        run: npm ci --include=optional --no-audit --no-fund
+
+      - name: Verify Linux Rollup native dependency
+        working-directory: webui
+        shell: bash
+        run: |
+          node -e "const path = require.resolve('@rollup/rollup-linux-x64-gnu'); console.log('[rollup-native] OK: '+path)"
+          node -e "console.log('[rollup] version='+require('rollup/package.json').version)"
+
+      - name: Verify source versions and build prerequisites
+        working-directory: webui
+        run: npm run verify:source
+
+      - name: Check npm dependency security (non-blocking)
+        working-directory: webui
+        shell: bash
+        run: |
+          npm audit --json > npm-audit-report.json || echo "::warning::npm audit reported vulnerabilities; review the uploaded report."
+
+      - name: Upload npm security audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-${{ github.sha }}
+          path: webui/npm-audit-report.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Require all fixed debug signing credentials
+        shell: bash
+        env:
+          TAF_DEBUG_KEYSTORE_B64: ${{ secrets.TAF_DEBUG_KEYSTORE_B64 }}
+          TAF_DEBUG_STORE_PASSWORD: ${{ secrets.TAF_DEBUG_STORE_PASSWORD }}
+          TAF_DEBUG_KEY_ALIAS: ${{ secrets.TAF_DEBUG_KEY_ALIAS }}
+          TAF_DEBUG_KEY_PASSWORD: ${{ secrets.TAF_DEBUG_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for key in TAF_DEBUG_KEYSTORE_B64 TAF_DEBUG_STORE_PASSWORD TAF_DEBUG_KEY_ALIAS TAF_DEBUG_KEY_PASSWORD; do
+            test -n "${!key}" || { echo "::error::Missing mandatory BA signing secret: $key"; exit 1; }
+            echo "::add-mask::${!key}"
+          done
+          printf '%s' "$TAF_DEBUG_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/taf-debug.keystore"
+          test -s "$RUNNER_TEMP/taf-debug.keystore"
+          echo "TAF_DEBUG_KEYSTORE=$RUNNER_TEMP/taf-debug.keystore" >> "$GITHUB_ENV"
+
+      - name: Build BA signed APK
+        env:
+          TAF_BUILD_VERSION_CODE: ${{ github.run_number }}
+          TAF_DEBUG_STORE_PASSWORD: ${{ secrets.TAF_DEBUG_STORE_PASSWORD }}
+          TAF_DEBUG_KEY_ALIAS: ${{ secrets.TAF_DEBUG_KEY_ALIAS }}
+          TAF_DEBUG_KEY_PASSWORD: ${{ secrets.TAF_DEBUG_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Verify identity, version and signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          BUILD_TOOLS="${ANDROID_HOME}/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/ba-apk-verification.txt"
+          grep -q 'Verified using' "$RUNNER_TEMP/ba-apk-verification.txt"
+          META=$("$BUILD_TOOLS/aapt" dump badging "$APK" | grep '^package:')
+          echo "$META" | grep -q "name='com.potensic.proxy'"
+          EXPECTED=$((100000 + GITHUB_RUN_NUMBER))
+          echo "$META" | grep -q "versionCode='$EXPECTED'"
+          echo "[BA] package and versionCode verified: $EXPECTED"
+
+      - name: Prepare release payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare_ba_release.py \
+            --apk app/build/outputs/apk/debug/app-debug.apk \
+            --output "$RUNNER_TEMP/ba-release" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            --sha "$GITHUB_SHA" \
+            --version-name "$(python3 -c 'import json;print(json.load(open("webui/package.json"))["version"])')"
+
+      - name: Upload BA diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BA-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/ba-apk-verification.txt
+            ${{ runner.temp }}/ba-release/*.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Publish approved BA prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="ba-debug-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
+          cd "$RUNNER_TEMP/ba-release"
+          gh release create "$TAG" ./*.apk ./*.sha256 taf-update-manifest.json \
+            --prerelease --target "$GITHUB_SHA" \
+            --title "PotensicProxy BA_ debug ${GITHUB_RUN_NUMBER}" \
+            --notes "BA_ automatic debug update from ${GITHUB_SHA::7}; requires the same signing identity as the installed APK."

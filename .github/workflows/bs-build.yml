@@ -1,0 +1,141 @@
+name: PotensicProxy BS small build
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-apk:
+    name: Build cached debug APK for BS_ commit
+    if: ${{ startsWith(github.event.head_commit.message, 'BS_') }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Verify required map WebUI sources
+        shell: bash
+        run: |
+          required=(
+            webui/src/components/cockpit/MapView.vue
+            webui/src/components/settings/MapSettingsView.vue
+            webui/src/composables/useCockpitViewSettings.ts
+            webui/src/services/MapService.ts
+            webui/src/types/map.ts
+          )
+          missing=0
+          for file in "${required[@]}"; do
+            if [[ ! -f "$file" ]]; then
+              echo "::error file=$file::Required map integration source file is missing from the commit/package."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Verify MiniPair protocol source completeness
+        shell: bash
+        run: |
+          grep -q "fun buildFpvMiniPair" app/src/main/java/com/potensic/proxy/DroneProtocol.kt || {
+            echo "::error file=app/src/main/java/com/potensic/proxy/DroneProtocol.kt::Missing DroneProtocol.buildFpvMiniPair implementation required by PotensicProtocol."
+            exit 1
+          }
+          grep -q "fun buildFpvMiniPair" app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt || {
+            echo "::error file=app/src/main/java/com/potensic/proxy/protocol/PotensicProtocol.kt::Missing PotensicProtocol.buildFpvMiniPair forwarding method."
+            exit 1
+          }
+
+      - name: Install WebUI dependencies
+        working-directory: webui
+        run: npm ci --include=optional --no-audit --no-fund
+
+      - name: Verify Linux Rollup native dependency
+        working-directory: webui
+        shell: bash
+        run: |
+          node -e "const path = require.resolve('@rollup/rollup-linux-x64-gnu'); console.log('[rollup-native] OK: '+path)"
+          node -e "console.log('[rollup] version='+require('rollup/package.json').version)"
+
+      - name: Verify source versions and build prerequisites
+        working-directory: webui
+        run: npm run verify:source
+
+      - name: Check npm dependency security (non-blocking)
+        working-directory: webui
+        shell: bash
+        run: |
+          npm audit --json > npm-audit-report.json || echo "::warning::npm audit reported vulnerabilities; review the uploaded report."
+
+      - name: Upload npm security audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-${{ github.sha }}
+          path: webui/npm-audit-report.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Detect stable debug signing configuration
+        id: debug-signing
+        shell: bash
+        env:
+          TAF_DEBUG_KEYSTORE_B64: ${{ secrets.TAF_DEBUG_KEYSTORE_B64 }}
+          TAF_DEBUG_STORE_PASSWORD: ${{ secrets.TAF_DEBUG_STORE_PASSWORD }}
+          TAF_DEBUG_KEY_ALIAS: ${{ secrets.TAF_DEBUG_KEY_ALIAS }}
+          TAF_DEBUG_KEY_PASSWORD: ${{ secrets.TAF_DEBUG_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$TAF_DEBUG_KEYSTORE_B64" && -n "$TAF_DEBUG_STORE_PASSWORD" && -n "$TAF_DEBUG_KEY_ALIAS" && -n "$TAF_DEBUG_KEY_PASSWORD" ]]; then
+            echo "$TAF_DEBUG_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/taf-debug.keystore"
+            test -s "$RUNNER_TEMP/taf-debug.keystore" || { echo "::error::Debug keystore is empty."; exit 1; }
+            echo "TAF_DEBUG_KEYSTORE=$RUNNER_TEMP/taf-debug.keystore" >> "$GITHUB_ENV"
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+            echo "[signing] Stable debug signing configured. In-app update prerelease eligible."
+          else
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Stable debug signing is not fully configured (TAF_DEBUG_KEYSTORE_B64, TAF_DEBUG_STORE_PASSWORD, TAF_DEBUG_KEY_ALIAS, TAF_DEBUG_KEY_PASSWORD). Building an ordinary Android debug APK; GitHub update prerelease will be skipped. This APK cannot be relied upon for in-place updates."
+          fi
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Build Android debug APK (includes one WebUI build and verification)
+        env:
+          TAF_BUILD_VERSION_CODE: ${{ github.run_number }}
+          TAF_DEBUG_STORE_PASSWORD: ${{ secrets.TAF_DEBUG_STORE_PASSWORD }}
+          TAF_DEBUG_KEY_ALIAS: ${{ secrets.TAF_DEBUG_KEY_ALIAS }}
+          TAF_DEBUG_KEY_PASSWORD: ${{ secrets.TAF_DEBUG_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Prepare commit-specific APK name
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          cp app/build/outputs/apk/debug/app-debug.apk "PotensicProxy_TAF-${SHORT_SHA}.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PotensicProxy_TAF-${{ github.sha }}
+          path: PotensicProxy_TAF-*.apk
+          if-no-files-found: error
+          retention-days: 30

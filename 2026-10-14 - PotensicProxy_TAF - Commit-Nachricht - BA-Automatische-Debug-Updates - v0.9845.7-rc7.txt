@@ -1,0 +1,24 @@
+BA_ Add safe automatic debug update channel (v0.9845.7-rc7)
+
+Date: 2026-10-14
+
+Changes:
+- Separate BA_ prerelease updates from BL_ uncached and BS_ cached artifact builds.
+- Require stable debug credentials and verify identity before BA_ publication.
+- Generate SHA-256 and strict BA_ update manifest.
+- Restrict Android update lookup and download to approved public BA_ releases.
+- Preserve signature/version/install safeguards and show BA_ build details.
+
+Changed files:
+- .github/workflows/build-apk.yml
+- .github/workflows/ba-update.yml
+- .github/workflows/bs-build.yml
+- scripts/prepare_ba_release.py
+- app/src/main/java/com/potensic/proxy/UpdateManager.kt
+- webui/src/components/settings/AppUpdateSettings.vue
+
+Documentation:
+- DOCUMENTATION/Update_Bestandsschutz/2026-10-14 - PotensicProxy_TAF - Release-Dokumentation - BA-Automatische-Debug-Updates - v0.9845.7-rc7.docx
+- DOCUMENTATION/Update_Bestandsschutz/2026-10-14 - PotensicProxy_TAF - Release-Dokumentation - BA-Automatische-Debug-Updates - v0.9845.7-rc7.pdf
+
+Testing: npm verify:source passed, YAML and Python parse passed. Android and device testing pending.

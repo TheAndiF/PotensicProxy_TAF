@@ -4,7 +4,7 @@ on:
   push:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: apk-${{ github.ref }}
@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   build-apk:
-    name: Build debug APK for BL_ commit
+    name: Build uncached debug APK for BL_ commit
     if: ${{ startsWith(github.event.head_commit.message, 'BL_') }}
     runs-on: ubuntu-latest
 
@@ -25,14 +25,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v4
         with:
           node-version: '24.11.1'
-          cache: npm
-          cache-dependency-path: webui/package-lock.json
 
       - name: Verify required map WebUI sources
         shell: bash
@@ -124,7 +121,7 @@ jobs:
           TAF_DEBUG_STORE_PASSWORD: ${{ secrets.TAF_DEBUG_STORE_PASSWORD }}
           TAF_DEBUG_KEY_ALIAS: ${{ secrets.TAF_DEBUG_KEY_ALIAS }}
           TAF_DEBUG_KEY_PASSWORD: ${{ secrets.TAF_DEBUG_KEY_PASSWORD }}
-        run: ./gradlew :app:assembleDebug --stacktrace
+        run: ./gradlew --no-build-cache :app:assembleDebug --stacktrace
 
       - name: Prepare commit-specific APK name
         shell: bash
@@ -139,27 +136,3 @@ jobs:
           path: PotensicProxy_TAF-*.apk
           if-no-files-found: error
           retention-days: 30
-
-      - name: Publish BL_ update as GitHub prerelease
-        if: steps.debug-signing.outputs.stable == 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          APK=$(find . -maxdepth 1 -name 'PotensicProxy_TAF-*.apk' -print -quit)
-          test -n "$APK"
-          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
-          TAG="debug-bl-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
-          VERSION_CODE=$((100000 + GITHUB_RUN_NUMBER))
-          APK_NAME="PotensicProxy_TAF-debug-${VERSION_CODE}.apk"
-          cp "$APK" "$APK_NAME"
-          python3 - "$APK_NAME" "$SHA" "$VERSION_CODE" "$TAG" <<'PYMANIFEST'
-          import json,sys,os
-          name,digest,version,tag=sys.argv[1:]
-          manifest={"channel":"debug","packageName":"com.potensic.proxy", "versionCode":int(version), "versionName":"0.9845.7", "sha256":digest,"apkUrl":f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{tag}/{name}"}
-          open('taf-update-manifest.json','w').write(json.dumps(manifest,indent=2)+'\n')
-          PYMANIFEST
-          sha256sum "$APK_NAME" > "$APK_NAME.sha256"
-          gh release create "$TAG" "$APK_NAME" "$APK_NAME.sha256" taf-update-manifest.json --prerelease --title "PotensicProxy BL_ debug $VERSION_CODE" --notes "BL_ debug build ${GITHUB_SHA::7}. In-place updates require the same stable debug signing key as the installed app."

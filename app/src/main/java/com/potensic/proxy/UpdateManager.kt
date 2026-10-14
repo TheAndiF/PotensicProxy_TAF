@@ -41,6 +41,9 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         val battery = (context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
             .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         if (battery <= 40 || battery > 100) return "Handy-Akku muss über 40 % liegen (aktuell $battery %)."
+        // Unknown flight activity is never interpreted as a safe connected aircraft.
+        // Until individual operation flags are exposed by the drone state store, a live
+        // connection always prevents installation (including PStart/PLand/RTH).
         val state = drone.telemetry
         if (state.flying || state.takingOff || state.landing || state.returning || state.unlocked)
             return "Flugbetrieb oder Motoren aktiv."
@@ -53,12 +56,13 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
     fun status() = JSONObject().apply {
         put("version", BuildConfig.VERSION_NAME)
         put("versionCode", BuildConfig.VERSION_CODE)
-        put("channel", if (BuildConfig.DEBUG) "debug" else "stable")
+        put("channel", if (BuildConfig.DEBUG) "BA_" else "stable")
         put("autoMode", prefs.getString("auto_mode", "notify"))
         put("phase", phase); put("progress", percent); put("error", error)
         put("pending", destination.isFile)
         put("blocker", safetyReason() ?: JSONObject.NULL)
         put("candidate", prefs.getString("candidate", ""))
+        put("repository", REPOSITORY)
     }
     fun setMode(mode: String) {
         require(mode in listOf("off", "notify", "download")) { "Invalid automatic update mode" }
@@ -81,18 +85,22 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
     }
     suspend fun check(): JSONObject = withContext(Dispatchers.IO) {
         val releases = org.json.JSONArray(read("https://api.github.com/repos/$REPOSITORY/releases?per_page=25"))
-        val requestedChannel = if (BuildConfig.DEBUG) "debug" else "stable"
+        val requestedChannel = if (BuildConfig.DEBUG) "BA_" else "stable"
         var candidate: JSONObject? = null
         for (i in 0 until releases.length()) {
             val release = releases.getJSONObject(i)
             if (release.optBoolean("draft")) continue
-            if (release.optBoolean("prerelease") != (requestedChannel == "debug")) continue
+            if (!BuildConfig.DEBUG || !release.optBoolean("prerelease")) continue
+            if (!release.optString("tag_name").startsWith("ba-debug-")) continue
             val assets = release.optJSONArray("assets") ?: continue
             for (j in 0 until assets.length()) {
                 val asset = assets.getJSONObject(j)
                 if (asset.optString("name") != "taf-update-manifest.json") continue
                 val data = JSONObject(read(asset.getString("browser_download_url")))
                 if (data.optString("channel") != requestedChannel) continue
+                if (data.optString("tag") != release.optString("tag_name")) continue
+                if (!data.optString("apkUrl").startsWith("https://github.com/$REPOSITORY/releases/download/${release.optString("tag_name")}/")) continue
+                if (!data.optString("sha256").matches(Regex("[0-9a-fA-F]{64}"))) continue
                 if (data.optString("packageName") != context.packageName) continue
                 if (data.optInt("versionCode") <= BuildConfig.VERSION_CODE) continue
                 if (candidate == null || data.optInt("versionCode") > candidate.optInt("versionCode")) candidate = data
@@ -105,9 +113,18 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         cancel = false; phase = "download"; percent = 0; error = ""
         val temp = File(storage, "download.part")
         try {
+            // Never trust a manifest supplied by the browser: re-fetch from the fixed public repository.
+            val authoritative = check().optJSONObject("update")
+                ?: throw IllegalArgumentException("No approved BA update currently published")
+            require(authoritative.toString() == manifest.toString() || (
+                authoritative.optString("apkUrl") == manifest.optString("apkUrl") &&
+                authoritative.optString("sha256").equals(manifest.optString("sha256"), ignoreCase = true) &&
+                authoritative.optInt("versionCode") == manifest.optInt("versionCode") &&
+                authoritative.optString("channel") == manifest.optString("channel")
+            )) { "Update metadata does not match approved GitHub BA release" }
             require(manifest.getString("packageName") == context.packageName) { "Wrong app ID" }
             require(manifest.getInt("versionCode") > BuildConfig.VERSION_CODE) { "Version is not newer" }
-            require(manifest.getString("channel") == (if (BuildConfig.DEBUG) "debug" else "stable")) { "Wrong signing channel" }
+            require(manifest.getString("channel") == (if (BuildConfig.DEBUG) "BA_" else "stable")) { "Wrong signing channel" }
             val url = manifest.getString("apkUrl")
             require(URL(url).host in setOf("github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com")) { "Invalid download host" }
             val expected = manifest.getString("sha256").lowercase()
