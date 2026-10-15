@@ -104,22 +104,13 @@
         <span class="crosshair-center"></span>
       </div>
 
-      <!-- Model display is opt-in. Ideal is schematic, not a calibrated optical observation. -->
-      <div v-if="!compact && markerDisplayMode !== 'off' && hasFrame" class="pport-model-overlay" aria-label="PLand Mustermodelle, nur Anzeige">
-        <img v-if="(markerDisplayMode === 'measured' || markerDisplayMode === 'compare') && markerOverlayUrl"
-          :src="markerOverlayUrl" class="pport-marker-pattern"
-          :style="{ width: markerPreviewPx + 'px', height: markerPreviewPx + 'px', opacity: markerDisplayMode === 'compare' ? 0.37 : 0.44 }"
-          alt="PStart-Mustermodell (unverifiziert)" />
-        <img v-if="markerDisplayMode === 'ideal' || markerDisplayMode === 'compare'"
-          :src="idealMarkerUrl" class="pport-marker-pattern"
-          :style="{ width: markerPreviewPx + 'px', height: markerPreviewPx + 'px', opacity: markerDisplayMode === 'compare' ? 0.32 : 0.44, outline: markerDisplayMode === 'compare' ? '2px dashed #4fe3c1' : 'none' }"
-          alt="Schematisches Idealmodell des Landemusters" />
+      <!-- Fail-closed: a texture cannot be mapped to live pixels without four synchronized corners. -->
+      <div v-if="!compact && plandStart.state.plandPreviewActive && hasFrame && projectionSettings.diagnostics" class="pport-model-overlay" aria-label="PLand Projektionsstatus, nur Anzeige">
         <div class="pport-marker-status">
-          <div>PLand {{ markerDisplayMode === 'ideal' ? 'Idealmodell (schematisch)' : markerDisplayMode === 'compare' ? 'PStart + Ideal (Vergleich)' : 'PStart-Modell' }} · {{ markerOverlayStatus }}</div>
-          <div>Modell {{ markerModelId || '–' }} · {{ markerScaleAvailable ? markerDisplayPx.toFixed(0) + ' px (Kalibrierbereich)' : 'Maßstab unbekannt – unmaßstäbliche Vorschau' }}</div>
-          <div>Telemetriehöhe: {{ Number(store.telemetry.altitude).toFixed(1) }} m (Quelle nicht verifiziert)</div>
-          <div>Optik: {{ markerOpticalPercent }} % · GPS: {{ 100 - markerOpticalPercent }} % (nur Modellanzeige)</div>
-          <div>Nur Anzeige · keine Flugregelung</div>
+          <div>PLand · {{ projectionSettings.mode }} · {{ projectionSettings.basis }} · DISPLAY_ONLY</div>
+          <div>Modell {{ markerModelId || 'nicht verfügbar' }} · {{ markerOverlayStatus }}</div>
+          <div>PROJECTION_UNAVAILABLE: Keine zeitlich synchronisierten Live-Markerecken oder kalibrierten Kamera-/Poseparameter.</div>
+          <div>Keine scheingenaue Projektion. Telemetrie altitude/tofHeight nur Diagnose, nicht Modellhöhe.</div>
         </div>
       </div>
 
@@ -142,14 +133,7 @@
           <button class="osd-action-btn success" @click="activateSelectedLiveView">⚡ Stream</button>
           <button class="osd-action-btn" @click="requestIdr">🔄 I-Frame</button>
           <button class="osd-action-btn" @click="toggleNextMode">🔀 {{ mode.toUpperCase() }}</button>
-          <label class="osd-action-btn" for="pland-model-mode">◫ Muster
-            <select id="pland-model-mode" v-model="markerDisplayMode" aria-label="Mustermodell-Anzeige">
-              <option value="off">AUS</option>
-              <option value="measured">PStart-Modell</option>
-              <option value="ideal">Idealmodell</option>
-              <option value="compare">Vergleich</option>
-            </select>
-          </label>
+          <span class="osd-action-btn" title="Darstellungsmodus unter System – Drohne – PStart / PLand einstellen">PLand: {{ plandStart.state.plandPreviewActive ? 'EIN' : 'AUS' }}</span>
           <button class="osd-action-btn" @click="toggleFullscreen" :title="t('video.fullscreenTitle')">⛶ {{ t('video.fullscreen') }}</button>
         </div>
       </div>
@@ -167,6 +151,7 @@ import { WebCodecsPlayer, VideoPlayerStats } from '../../video/WebCodecsPlayer'
 import { useI18n } from '../../i18n'
 import { useLandingAssistSettings } from '../../composables/useLandingAssistSettings'
 import { usePrecisionStartStore } from '../../stores/usePrecisionStartStore'
+import { usePLandProjectionSettings, listPPortModels, selectedModelId } from '../../composables/usePLandProjectionSettings'
 
 const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 const compact = computed(() => props.compact)
@@ -174,9 +159,9 @@ const controlsOpen = ref(false)
 const store = useDroneStore()
 const { t } = useI18n()
 const { crosshairVisible } = useLandingAssistSettings()
-const markerDisplayMode = ref<'off'|'measured'|'ideal'|'compare'>('off')
+const projectionSettings = usePLandProjectionSettings()
 const plandStart = usePrecisionStartStore()
-watch(() => plandStart.state.plandPreviewActive, active => { markerDisplayMode.value = active ? 'measured' : 'off' })
+watch(() => [projectionSettings.modelSelection, projectionSettings.manualId, plandStart.state.plandPreviewActive], () => { if (plandStart.state.plandPreviewActive) void loadMarkerOverlay() })
 const markerOverlayUrl = ref('')
 // Vector reference: relative normalized geometry, without a claimed physical dimension.
 // It is schematic until dimensions have been separately measured/confirmed.
@@ -190,7 +175,7 @@ const markerZoomRole = computed<'MIN'|'MAX'>(() => (cameraForModel.zoomActual ??
 const markerScale = ref<any>(null)
 const markerWeighting = ref<any>(null)
 const markerExpectedPx = computed(() => {
-  const h = Number(store.telemetry.altitude)
+  const h = Number.NaN // Marker-plane relative height not yet synchronized; fail closed
   const group = markerScale.value?.groups?.[markerZoomRole.value]
   if (cameraForModel.zoomActual == null || !Number.isFinite(h) || h <= 0 || !group?.heightRangeM ||
     h < group.heightRangeM[0] || h > group.heightRangeM[1]) return 0
@@ -217,17 +202,29 @@ const markerOpticalPercent = computed(() => {
 })
 async function loadMarkerOverlay() {
   try {
-    const r = await fetch('/api/pport/models/latest',{cache:'no-store'})
-    if (!r.ok) throw new Error('HTTP '+r.status)
+    const entries = await listPPortModels()
+    const selected = selectedModelId(entries)
+    if (!selected) {
+      markerModelId.value = ''
+      markerOverlayUrl.value = ''
+      markerOverlayStatus.value = projectionSettings.modelSelection === 'manual' ? 'Manuell ausgewähltes Modell fehlt' : 'Kein vollständiges PPort-Modell'
+      return
+    }
+    const r = await fetch('/api/pport/models/by-id/' + encodeURIComponent(selected), { cache: 'no-store' })
+    if (!r.ok) throw new Error('HTTP ' + r.status)
     const data = await r.json()
-    if (!data.available) { markerOverlayStatus.value='Kein PPort-Modell';return }
+    if (!data.available) throw new Error('Modell unvollständig')
     markerModelId.value = data.id
-    pportIdealSvg.value = typeof data.idealSvg === 'string' && data.idealSvg.startsWith('<svg ' ) ? data.idealSvg : ''
-    markerScale.value=data.scale
-    markerWeighting.value=data.weighting
-    markerOverlayStatus.value=data.model?.status || 'UNVERIFIED'
-    markerOverlayUrl.value='data:image/png;base64,'+data.patternBase64
-  } catch(e) { markerOverlayStatus.value='Ladefehler: '+String(e) }
+    pportIdealSvg.value = typeof data.idealSvg === 'string' && data.idealSvg.startsWith('<svg ') ? data.idealSvg : ''
+    markerScale.value = data.scale
+    markerWeighting.value = data.weighting
+    markerOverlayStatus.value = data.model?.status || 'UNVERIFIED'
+    markerOverlayUrl.value = 'data:image/png;base64,' + data.patternBase64
+  } catch(e) {
+    markerModelId.value = ''
+    markerOverlayUrl.value = ''
+    markerOverlayStatus.value = 'Ladefehler: ' + String(e)
+  }
 }
 
 const containerRef = ref<HTMLDivElement | null>(null)

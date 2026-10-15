@@ -33,7 +33,7 @@ android {
         targetSdk = 36
         // CI supplies the raw run number; BA adds its dedicated offset in the workflow.
         // Do not combine conflicting Git branches or duplicate the channel offset here.
-        versionCode = (System.getenv("TAF_BUILD_VERSION_CODE")?.toIntOrNull()?.plus(100_000) ?: 68)
+        versionCode = (System.getenv("TAF_BUILD_VERSION_CODE")?.toIntOrNull()?.plus(100000) ?: 68)
         versionName = webuiVersion
     }
 

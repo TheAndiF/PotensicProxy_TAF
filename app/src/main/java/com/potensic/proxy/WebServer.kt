@@ -565,6 +565,20 @@ class WebServer(
                         call.respondText(JSONObject().put("error", e.message).toString(), ContentType.Application.Json, HttpStatusCode.BadRequest)
                     }
                 }
+                get("/api/pport/models") {
+                    val result = withContext(Dispatchers.IO) { PPortModelStorage.list(appContext) }
+                    call.respondText(result.toString(), ContentType.Application.Json)
+                }
+                get("/api/pport/models/by-id/{id}") {
+                    try {
+                        val id = call.parameters["id"] ?: ""
+                        val result = withContext(Dispatchers.IO) { PPortModelStorage.byId(appContext, id) }
+                        call.respondText(result.toString(), ContentType.Application.Json)
+                    } catch (e: Exception) {
+                        call.respondText(JSONObject().put("available", false).put("error", e.message).toString(),
+                            ContentType.Application.Json, HttpStatusCode.NotFound)
+                    }
+                }
                 get("/api/pport/models/latest") {
                     val result = withContext(Dispatchers.IO) { PPortModelStorage.latest(appContext) }
                     call.respondText(result.toString(), ContentType.Application.Json)

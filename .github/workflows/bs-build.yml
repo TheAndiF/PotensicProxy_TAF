@@ -20,17 +20,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Verify centralized versions
+        run: python3 scripts/sync_versions.py --check
+
+      - name: Load toolchain versions
+        id: versions
+        shell: bash
+        run: |
+          python3 - <<'PYVERSIONS' >> "$GITHUB_OUTPUT"
+          import json
+          config=json.load(open('config/versions.json'))['toolchain']
+          print('node='+config['node'])
+          print('java='+config['java'])
+          PYVERSIONS
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: ${{ steps.versions.outputs.java }}
           cache: gradle
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: '24.11.1'
+          node-version: ${{ steps.versions.outputs.node }}
           cache: npm
           cache-dependency-path: webui/package-lock.json
 

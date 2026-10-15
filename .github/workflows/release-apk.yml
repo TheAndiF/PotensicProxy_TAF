@@ -14,14 +14,28 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
+      - name: Verify centralized versions
+        run: python3 scripts/sync_versions.py --check
+
+      - name: Load toolchain versions
+        id: versions
+        shell: bash
+        run: |
+          python3 - <<'PYVERSIONS' >> "$GITHUB_OUTPUT"
+          import json
+          config=json.load(open('config/versions.json'))['toolchain']
+          print('node='+config['node'])
+          print('java='+config['java'])
+          PYVERSIONS
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: ${{ steps.versions.outputs.java }}
           cache: gradle
       - uses: actions/setup-node@v4
         with:
-          node-version: '24.11.1'
+          node-version: ${{ steps.versions.outputs.node }}
           cache: npm
           cache-dependency-path: webui/package-lock.json
       - name: Verify version tag
@@ -73,12 +87,7 @@ jobs:
           import hashlib,json,os
           apk='PotensicProxy_TAF-release.apk'
           version=json.load(open('webui/package.json'))['version']
-          code=68 # update this when app/build.gradle.kts versionCode is raised
-          gradle=open('app/build.gradle.kts').read()
-          import re
-          match=re.search(r'\?:\s*(\d+)\)',gradle)
-          assert match, 'Could not determine release versionCode'
-          code=int(match.group(1))
+          code=json.load(open('config/versions.json'))['app']['defaultVersionCode']
           obj=dict(channel='stable',packageName='com.potensic.proxy',versionCode=code,versionName=version,sha256=hashlib.sha256(open(apk,'rb').read()).hexdigest(),apkUrl=f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/releases/download/{os.environ["GITHUB_REF_NAME"]}/{apk}')
           open('taf-update-manifest.json','w').write(json.dumps(obj,indent=2)+'\n')
           PY

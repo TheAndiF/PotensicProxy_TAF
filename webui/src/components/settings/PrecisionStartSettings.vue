@@ -66,6 +66,39 @@
           </div>
         </template>
       </div>
+      <div class="rules-box" style="margin-bottom:14px">
+        <strong>PPort – Referenzmodelle</strong>
+        <p>Alle lesbaren PPort-Modelle; eine erfolgreiche Auswertung bedeutet keine metrische Validierung oder Landefreigabe.</p>
+        <button type="button" @click="refreshModels">Modellliste aktualisieren</button>
+        <label class="pland-label">Auswahlregel
+          <select v-model="projectionSettings.modelSelection">
+            <option value="auto">Automatisch: zuletzt erfolgreich ausgewertetes PStart-Modell</option>
+            <option value="manual">Manuelle Modellauswahl</option>
+          </select>
+        </label>
+        <label v-if="projectionSettings.modelSelection === 'manual'" class="pland-label">PPort-Modell
+          <select v-model="projectionSettings.manualId">
+            <option value="">Bitte auswählen</option>
+            <option v-for="model in pportModels.filter(m => m.available)" :key="model.id" :value="model.id">{{ model.id }} · {{ model.status }}</option>
+          </select>
+        </label>
+        <p v-if="pportError" role="status">{{ pportError }}</p>
+        <p>Aktiv: {{ activeModelId || 'Kein gültiges Modell' }} – DISPLAY_ONLY</p>
+        <div v-for="model in pportModels" :key="model.id" class="pland-model-entry">
+          {{ model.id }} · {{ model.status }} · {{ model.available ? 'lesbar' : 'unvollständig' }} · {{ model.metricValidated ? 'metrisch validiert' : 'nicht metrisch validiert' }} · Zoom {{ model.zoomGroups?.join('/') || 'unbekannt' }}
+        </div>
+      </div>
+      <div class="rules-box" style="margin-bottom:14px">
+        <strong>PLand – Darstellung</strong>
+        <p>Konfiguration ausschließlich hier; Cockpit-PLand schaltet nur die Anzeige EIN/AUS. Ohne unabhängige Live-Eckenerkennung und kalibrierte Pose wird keine perspektivisch präzise Kontur erzeugt.</p>
+        <label class="pland-label">Modus<select v-model="projectionSettings.mode"><option value="original">Original/Erkennung</option><option value="ideal">Idealprojektion</option><option value="measured">PStart-Modell</option><option value="compare">Vergleich/Überlagerung</option><option value="difference">Abweichung</option></select></label>
+        <label class="pland-label">Projektionsgrundlage<select v-model="projectionSettings.basis"><option value="image">Bildbasiert</option><option value="telemetry">Telemetriebasiert (APPROXIMATE)</option><option value="combined">Kombiniert</option></select></label>
+        <label class="pland-label">Transparenz<input v-model.number="projectionSettings.opacity" type="range" min="0" max="1" step="0.05" />{{ projectionSettings.opacity.toFixed(2) }}</label>
+        <label class="pland-label">Konturfarbe<input v-model="projectionSettings.contourColor" type="color" /></label>
+        <label class="pland-label">Eckfarbe<input v-model="projectionSettings.cornerColor" type="color" /></label>
+        <label class="pland-label">Linienstärke<input v-model.number="projectionSettings.lineWidth" type="number" min="1" max="8" /></label>
+        <label class="pland-label"><input v-model="projectionSettings.diagnostics" type="checkbox" /> Diagnose anzeigen</label>
+      </div>
       <div class="rules-box">
         <strong>{{ t('pstart.v1Rules') }}</strong>
         <ul>
@@ -84,11 +117,21 @@
 
 <script setup lang="ts">
 import { useI18n } from '../../i18n'
+import { usePLandProjectionSettings, listPPortModels, selectedModelId, type PPortEntry } from '../../composables/usePLandProjectionSettings'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { PStartPostProcessingService, type PStartProgress } from '../../services/PStartPostProcessingService'
 import { usePrecisionStartSettings } from '../../composables/usePrecisionStartSettings'
 
 const { t } = useI18n()
+const projectionSettings = usePLandProjectionSettings()
+const pportModels = ref<PPortEntry[]>([])
+const pportError = ref('')
+const activeModelId = computed(() => selectedModelId(pportModels.value))
+async function refreshModels() {
+  try { pportModels.value = await listPPortModels(); pportError.value = projectionSettings.modelSelection === 'manual' && !activeModelId.value ? 'Manuell ausgewähltes Modell nicht verfügbar.' : '' }
+  catch (e) { pportError.value = String(e); pportModels.value = [] }
+}
+
 const { ascentTimeoutSeconds, endHeight, heightStep, stabilizationSeconds, positionWarningMeters, positionAbortMeters } = usePrecisionStartSettings()
 
 const analysis = ref<PStartProgress>(PStartPostProcessingService.progress)
@@ -98,6 +141,7 @@ const busy = computed(() => !['WAITING','COMPLETED','COMPLETED_WITH_WARNINGS','F
 let unsubscribe: (() => void) | null = null
 onMounted(() => {
   void refreshStorage()
+  void refreshModels()
   try { const saved = localStorage.getItem('taf.pstart.analysis.latest'); if (saved && !analysis.value.profile) analysis.value = { state: 'COMPLETED_WITH_WARNINGS', completed: 0, total: 0, message: 'Letztes lokal gespeichertes Ergebnis', profile: JSON.parse(saved) } } catch { /* optional storage */ }
   unsubscribe = PStartPostProcessingService.subscribe(v => { if (v.profile || v.state !== 'WAITING') analysis.value = v })
 })
@@ -162,4 +206,8 @@ function normalize() {
 
 <style scoped>
 .analysis-action-row{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.analysis-session-picker{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:9px;border:1px solid var(--ui-border);border-radius:6px}.analysis-session-picker select{max-width:100%;min-width:215px;background:var(--ui-bg-control);color:var(--ui-text);padding:5px}.analysis-tools{margin-top:12px}.analysis-tools summary{cursor:pointer;font-weight:600}
+</style>
+
+<style scoped>
+.pland-label{display:flex;gap:10px;align-items:center;justify-content:space-between;margin:9px 0;flex-wrap:wrap}.pland-label select{max-width:100%;min-width:180px}.pland-model-entry{border-top:1px solid var(--ui-border);padding:6px 0;font-size:12px}
 </style>

@@ -74,6 +74,43 @@ object PPortModelStorage {
             .put("sha256", hashes)
 
     }
+    /** Enumerate all readable models; listing does not mutate any SAF-backed assets. */
+    @Synchronized fun list(ctx: Context): JSONObject {
+        val entries = org.json.JSONArray()
+        val folders = PStartSafStorage.projectSubfolders(ctx, PUBLIC_MODELS).filter { it.startsWith("PStart_") }.sortedDescending()
+        for (folder in folders) {
+            val path = "$PUBLIC_MODELS/$folder"
+            try {
+                val model = JSONObject(String(PStartSafStorage.readProjectFile(ctx, path, "marker_model.json"), Charsets.UTF_8))
+                val scale = JSONObject(String(PStartSafStorage.readProjectFile(ctx, path, "marker_scale.json"), Charsets.UTF_8))
+                PStartSafStorage.readProjectFile(ctx, path, "marker_quality.json")
+                PStartSafStorage.readProjectFile(ctx, path, "marker_weighting.json")
+                PStartSafStorage.readProjectFile(ctx, path, "marker_pattern.png")
+                entries.put(JSONObject().put("id", folder).put("available", true)
+                    .put("status", model.optString("status", "UNVERIFIED"))
+                    .put("sourceImage", model.optString("sourceImage"))
+                    .put("zoomGroups", scale.optJSONObject("groups")?.names() ?: org.json.JSONArray())
+                    .put("metricValidated", model.optBoolean("metricCalibration", false)))
+            } catch (_: Exception) {
+                entries.put(JSONObject().put("id", folder).put("available", false).put("status", "INCOMPLETE"))
+            }
+        }
+        return JSONObject().put("models", entries)
+    }
+    @Synchronized fun byId(ctx: Context, id: String): JSONObject {
+        require(validId(id) && id.startsWith("PStart_")) { "Invalid PPort model ID" }
+        val path = "$PUBLIC_MODELS/$id"
+        val model = JSONObject(String(PStartSafStorage.readProjectFile(ctx,path,"marker_model.json"),Charsets.UTF_8))
+        val scale = JSONObject(String(PStartSafStorage.readProjectFile(ctx,path,"marker_scale.json"),Charsets.UTF_8))
+        val weighting = JSONObject(String(PStartSafStorage.readProjectFile(ctx,path,"marker_weighting.json"),Charsets.UTF_8))
+        PStartSafStorage.readProjectFile(ctx,path,"marker_quality.json")
+        val png = PStartSafStorage.readProjectFile(ctx,path,"marker_pattern.png")
+        val idealSvg = try { String(PStartSafStorage.readProjectFile(ctx,path,"marker_ideal.svg"),Charsets.UTF_8) }
+            catch (_: Exception) { idealSvgTemplate }
+        return JSONObject().put("available",true).put("id",id).put("model",model)
+            .put("scale",scale).put("weighting",weighting)
+            .put("patternBase64",Base64.encodeToString(png,Base64.NO_WRAP)).put("idealSvg",idealSvg)
+    }
     @Synchronized fun latest(ctx: Context): JSONObject {
         val folders = PStartSafStorage.projectSubfolders(ctx, PUBLIC_MODELS)
             .filter { it.startsWith("PStart_") }.sortedDescending()
