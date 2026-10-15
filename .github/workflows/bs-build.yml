@@ -1,7 +1,7 @@
 name: PotensicProxy BS small build
 
 on:
-  push:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,7 +13,6 @@ concurrency:
 jobs:
   build-apk:
     name: Build cached debug APK for BS_ commit
-    if: ${{ startsWith(github.event.head_commit.message, 'BS_') }}
     runs-on: ubuntu-latest
 
     steps:

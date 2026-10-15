@@ -1,7 +1,7 @@
 name: Build PotensicProxy TAF APK
 
 on:
-  push:
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,8 +12,7 @@ concurrency:
 
 jobs:
   build-apk:
-    name: Build uncached debug APK for BL_ or BA_ commit
-    if: ${{ startsWith(github.event.head_commit.message, 'BL_') || startsWith(github.event.head_commit.message, 'BA_') }}
+    name: Build uncached debug APK for BL_ commit
     runs-on: ubuntu-latest
 
     steps:
@@ -57,7 +56,6 @@ jobs:
           java-version: ${{ steps.versions.outputs.java }}
 
       - name: Require stable debug signing credentials for BA_
-        if: ${{ startsWith(github.event.head_commit.message, 'BA_') }}
         shell: bash
         env:
           TAF_DEBUG_KEYSTORE_B64: ${{ secrets.TAF_DEBUG_KEYSTORE_B64 }}
@@ -147,7 +145,6 @@ jobs:
           retention-days: 30
 
       - name: Detect optional stable debug signing for BL_
-        if: ${{ startsWith(github.event.head_commit.message, 'BL_') }}
         shell: bash
         env:
           TAF_DEBUG_KEYSTORE_B64: ${{ secrets.TAF_DEBUG_KEYSTORE_B64 }}
@@ -220,7 +217,6 @@ jobs:
           retention-days: 30
 
       - name: Verify identity, version and signing
-        if: ${{ startsWith(github.event.head_commit.message, 'BA_') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -239,7 +235,6 @@ jobs:
           echo "[BA] package and versionCode verified: $EXPECTED"
 
       - name: Prepare release payload
-        if: ${{ startsWith(github.event.head_commit.message, 'BA_') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -252,7 +247,6 @@ jobs:
             --version-name "$(python3 -c 'import json;print(json.load(open("webui/package.json"))["version"])')"
 
       - name: Upload BA diagnostics
-        if: ${{ always() && startsWith(github.event.head_commit.message, 'BA_') }}
         uses: actions/upload-artifact@v4
         with:
           name: BA-diagnostics-${{ github.sha }}
@@ -263,7 +257,6 @@ jobs:
           retention-days: 30
 
       - name: Publish approved BA prerelease
-        if: ${{ startsWith(github.event.head_commit.message, 'BA_') }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

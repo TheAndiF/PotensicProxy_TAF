@@ -1,0 +1,32 @@
+name: PotensicProxy build dispatcher
+
+on:
+  push:
+    branches: [master, main]
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    name: Dispatch matching commit prefix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start exactly one build workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          BRANCH: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$COMMIT_MESSAGE" in
+            BA_*) workflow=ba-update.yml ;;
+            BS_*) workflow=bs-build.yml ;;
+            BL_*) workflow=build-apk.yml ;;
+            *) echo "No BL_/BS_/BA_ prefix; no build dispatched."; exit 0 ;;
+          esac
+          echo "Dispatching $workflow for $BRANCH"
+          gh workflow run "$workflow" --repo "$REPOSITORY" --ref "$BRANCH"

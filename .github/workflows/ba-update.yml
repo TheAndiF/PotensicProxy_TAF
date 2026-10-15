@@ -1,8 +1,6 @@
 name: PotensicProxy BA automatic debug update
 
 on:
-  push:
-    branches: [master, main]
   workflow_dispatch:
 
 permissions:
@@ -15,7 +13,6 @@ concurrency:
 jobs:
   build-apk:
     name: Build complete uncached BL-equivalent APK and publish BA update
-    if: ${{ (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'BA_')) || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
 
     steps:

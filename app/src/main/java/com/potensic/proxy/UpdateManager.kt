@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.BatteryManager
+import android.content.IntentFilter
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
@@ -40,7 +41,13 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
     fun safetyReason(): String? {
         val battery = (context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
             .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-        if (battery <= 40 || battery > 100) return "Handy-Akku muss über 40 % liegen (aktuell $battery %)."
+        val batteryStatus = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val chargeStatus = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val isCharging = chargeStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
+            chargeStatus == BatteryManager.BATTERY_STATUS_FULL
+        // Fail closed on unknown battery data. 20% always, or >=4% when charging.
+        if (battery !in 0..100 || !(battery >= 20 || (battery >= 4 && isCharging)))
+            return "Handy-Akku: mindestens 20 % oder mindestens 4 % bei aktivem Laden erforderlich (aktuell $battery %, lädt=$isCharging)."
         // A connected aircraft is not by itself unsafe. Never use default/old
         // telemetry values as proof of a safe grounded aircraft.
         val connected = drone.connection.linkReady || drone.connection.transportOpen ||
@@ -132,15 +139,52 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         lockStartCommands()
         safetyReason()?.let { unlockStartCommands(); throw IllegalStateException(it) }
         phase = "installing_root"
+        // The updating application process may be killed by PackageManager. Delegate
+        // installation and service recovery to an independent root shell process.
+        val packageName = context.packageName
+        require(packageName.matches(Regex("[a-zA-Z0-9_.]+"))) { "Invalid package name" }
+        val targetCode = prefs.getInt("install_requested_code", -1)
+        require(targetCode > 0) { "Missing update version" }
+        val script = File(storage, "install-and-restart.sh")
+        script.writeText("""#!/system/bin/sh
+pm install -r --user 0 '$apk'
+result=${'$'}?
+if [ "${'$'}result" -ne 0 ]; then
+  log -t PotensicProxyUpdate "APK installation failed: ${'$'}result"
+  exit "${'$'}result"
+fi
+sleep 3
+# Verify the installed package version before restarting the foreground service.
+installed=${'$'}(dumpsys package '$packageName' | grep -m 1 'versionCode=' | sed -n 's/.*versionCode=\([0-9]*\).*/\1/p')
+if [ "${'$'}installed" != '$targetCode' ]; then
+  log -t PotensicProxyUpdate "Version mismatch: installed=${'$'}installed expected=$targetCode"
+  exit 1
+fi
+am start-foreground-service --user 0 -n '$packageName/.ProxyService'
+result=${'$'}?
+log -t PotensicProxyUpdate "ProxyService restart result=${'$'}result; AOA reconnect managed by service"
+exit "${'$'}result"
+""".trimIndent())
+        val scriptPath = script.canonicalPath
+        require(script.canonicalFile.parentFile == storage.canonicalFile) { "Invalid installer script location" }
         val installer = Thread {
             try {
-                // Root process runs separately; Android may terminate the app during replacement.
-                val process = ProcessBuilder("su", "-c", "pm install -r --user 0 $apk")
-                    .redirectErrorStream(true).start()
+                // nohup + background shell lets installation finish after our app process dies.
+                val command = "nohup sh '$scriptPath' >/dev/null 2>&1 </dev/null &"
+                val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
                 val output = process.inputStream.bufferedReader().readText().take(1000)
-                val result = process.waitFor()
-                if (result != 0) { unlockStartCommands(); phase = "error"; error = "Magisk installation failed ($result): $output" } else { phase = "awaiting_restart" }
-            } catch (e: Exception) { unlockStartCommands(); phase = "error"; error = e.message ?: "Root installation failed" }
+                if (process.waitFor() != 0) {
+                    unlockStartCommands()
+                    phase = "error"
+                    error = "Root installer could not be started: $output"
+                } else {
+                    phase = "awaiting_restart"
+                }
+            } catch (e: Exception) {
+                unlockStartCommands()
+                phase = "error"
+                error = e.message ?: "Root installer launch failed"
+            }
         }
         installer.isDaemon = false
         installer.start()
@@ -341,7 +385,7 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         verifyStagedUpdate()
         android.app.AlertDialog.Builder(activity)
             .setTitle("PotensicProxy aktualisieren")
-            .setMessage("Bestätigen: Die Drohne steht sicher am Boden, die Motoren sind aus und kein Flugauftrag ist aktiv. Die App wird für das Update unterbrochen. Handy-Akku über 40 % erforderlich.")
+            .setMessage("Bestätigen: Die Drohne steht sicher am Boden, die Motoren sind aus und kein Flugauftrag ist aktiv. Die App wird für das Update unterbrochen. Handy-Akku mindestens 20 % oder mindestens 4 % bei aktivem Laden erforderlich.")
             .setNegativeButton("Abbrechen", null)
             .setPositiveButton("Jetzt aktualisieren") { _, _ ->
                 try {
