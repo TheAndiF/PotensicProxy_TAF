@@ -288,7 +288,8 @@ class WebServer(
                             when (frame) {
                                 is Frame.Binary -> {
                                     val bytes = frame.readBytes()
-                                    ProxyService.instance?.sendDirectAny(bytes)
+                                    if (!(updateManager.startCommandsLocked() && bytes.contentEquals(PotensicProtocol.buildTakeoff())))
+                                        ProxyService.instance?.sendDirectAny(bytes)
                                 }
                                 is Frame.Text -> {
                                     val text = frame.readText().trim()
@@ -299,7 +300,8 @@ class WebServer(
                                         } else {
                                             PotensicProtocol.hexToBytes(text)
                                         }
-                                        ProxyService.instance?.sendDirectAny(bytes)
+                                        if (!(updateManager.startCommandsLocked() && bytes.contentEquals(PotensicProtocol.buildTakeoff())))
+                                            ProxyService.instance?.sendDirectAny(bytes)
                                     } catch (e: Exception) {
                                         Log.e("[WebServer] /ws/usb parse error: ${e.message}")
                                     }
@@ -332,6 +334,8 @@ class WebServer(
                         } else {
                             PotensicProtocol.hexToBytes(text)
                         }
+                        if (updateManager.startCommandsLocked() && bytes.contentEquals(PotensicProtocol.buildTakeoff()))
+                            throw IllegalStateException("Start during update blocked")
                         ProxyService.instance?.sendDirectAny(bytes)
                         call.respondText("""{"success":true,"sentBytes":${bytes.size}}""", ContentType.Application.Json)
                     } catch (e: Exception) {
@@ -867,6 +871,10 @@ class WebServer(
 
                 // Flight commands
                 post("/api/cmd/takeoff") {
+                    if (updateManager.startCommandsLocked()) {
+                        call.respondText("{\"error\":\"Start during update blocked\"}", ContentType.Application.Json, HttpStatusCode.Conflict)
+                        return@post
+                    }
                     val packet = PotensicProtocol.buildTakeoff()
                     Log.i("[Flight TX] Takeoff FE=0x14 function=0x0014 payloadLen=32 frame=${PotensicProtocol.bytesToHex(packet)}")
                     ProxyService.instance?.sendDirectAny(packet)

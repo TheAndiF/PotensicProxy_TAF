@@ -41,15 +41,19 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         val battery = (context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
             .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         if (battery <= 40 || battery > 100) return "Handy-Akku muss über 40 % liegen (aktuell $battery %)."
-        // Unknown flight activity is never interpreted as a safe connected aircraft.
-        // Until individual operation flags are exposed by the drone state store, a live
-        // connection always prevents installation (including PStart/PLand/RTH).
+        // A connected aircraft is not by itself unsafe. Never use default/old
+        // telemetry values as proof of a safe grounded aircraft.
+        val connected = drone.connection.linkReady || drone.connection.transportOpen ||
+            ProxyService.instance?.wifiTransport?.isConnected == true
         val state = drone.telemetry
         if (state.flying || state.takingOff || state.landing || state.returning || state.unlocked)
             return "Flugbetrieb oder Motoren aktiv."
-        // A severed telemetry link cannot establish that a connected aircraft is safe.
-        if (drone.connection.linkReady || drone.connection.transportOpen || ProxyService.instance?.wifiTransport?.isConnected == true)
-            return "Drohnenverbindung aktiv: vor Installation sicher trennen."
+        if (connected) {
+            val lastRx = drone.connection.lastRxMs
+            val now = System.currentTimeMillis()
+            if (!drone.connection.linkReady || lastRx <= 0 || lastRx > now || now - lastRx > 3000)
+                return "Flugzustand nicht aktuell oder nicht eindeutig bestätigt."
+        }
         return null
     }
 
@@ -61,12 +65,23 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         if (BuildConfig.VERSION_CODE == requested) {
             prefs.edit().remove("install_requested_code").remove("candidate")
                 .remove("candidate_code").remove("candidate_sha256").apply()
+            unlockStartCommands()
             phase = "installed_verified"
             destination.delete()
         } else if (BuildConfig.VERSION_CODE > requested) {
             prefs.edit().remove("install_requested_code").apply()
+            unlockStartCommands()
             phase = "installed_newer"
         }
+    }
+
+    fun startCommandsLocked(): Boolean = prefs.getBoolean("install_start_lock", false)
+
+    private fun lockStartCommands() {
+        prefs.edit().putBoolean("install_start_lock", true).commit()
+    }
+    private fun unlockStartCommands() {
+        prefs.edit().putBoolean("install_start_lock", false).commit()
     }
 
     fun status(): JSONObject {
@@ -80,6 +95,7 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         put("headlessEnabled", prefs.getBoolean("headless_enabled", false))
         put("automaticInstall", prefs.getBoolean("automatic_install", false))
         put("phase", phase); put("progress", percent); put("error", error)
+        put("startCommandsLocked", startCommandsLocked())
         put("pending", destination.isFile)
         put("blocker", safetyReason() ?: JSONObject.NULL)
         put("candidate", prefs.getString("candidate", ""))
@@ -113,6 +129,8 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         require(destination.canonicalFile.parentFile == storage.canonicalFile) { "Untrusted update location" }
         require(apk.matches(Regex("[a-zA-Z0-9_./-]+"))) { "Unsafe APK path" }
         prefs.edit().putInt("install_requested_code", prefs.getInt("candidate_code", -1)).apply()
+        lockStartCommands()
+        safetyReason()?.let { unlockStartCommands(); throw IllegalStateException(it) }
         phase = "installing_root"
         val installer = Thread {
             try {
@@ -121,8 +139,8 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
                     .redirectErrorStream(true).start()
                 val output = process.inputStream.bufferedReader().readText().take(1000)
                 val result = process.waitFor()
-                if (result != 0) { phase = "error"; error = "Magisk installation failed ($result): $output" } else { phase = "awaiting_restart" }
-            } catch (e: Exception) { phase = "error"; error = e.message ?: "Root installation failed" }
+                if (result != 0) { unlockStartCommands(); phase = "error"; error = "Magisk installation failed ($result): $output" } else { phase = "awaiting_restart" }
+            } catch (e: Exception) { unlockStartCommands(); phase = "error"; error = e.message ?: "Root installation failed" }
         }
         installer.isDaemon = false
         installer.start()
@@ -264,7 +282,7 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
             "APK signing certificate differs from installed app (installed=${from.sorted().joinToString(",")}, update=${to.sorted().joinToString(",")})"
         }
     }
-    fun abort() { cancel = true; if (!busy.get()) { destination.delete(); phase = "cancelled" } }
+    fun abort() { cancel = true; if (!busy.get()) { destination.delete(); phase = "cancelled"; unlockStartCommands() } }
     fun requestInstall(): JSONObject {
         val method = prefs.getString("install_method", "android") ?: "android"
         // All installation methods share the same staged APK and verification.
@@ -323,7 +341,7 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
         verifyStagedUpdate()
         android.app.AlertDialog.Builder(activity)
             .setTitle("PotensicProxy aktualisieren")
-            .setMessage("Bestätigen: Die Drohne ist gelandet, die Motoren sind aus und PStart/PLand sind nicht aktiv. Die App wird für das Update unterbrochen. Handy-Akku über 40 % erforderlich.")
+            .setMessage("Bestätigen: Die Drohne steht sicher am Boden, die Motoren sind aus und kein Flugauftrag ist aktiv. Die App wird für das Update unterbrochen. Handy-Akku über 40 % erforderlich.")
             .setNegativeButton("Abbrechen", null)
             .setPositiveButton("Jetzt aktualisieren") { _, _ ->
                 try {
@@ -335,9 +353,12 @@ class UpdateManager(private val context: Context, private val drone: DroneStateS
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                     prefs.edit().putInt("install_requested_code", prefs.getInt("candidate_code", -1)).apply()
+                    lockStartCommands()
+                    safetyReason()?.let { unlockStartCommands(); throw IllegalStateException(it) }
                     phase = "installing_android"
                     activity.startActivity(intent)
                 } catch (e: Exception) {
+                    unlockStartCommands()
                     android.app.AlertDialog.Builder(activity).setTitle("Installation gesperrt")
                         .setMessage(e.message ?: "Sicherheitsprüfung fehlgeschlagen")
                         .setPositiveButton("OK", null).show()

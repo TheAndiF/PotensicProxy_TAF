@@ -2,9 +2,9 @@
   <div class="actions-container">
     <div class="panel-title">✈️ {{ t('actions.flight') }}</div>
     <div class="btn-grid">
-      <button class="taf-btn taf-btn--success" :disabled="telemetry.flying || telemetry.takingOff || pstart.state.active" @click="confirmTakeoff">🛫 {{ t('actions.takeoff') }}</button>
+      <button class="taf-btn taf-btn--success" :disabled="updateStartLocked || telemetry.flying || telemetry.takingOff || pstart.state.active" @click="confirmTakeoff">🛫 {{ t('actions.takeoff') }}</button>
       <button class="taf-btn" :class="{ 'taf-btn--danger': telemetry.landing }" :disabled="pstart.state.active || (!telemetry.flying && !telemetry.landing)" @click="landOrCancel">🛬 {{ telemetry.landing ? t('actions.cancelLand') : t('actions.land') }}</button>
-      <button class="taf-btn pstart-button" :class="{ 'pstart-button--active': pstart.blinking }" :disabled="!pstart.state.active && (telemetry.flying || telemetry.takingOff)" @click="togglePStart">🎯 {{ t('actions.pstart') }}</button>
+      <button class="taf-btn pstart-button" :class="{ 'pstart-button--active': pstart.blinking }" :disabled="!pstart.state.active && (updateStartLocked || telemetry.flying || telemetry.takingOff)" @click="togglePStart">🎯 {{ t('actions.pstart') }}</button>
       <button class="taf-btn" :class="{ 'taf-btn--primary': pstart.state.plandPreviewActive }" :disabled="!plandCanPreview && !pstart.state.plandPreviewActive" :title="plandHint" @click="togglePLandPreview">🎯 {{ pstart.state.plandPreviewActive ? 'PLand-Anzeige AUS' : 'PLand-Anzeige' }}</button>
       <button class="taf-btn" :class="{ 'taf-btn--danger': telemetry.returning }" :disabled="pstart.state.active || (!telemetry.flying && !telemetry.returning)" @click="rthOrCancel">🏠 {{ telemetry.returning ? t('actions.cancelRth') : t('actions.rth') }}</button>
       <button class="taf-btn taf-btn--danger" @click="openEmergencyConfirm">⛔ {{ t('actions.emergency') }}</button>
@@ -36,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { DroneControlService } from '../../services/DroneControlService'
 import { useDroneStore } from '../../stores/useDroneStore'
 import { useCameraStore } from '../../stores/useCameraStore'
@@ -49,6 +49,16 @@ const camera = useCameraStore()
 const pstart = usePrecisionStartStore()
 const { telemetry } = store
 const emergencyConfirmOpen = ref(false)
+const updateStartLocked = ref(false)
+let updatePoll: ReturnType<typeof setInterval> | undefined
+async function pollUpdateLock() {
+  try {
+    const response = await fetch('/api/updates/status', { cache: 'no-store' })
+    if (response.ok) updateStartLocked.value = !!(await response.json()).startCommandsLocked
+  } catch { updateStartLocked.value = true }
+}
+onMounted(() => { void pollUpdateLock(); updatePoll = setInterval(pollUpdateLock, 1000) })
+onUnmounted(() => { if (updatePoll) clearInterval(updatePoll) })
 const plandCanPreview = computed(() => pstart.state.phase === 'COMPLETE' && !pstart.state.active && !telemetry.landing && !telemetry.returning)
 const plandHint = computed(() => pstart.state.plandPreviewActive ? 'PLand-Modellanzeige ausschalten (kein Landebefehl)' : plandCanPreview.value ? 'PLand-Modellanzeige aktivieren, nur visuell' : 'Erst PStart erfolgreich abschließen; während Landung/RTH nicht verfügbar')
 function togglePLandPreview() {
@@ -58,10 +68,12 @@ function togglePLandPreview() {
 }
 
 function confirmTakeoff() {
+  if (updateStartLocked.value) return
   if (window.confirm(t('actions.takeoffConfirm'))) DroneControlService.takeoff()
 }
 
 function togglePStart() {
+  if (updateStartLocked.value && !pstart.state.active) return
   void PrecisionStartService.toggle()
 }
 

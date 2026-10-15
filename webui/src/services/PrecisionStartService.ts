@@ -66,6 +66,13 @@ export class PrecisionStartService {
       this.abort('Benutzerabbruch über PStart-Taste', 'manual')
       return
     }
+    try {
+      const response = await fetch('/api/updates/status', { cache: 'no-store' })
+      if (!response.ok || (await response.json()).startCommandsLocked) {
+        useDroneStore().addLog('WARN', '[PStart] gesperrt: Updateinstallation aktiv oder Zustand unbekannt')
+        return
+      }
+    } catch { useDroneStore().addLog('WARN', '[PStart] Updatesperre konnte nicht geprüft werden'); return }
     await this.start()
   }
 

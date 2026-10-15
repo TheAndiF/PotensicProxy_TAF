@@ -33,7 +33,7 @@
     <progress v-if="working" :value="status.progress || 0" max="100" />
     <p v-if="status.blocker" class="warning">Installation gesperrt: {{ status.blocker }}</p>
     <p v-if="message" class="message">{{ message }}</p>
-    <small>Bei Android-Installation ist eine Bestätigung erforderlich. Magisk-Installation nur nach ausdrücklicher Aktivierung und Root-Freigabe. Während aktiver Drohnenverbindung gesperrt. Mehr als 40 % Handy-Akku erforderlich. Android kann ein installiertes Update nicht jederzeit abbrechen oder garantiert zurücksetzen.</small>
+    <small>Bei Android-Installation ist eine Bestätigung erforderlich. Magisk-Installation nur nach ausdrücklicher Aktivierung und Root-Freigabe. Während bestätigtem Flugbetrieb oder bei unklarem Flugzustand gesperrt. Start und PStart werden während der Installation gesperrt; Landung, PLand, RTH und Not-Aus bleiben unverändert. Mehr als 40 % Handy-Akku erforderlich. Android kann ein installiertes Update nicht jederzeit abbrechen oder garantiert zurücksetzen.</small>
   </section>
 </template>
 <script setup lang="ts">
