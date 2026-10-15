@@ -14,6 +14,10 @@
           <span class="input-unit"><input v-model.number="heightStep" type="number" min="0.5" max="50" step="0.5" @change="normalize" /> m</span>
         </label>
         <label>
+          <span>PStart – Zeitlimit je Aufstieg</span>
+          <span class="input-unit"><input v-model.number="ascentTimeoutSeconds" type="number" min="10" max="300" step="1" @change="normalize" title="Maximale Zeit pro Zielhöhe in Sekunden (10–300; Standard 45)" /> s</span>
+        </label>
+        <label>
           <span>{{ t('pstart.stabilization') }}</span>
           <span class="input-unit"><input v-model.number="stabilizationSeconds" type="number" min="0" max="15" step="0.5" @change="normalize" /> s</span>
         </label>
@@ -85,7 +89,7 @@ import { PStartPostProcessingService, type PStartProgress } from '../../services
 import { usePrecisionStartSettings } from '../../composables/usePrecisionStartSettings'
 
 const { t } = useI18n()
-const { endHeight, heightStep, stabilizationSeconds, positionWarningMeters, positionAbortMeters } = usePrecisionStartSettings()
+const { ascentTimeoutSeconds, endHeight, heightStep, stabilizationSeconds, positionWarningMeters, positionAbortMeters } = usePrecisionStartSettings()
 
 const analysis = ref<PStartProgress>(PStartPostProcessingService.progress)
 const errorText = ref('')
@@ -143,6 +147,7 @@ async function requestSaf() {
 function exportResult() { if (analysis.value.profile) PStartPostProcessingService.exportProfile(analysis.value.profile) }
 
 function normalize() {
+  ascentTimeoutSeconds.value = Math.max(10, Math.min(300, Math.round(Number(ascentTimeoutSeconds.value) || 45)))
   endHeight.value = Math.max(1, Math.min(120, Number(endHeight.value) || 20))
   heightStep.value = Math.max(0.5, Math.min(50, Number(heightStep.value) || 5))
   stabilizationSeconds.value = Math.max(0, Math.min(15, Number(stabilizationSeconds.value) || 2))

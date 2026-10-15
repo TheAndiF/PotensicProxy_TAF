@@ -11,7 +11,7 @@ import { usePrecisionStartSettings } from '../composables/usePrecisionStartSetti
 const STEP0_TIMEOUT_MS = 10_000
 const STEP0_STABLE_MS = 1_000
 const TAKEOFF_HOVER_TIMEOUT_MS = 20_000
-const ASCENT_TIMEOUT_MS = 45_000
+const ascentTimeoutMs = () => Math.max(10, Math.min(300, Number(usePrecisionStartSettings().ascentTimeoutSeconds.value) || 45)) * 1000
 const ASCENT_SETTLE_TIMEOUT_MS = 4_000
 const ASCENT_SETTLE_STABLE_MS = 800
 const GIMBAL_ATTEMPT_TIMEOUT_MS = 2_500
@@ -357,7 +357,7 @@ export class PrecisionStartService {
     pstart.state.phase = 'ASCEND'
     pstart.state.status = `Steige auf ${target.toFixed(1)} m - nur Throttle, kein Pitch/Roll/Yaw.`
     this.recordProtocolEvent('ASCENT_STARTED', { targetHeight: target, startHeight: current })
-    const deadline = Date.now() + ASCENT_TIMEOUT_MS
+    const deadline = Date.now() + ascentTimeoutMs()
     this.startAutomaticAxes()
 
     while (Date.now() < deadline) {
@@ -395,7 +395,7 @@ export class PrecisionStartService {
     }
 
     this.neutralThrottle()
-    this.abort(`Zielhöhe ${target.toFixed(1)} m konnte nicht innerhalb von 45 s erreicht werden`)
+    this.abort(`Zielhöhe ${target.toFixed(1)} m konnte nicht innerhalb von ${ascentTimeoutMs() / 1000} s erreicht werden`)
     return false
   }
 
@@ -619,7 +619,7 @@ export class PrecisionStartService {
 
     drone.addLog('WARN', `[PStart fallback] ${reason}; continuing vertically to configured end height ${end.toFixed(1)}m without PStart/reference capture`)
     this.fallbackActive = true
-    const deadline = Date.now() + ASCENT_TIMEOUT_MS
+    const deadline = Date.now() + ascentTimeoutMs()
     this.startAutomaticAxes()
     while (Date.now() < deadline && drone.telemetry.flying) {
       if (this.hardwareManualInputActive()) {
