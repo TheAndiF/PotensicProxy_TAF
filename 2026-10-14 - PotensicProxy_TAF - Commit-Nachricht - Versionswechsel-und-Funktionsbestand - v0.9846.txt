@@ -12,3 +12,4 @@ Changed files:
 - webui/public/assets/taf-pairing-runtime-v0.9845.7.js (renamed)
 
 Android versionName follows the shared package version. Historical changelogs remain unchanged.
+
