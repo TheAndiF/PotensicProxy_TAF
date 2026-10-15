@@ -8,3 +8,4 @@ Changed files:
 - 2026-10-14 - PotensicProxy_TAF - Auslieferungshinweis - BA-BL-Buildlogik - v0.9845.7-rc8.md
 
 Validation: YAML parse and no-cache command checks passed; Android CI/device validation pending.
+
