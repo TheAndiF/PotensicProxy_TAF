@@ -2,7 +2,7 @@ name: PotensicProxy build dispatcher
 
 on:
   push:
-  #  branches: [master, main]
+  # All branches intentionally accepted; BA_/BS_/BL_ prefixes select the workflow.
 
 permissions:
   contents: read
