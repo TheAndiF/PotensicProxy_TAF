@@ -1,82 +1,84 @@
-# HTTP- und WebSocket-API (Quellcode-Übersicht)
+# HTTP and WebSocket API
 
-Diese Übersicht ist aus `app/src/main/java/com/potensic/proxy/WebServer.kt` und den `api/*Routes.kt`-Dateien abgeleitet. Sie ist **keine vollständige Spezifikation** sämtlicher Payload-Felder und keine Aussage zur Gerätekompatibilität. Standardmäßig lauscht der Hauptserver auf Port **9090** an allen Netzwerkschnittstellen.
+This is a source-derived endpoint index for the supplied PotensicProxy_TAF snapshot. The authoritative implementations are `app/src/main/java/com/potensic/proxy/WebServer.kt` and the `api/*Routes.kt` files. This is **not** a complete payload schema or a guarantee of controller support.
 
-## Status und Diagnose
+The HTTP server listens on port **9090** and binds to `0.0.0.0` in the inspected source.
 
-| Methode | Pfad | Funktion |
+## Status and diagnostics
+
+| Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Weboberfläche |
-| GET | `/api/status` | USB-/Verbindungsstatus und Statistiken |
-| GET | `/api/telemetry` | Telemetrie-Zustand |
-| GET | `/api/state` | Anwendungszustand |
-| GET | `/api/control/state` | Steuerungszustand |
-| GET | `/api/diagnostics` | Aggregierte Diagnostik und Zähler |
-| GET | `/api/logs` | Logdaten |
-| GET | `/api/version` | Versionsinformationen |
+| GET | `/` | Web interface |
+| GET | `/api/status` | Connection and transfer status |
+| GET | `/api/telemetry` | Current telemetry |
+| GET | `/api/state` | Application state |
+| GET | `/api/control/state` | Control state |
+| GET | `/api/diagnostics` | Diagnostic snapshot and counters |
+| GET | `/api/logs` | Logs |
+| GET | `/api/version` | Version information |
 
-## Video und Medien
+## Video and media
 
-| Methode | Pfad | Funktion |
+| Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/video/h265` | Rohvideostream |
-| GET | `/api/video/h264` | Weiterleitung zum H.265-Endpunkt im aktuellen Code |
-| GET | `/api/video/mjpeg` | MJPEG-Stream |
-| GET | `/api/video/snapshot` | Einzelbild |
-| GET | `/api/video/stats` | Videostatistiken |
-| POST | `/api/video/activate` | Livevideo aktivieren |
-| POST | `/api/video/request-idr` | IDR-Keyframe anfordern |
-| GET | `/api/media/local` | Lokale Medienliste |
-| POST | `/api/media/snapshot` | Snapshot sichern |
+| GET | `/api/video/h265` | Raw video stream |
+| GET | `/api/video/h264` | Redirect to H.265 endpoint in the inspected code |
+| GET | `/api/video/mjpeg` | MJPEG video |
+| GET | `/api/video/snapshot` | Single JPEG snapshot |
+| GET | `/api/video/stats` | Video statistics |
+| POST | `/api/video/activate` | Activate live view |
+| POST | `/api/video/request-idr` | Request an IDR/key frame |
+| GET | `/api/media/local` | Local media listing |
+| POST | `/api/media/snapshot` | Capture/store a snapshot |
 
-## Controller, Verbindung und Funkdiagnose
+## Connections, control and RF diagnostics
 
-| Methode | Pfad | Funktion |
+| Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/api/connect` | USB-Verbindung aufbauen |
-| POST | `/api/disconnect` | Verbindung trennen |
-| POST | `/api/cmd/takeoff` | Startbefehl |
-| POST | `/api/cmd/land` | Landebefehl |
-| POST | `/api/cmd/rth` | Return-to-Home |
-| POST | `/api/cmd/emergency` | Notfallbefehl |
-| POST | `/api/cmd/photo` | Foto auslösen |
-| POST | `/api/cmd/record` | Videoaufnahme steuern |
-| POST | `/api/cmd/pair` | Pairing-Befehl |
-| POST | `/api/rf/probe` | RF-Parameter-Probe |
-| POST | `/api/usb/send` | USB-Daten senden |
-| POST | `/api/cmd/raw/{hex}` | Rohbefehl senden |
-| POST | `/api/wifi/activate` | WiFi-Direct-Umschaltbefehl |
-| POST | `/api/wifi/scan` | BLE-Scan starten |
-| POST | `/api/wifi/connect` | WLAN-Verbindung starten |
-| GET | `/api/wifi/status` | WLAN-/BLE-Status |
+| POST | `/api/connect` | Connect USB accessory |
+| POST | `/api/disconnect` | Disconnect |
+| POST | `/api/cmd/takeoff` | Takeoff command |
+| POST | `/api/cmd/land` | Land command |
+| POST | `/api/cmd/rth` | Return-to-home command |
+| POST | `/api/cmd/emergency` | Emergency command |
+| POST | `/api/cmd/photo` | Trigger photo |
+| POST | `/api/cmd/record` | Control recording |
+| POST | `/api/cmd/pair` | Pairing command |
+| POST | `/api/rf/probe` | RF parameter probe |
+| POST | `/api/usb/send` | Send USB data |
+| POST | `/api/cmd/raw/{hex}` | Send raw command |
+| POST | `/api/wifi/activate` | Request WiFi Direct switch |
+| POST | `/api/wifi/scan` | Start BLE scan |
+| POST | `/api/wifi/connect` | Start Wi-Fi connection |
+| GET | `/api/wifi/status` | Wi-Fi/BLE status |
 
-## Missionen, Karten und Updates
+## Missions, maps and updates
 
-| Methode | Pfad | Funktion |
+| Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/missions` | Missionen auflisten |
-| GET | `/api/missions/{id}` | Mission abrufen |
-| PUT | `/api/missions/{id}` | Mission speichern |
-| DELETE | `/api/missions/{id}` | Mission löschen |
-| GET | `/api/missions/{id}/export/potensic` | Potensic-Export |
-| GET | `/api/map/config` | Kartenkonfiguration |
-| POST | `/api/map/config` | Kartenkonfiguration speichern |
-| GET | `/api/map/regions` | Offline-Regionen |
-| GET | `/api/updates/status` | Update-Status |
-| GET | `/api/updates/check` | Updates prüfen |
-| POST | `/api/updates/download` | Update herunterladen |
-| POST | `/api/updates/install` | Updateinstallation anfordern |
+| GET | `/api/missions` | List missions |
+| GET | `/api/missions/{id}` | Read mission |
+| PUT | `/api/missions/{id}` | Save mission |
+| DELETE | `/api/missions/{id}` | Delete mission |
+| GET | `/api/missions/{id}/export/potensic` | Export Potensic mission data |
+| GET | `/api/map/config` | Map source configuration |
+| POST | `/api/map/config` | Update map configuration |
+| GET | `/api/map/regions` | Offline regions |
+| GET | `/api/updates/status` | Update status |
+| GET | `/api/updates/check` | Check for updates |
+| POST | `/api/updates/download` | Download update |
+| POST | `/api/updates/install` | Request installation |
 
 ## WebSockets
 
-| Pfad | Zweck |
+| Path | Purpose |
 | --- | --- |
-| `/ws/usb` | USB-Pakete / Überwachung |
-| `/ws/video` | Videodaten |
-| `/ws/control` | Steuerungs- und Statuskommunikation |
+| `/ws/usb` | USB packet monitoring |
+| `/ws/video` | Video transport |
+| `/ws/control` | Control/status traffic |
 
-## Sicherheit
+The API contains additional endpoints; consult the Kotlin routes for request fields, response formats, requirements and error behavior.
 
-**Die API ist kein öffentlicher Fernsteuerungsdienst.** Steuernde und administrative Endpunkte können physische Aktionen oder Änderungen auslösen. Authentifizierung, Autorisierung und Netzexposition müssen vor Remote-Zugriff gesondert auditiert werden. Für Flugbefehle gelten zusätzliche Hardware-, Verbindungs- und Sicherheitsprüfungen. Roh-, RF- und Debug-Kommandos nicht unkontrolliert ausführen.
+## Security warning
 
-Weitere Endpunkte sind insbesondere in `WebServer.kt` und den separaten Routenklassen implementiert. Beim Ändern von Payloads oder Routen diese Übersicht anhand des Codes aktualisieren.
+This is **not** a public remote-control API. Control and diagnostic endpoints can affect physical equipment. Authentication/authorization and exposure of this server must be independently reviewed before allowing untrusted clients. Avoid testing raw, RF or flight commands on a live aircraft without appropriate safety controls. Do not share sensitive logs or credentials.

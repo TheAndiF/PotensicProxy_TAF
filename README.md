@@ -1,131 +1,100 @@
 # PotensicProxy_TAF
 
-Unoffizieller Android-Proxy für die Potensic ATOM / ATOM 2: USB-/AOA-Anbindung der Fernsteuerung, Livevideo, Telemetrie, Weboberfläche und Steuerfunktionen.
+**Unofficial Android USB-to-Web proxy and experimental control/diagnostics interface for Potensic ATOM and ATOM 2 drones.**
 
-**Dokumentationsstand:** Quellcode des bereitgestellten Entwicklungsstands (Commit `80a4229`, 15.10.2026) statisch ausgewertet. Die zentrale Versionskonfiguration `config/versions.json` und `webui/package.json` nennen **0.9846.6** (`defaultVersionCode` 68). Die vorhandene Implementierung ist **kein Beleg für erfolgreiche Geräte- oder Flugtests**.
+[Compatibility](docs/COMPATIBILITY.md) · [API reference](docs/API.md) · [Related USB-C hardware project](https://github.com/TheAndiF/Potensic-ATOM-USB-C-Replacement-Cable)
 
-> **Aktiver Entwicklungsbranch: `main`.** Die historischen Referenzstände heißen `legacy-original` und `archive-liert-review`. Nur `main` wird aktiv weiterentwickelt.
+> **Active development:** `main` · **Historical references:** `legacy-original`, `archive-liert-review`. This is a community reverse-engineering project, not affiliated with or endorsed by Potensic.
 
-## Schnellstart
+## What can it do?
 
-1. Unterstützte Drohne und Fernsteuerung prüfen: [Kompatibilitätsmatrix](docs/COMPATIBILITY.md). Ein im Code vorhandenes Profil ist noch kein Hardware-Testnachweis.
-2. Android-Gerät mit passendem Datenkabel an die Fernsteuerung anschließen und die AOA-Berechtigung bestätigen. Für das spezielle ATOM-/DSRC02A-Kabel das unten verlinkte Hardwareprojekt beachten.
-3. PotensicProxy_TAF starten und den USB-/Verbindungsstatus kontrollieren.
-4. Im vertrauenswürdigen lokalen Netzwerk die Oberfläche über `http://<Android-IP>:9090` aufrufen. Die IP-Adresse ist vom Gerät/Netz abhängig.
-5. Vor Flugbefehlen zuerst Telemetrie, Verbindungszustand und Sicherheitsverhalten am Boden überprüfen.
+The Android service bridges an attached controller over Android Open Accessory (AOA) to a browser-based interface. The codebase also contains BLE/Wi-Fi connection paths. Features present in the source include:
 
-**Installationshinweis:** Ein reproduzierbarer, vollständiger Android-Installations- und Hardwaretest ist für diesen Dokumentationsstand noch nicht bestätigt. Bereits signierte Installationen können nur mit kompatibler Signatur und höherem `versionCode` aktualisiert werden.
-
-## Verwandtes Hardwareprojekt: USB-C-Ersatzkabel
-
-**[Potensic ATOM USB-C Replacement Cable](https://github.com/TheAndiF/Potensic-ATOM-USB-C-Replacement-Cable)** dokumentiert die rekonstruierte, gerichtete USB-C-Sonderbeschaltung zwischen einer Potensic-ATOM-Fernsteuerung **DSRC02A** und einem Android-Smartphone. Das eigenständige Projekt enthält KiCad-Schaltpläne, Messungen, Bauhinweise und einen getesteten Prototyp.
-
-- Der dokumentierte Kabelprototyp wurde mit **ATOM / DSRC02A / Android** getestet. Eine Kompatibilität mit ATOM 2 oder anderen Controllern ist damit **nicht** belegt.
-- Die Richtungskennzeichnung (Controller/Telefon) und elektrische Prüfung sind zwingend zu beachten; das Kabel ist kein allgemeines Lade- oder USB-C-Kabel.
-- Das Kabel ersetzt lediglich die physische Verbindung zwischen Fernsteuerung und Smartphone. Es vergrößert **nicht unmittelbar** die Funkreichweite zwischen Fernsteuerung und Drohne.
-
-Die Hardwareanleitung und die tatsächliche Verdrahtung sind ausschließlich im Kabel-Repository maßgeblich.
-
-Die Matrix mit getesteten und noch offenen Kombinationen steht in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
-
-## Funktionen im aktiven Entwicklungsbranch
-
-Die folgende Liste ist durch Komponenten, Backend-Klassen und Routen im **Quellcode** belegt. Ohne gesonderten Testnachweis wird keine erfolgreiche Ausführung auf echter Drohnenhardware behauptet.
-
-| Bereich | Im Code enthalten | Wichtige Einschränkung |
+| Area | Features found in the code | Important caveat |
 | --- | --- | --- |
-| Cockpit | Livebild, Telemetrie, virtuelle Joysticks, Gimbal, Start/Landung, RTH, Foto/Video und Flug-/Landeassistenz | Flug- und Sicherheitsverhalten vor realem Einsatz prüfen |
-| Video | Paketextraktion, Android-MediaCodec-Decoder, H.264/H.265, H.265-/MJPEG-HTTP-Ausgabe, Snapshot und WebSocket | Decoder-/Transportkompatibilität geräteabhängig |
-| Missionen | Wegpunkte, Kreis-/Polygon-/Raster-/Spiralmuster, Validierung, lokale Speicherung und `map.db`-Export | **Kein Nachweis einer autonomen Missionsausführung** durch die Missionsoberfläche |
-| Karten | Kartenquellen, Tile-Proxy, temporärer Cache und Offline-Regionen | Kartenanbieter und Netzverfügbarkeit beachten |
-| Medien | Galerie, lokale Medien, Snapshot, Kamera-Medienoberfläche | Einzelne Kameraaktionen hängen vom Controller-/Drohnenprofil ab |
-| USB | AOA-Transport, Paketmonitor, Capture, HEX-Paketkonstruktion und Rohversand | Rohbefehle können Hardwareverhalten beeinflussen |
-| System | RF-Probe/Status, Remote-ID-Abfrage, Kamera-Diagnose, Log-/Relay-Oberfläche | RF-Unlock/-Reset ist nicht als sichere Reichweitensteigerung belegt |
-| PStart / PLand | Einstellungsoberflächen, Bild- und Session-Verwaltung, OpenCV-Analyse sowie Steuerungslogik | Präzision und Failsafes sind separat auf Geräten zu validieren |
-| Updates | GitHub-Release-Prüfung, Download, Hash-/Signaturprüfung, Installation mit Bedingungen | Signaturidentität und installierte Version beachten |
-| Zusätzliche Videoausgabe | Video-/Overlay-Server auf Port 9091 | **Virtuelle Android-Webcam nur vorbereitet**, noch kein fertiger Adapter |
+| Live view | Video extraction, H.264/H.265 decoding, MJPEG, H.265 and WebSocket streams | Codec and controller compatibility vary |
+| Telemetry and cockpit | Flight state, virtual sticks, gimbal, camera actions, takeoff, landing and return-to-home commands | A displayed control is **not** proof that every controller accepts it |
+| Missions | Waypoint editing, circle/polygon/grid/spiral tools, saved missions and Potensic `map.db` export | Autonomous mission execution is **not** established |
+| Maps and media | Map sources, tile cache/offline regions, gallery and snapshots | Some features depend on device/network setup |
+| Precision tools | PrecisionStart/PrecisionLanding settings, image/session handling and OpenCV processing paths | Real-world precision and failsafes require testing |
+| Diagnostics | USB capture, packet monitor, RF parameter probe, Remote ID query and logs | RF commands are experimental, **not proven range enhancements** |
+| Distribution | Version synchronization, GitHub Actions APK builds and update checks | Build signing and installed-app compatibility matter |
 
-### Konfigurierte Drohnenprofile
+**Source-verified, not flight-certified:** These are implementations observed in the supplied TAF source snapshot (October 15, 2026, central version `0.9846.6`). They must not be interpreted as end-to-end tested behavior on every drone, firmware or phone. See the [compatibility evidence and open test cases](docs/COMPATIBILITY.md).
 
-`app/src/main/res/xml/drone_protocol_profiles.xml` definiert:
+## Quick start: open the Web UI
 
-| Profil | Vorgabe |
-| --- | --- |
-| `ATOM` (Standard) | H.264, 1280 × 720, Transport `atom_h264_fe06` |
-| `ATOM_2` | Transport `w42`, automatische Codec-Erkennung, 1920 × 1080, H.265 bevorzugt |
+1. Check your drone/controller combination in the [compatibility matrix](docs/COMPATIBILITY.md).
+2. Connect the Android phone and controller using a suitable **data** cable. Confirm the Android AOA permission if prompted.
+3. Start PotensicProxy_TAF, verify that the Android service and USB connection are running, and keep the devices on a trusted network.
+4. From a browser with network access to the Android device, visit:
 
-Dies sind **Softwareprofile**, keine umfassende Kompatibilitätszertifizierung für alle Controller- und Firmwarevarianten.
+   **`http://<ANDROID-PHONE-IP>:9090`**
 
-### Architektur und Schnittstellen
+5. Verify live telemetry and connection health **on the ground** before attempting any flight-related command.
 
-Die Fernsteuerung kommuniziert über USB-C/AOA mit `UsbAccessoryManager` und `ProxyService`. `DroneProtocol`, Videoextraktion, Decoder und Webserver verarbeiten Daten und Steuerbefehle für die Vue-/TypeScript-Oberfläche. Zusätzlich sind BLE-/WLAN-Pairing und ein WLAN-Transportpfad im Code vorhanden.
+The main server runs on port **9090**; an optional separate video output service uses **9091**. The Android device IP depends on your network. These ports are bound to network interfaces in the source; **do not expose control or diagnostic endpoints to the public internet** without a separate security review and access controls.
 
-- **Port 9090:** Hauptserver (`WebServer.kt`, Bindung an `0.0.0.0`) mit unter anderem `/api/status`, `/api/video/h265`, `/api/video/mjpeg`, `/api/video/snapshot`, `/api/video/stats`, `/api/missions`, `/api/map/...`, `/api/updates/status`, `/ws/usb`, `/ws/video` und `/ws/control`.
-- **Port 9091:** bei Aktivierung separater Videoausgabe-Server (`StreamOutputServer.kt`, ebenfalls an `0.0.0.0` gebunden).
+### Build from source
 
-Die dokumentierten HTTP-Methoden, Pfade und Warnungen für steuernde Endpunkte stehen in [docs/API.md](docs/API.md). Die ursprüngliche FE-/FF-FD-Protokollbeschreibung findet sich auch im [Upstream-PROTOCOL.md](https://github.com/sk7n4k3d/potensic-proxy/blob/master/PROTOCOL.md). TAF-spezifische Funktionen und Protokollabweichungen sind separat anhand dieses Forks zu prüfen.
+The project's central configuration specifies Java 17, Android SDK 36, Node.js 24.11.1, Gradle 8.11.1, Kotlin 2.1.20 and Vite 6.4.3 (resolved). For a Web UI source verification/build:
 
-**Sicherheit:** Die Netzwerkserver sind nicht auf `localhost` begrenzt. Die API-Authentifizierung wurde nicht als wirksam verifiziert. Steuerungs-Endpunkte deshalb nur in einem kontrollierten, vertrauenswürdigen Netz bereitstellen und vor externem Zugriff absichern.
-
-### Weboberfläche
-
-Die Hauptnavigation (`webui/src/App.vue`, `HeaderBar.vue`) umfasst **Cockpit, Mission, Karte, Galerie, USB und System**. In „System“ gibt es unter anderem Video-/RF-, Remote-ID-, Sprach-/Anzeige- und Remote-/Relay-Funktionen.
-
-## Projektaufbau
-
-| Pfad | Zweck |
-| --- | --- |
-| `app/` | Android-Anwendung (Kotlin), USB-Anbindung, Webserver und Update-Funktionen |
-| `webui/` | Weboberfläche und TypeScript/Vue-Logik |
-| `config/versions.json` | Zentrale Versionskonfiguration |
-| `.github/workflows/` | Build-, Release- und Update-Workflows |
-| `docs/`, `DOCUMENTATION/` | Technische Dokumentation und historische Änderungsnachweise |
-| `PRIVACY/` | Datenschutz-/Firmware-Analysen |
-| `scripts/` | Versionsabgleich und weitere Projektwerkzeuge |
-| `release-docs/` | Historische Release-Unterlagen |
-
-Die Anwendung ist experimentell und nicht von Potensic unterstützt. Flugsteuerung und Verbindungswiederherstellung müssen vor realen Flügen geprüft werden. Geltende Flug- und Funkvorschriften beachten.
-
-## Branches und Migration
-
-Die aktive Branch-Struktur lautet:
-
-| Branch | Rolle |
-| --- | --- | --- |
-| `main` | einzige aktiv fortentwickelte Version |
-| `legacy-original` | historischer Ursprungsstand |
-| `archive-liert-review` | historischer Review-Stand |
-
-Die Umstellung ist abgeschlossen; die Historie bleibt in den drei Branches getrennt. Hinweise für bestehende lokale Klone und CI-/Update-Prüfungen: [docs/BRANCH_MIGRATION.md](docs/BRANCH_MIGRATION.md).
-
-## Builds und Releases
-
-Der Dispatcher in `.github/workflows/build-dispatch.yml` verwendet Commit-Präfixe `BA_`, `BS_` und `BL_` und startet die zugehörigen Workflows auf dem Quellbranch. Details zur Versionsführung: [VERSIONSVERWALTUNG.md](VERSIONSVERWALTUNG.md).
-
-| Commit-Präfix | Workflow | Zweck laut Konfiguration |
-| --- | --- | --- |
-| `BA_` | `ba-update.yml` | Update-/Release-Strecke |
-| `BS_` | `bs-build.yml` | Build mit Cache-Strategie |
-| `BL_` | `build-apk.yml` | Vollständiger nicht gecachter APK-Build |
-
-### Entwicklungsumgebung und statische Prüfschritte
-
-Die zentrale Konfiguration nennt Node.js **24.11.1**, Java **17**, Gradle **8.11.1**, Android Gradle Plugin **8.7.3**, Kotlin **2.1.20**, `minSdk` **26** und `targetSdk` **36**. Die Weboberfläche verwendet Vue 3, TypeScript und Vite (aufgelöste Version **6.4.3**).
-
-```bash
-python3 scripts/sync_versions.py --check
+```powershell
+python scripts/sync_versions.py --check
 cd webui
 npm ci --include=optional --no-audit --no-fund
 npm run verify:source
 npm run build
 ```
 
-Diese Befehle dokumentieren den Quell-/WebUI-Buildpfad. Der Android-Build verwendet Gradle und kann Signatur-Secrets benötigen; die CI-Workflows sind für die jeweiligen Buildvarianten maßgeblich. **Während dieser README-Prüfung wurden kein vollständiger Android-Build und keine Hardwaretests durchgeführt.** Signaturschlüssel und Passwörter nicht veröffentlichen.
+For a local Android debug build from the repository root, the Gradle wrapper entry point is `./gradlew.bat assembleDebug` on Windows or `./gradlew assembleDebug` on Unix-like systems. APK installation via `adb install -r` requires a correctly built APK, a configured device, and **compatible signing credentials for in-place updates**. The actual CI/release workflows may have additional signing requirements; read `.github/workflows/` before building or publishing an APK. A successful fresh Android build was **not** independently verified for this documentation update.
 
-Für lokale Android-Debug-Builds ist im Projekt das Gradle-Wrapper-Skript vorhanden. Unter Windows (PowerShell) lautet der grundsätzliche Build-Aufruf `./gradlew.bat assembleDebug` und die Installation erfolgt bei vorhandenem `adb` typischerweise mit `adb install -r app/build/outputs/apk/debug/app-debug.apk`. **Der tatsächlich konfigurierte Signatur-/Buildpfad kann davon abweichen.** Keine bestehende App mit abweichender Signatur ungeprüft ersetzen; die CI-Workflows und deren Prüfungen haben Vorrang.
+## Drone profiles and hardware compatibility
 
-### Herkunft
+The Android profile configuration (`app/src/main/res/xml/drone_protocol_profiles.xml`) contains:
 
-Das Projekt ist ein Fork von [sk7n4k3d/potensic-proxy](https://github.com/sk7n4k3d/potensic-proxy). Weitere Herkunfts- und Integrationshinweise: [DOCUMENTATION/UPSTREAMS.md](DOCUMENTATION/UPSTREAMS.md). Bestehende Lizenz- und Urheberhinweise der Projektbestandteile beachten.
+- **ATOM:** H.264 / 1280×720 / `atom_h264_fe06` (configured default).
+- **ATOM 2:** `w42` transport / 1920×1080 / automatic codec detection with H.265 preferred.
 
-Bestehende Build-, Signatur-, Update- und Datenbestandslogik darf durch die Branch-Umbenennung nicht verändert werden. Vor der Veröffentlichung einer APK die Workflows, Signaturen und Gerätefunktion testen.
+These are software settings, **not certified support claims**. The [original upstream README](https://github.com/sk7n4k3d/potensic-proxy) reports an ATOM 2 test with a basic Deepsea controller and notes a limitation on virtual joystick control for that hardware. Such upstream tests are not automatically tests of TAF's newer functionality. See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
+
+## Related project: Potensic ATOM USB-C Replacement Cable
+
+<https://github.com/TheAndiF/Potensic-ATOM-USB-C-Replacement-Cable>
+
+An independently documented, reverse-engineered **directional USB-C replacement cable** for the **Potensic ATOM / DSRC02A controller and Android phone**, including KiCad schematics, measurements, a prototype test and a printable holder.
+
+**Caution:** Its special CC/SBU wiring is not a general-purpose USB-C or charging cable. Controller and phone ends must not be swapped. That project's reported ATOM/DSRC02A test does **not** establish ATOM 2 compatibility. Improving this cable's USB reliability does **not directly increase the radio range** from controller to drone.
+
+## Project layout
+
+| Location | Purpose |
+| --- | --- |
+| `app/` | Android/Kotlin services, USB, video, protocol handling, local HTTP/WebSocket server |
+| `webui/` | Vue 3 / TypeScript cockpit, mission planner, maps, gallery and system tools |
+| `config/versions.json` | Central version/toolchain source |
+| `.github/workflows/` | Prefix-routed `BA_` updates, `BS_` cached builds, `BL_` full builds |
+| `docs/API.md` | HTTP and WebSocket endpoint index |
+| `docs/COMPATIBILITY.md` | Hardware and testing evidence matrix |
+| `DOCUMENTATION/`, `PRIVACY/`, `release-docs/` | Historical technical notes, audits and release records |
+
+For protocol background, see the original [upstream `PROTOCOL.md`](https://github.com/sk7n4k3d/potensic-proxy/blob/master/PROTOCOL.md). TAF-specific protocol behavior must be checked against this fork's source. For history and provenance see [DOCUMENTATION/UPSTREAMS.md](DOCUMENTATION/UPSTREAMS.md).
+
+## Known limitations and safety
+
+- Physical controller stick feedback and **virtual** stick control are different; availability varies by controller and firmware.
+- Wi-Fi/BLE implementation does not establish Wi-Fi capability in controllers lacking suitable hardware.
+- Mission export and precision tooling must not be mistaken for validated autonomous flight capabilities.
+- The virtual Android webcam setting is currently a placeholder, **not a working webcam adapter**.
+- Raw packet injection, RF reset/unlock and flight commands can be hazardous. Range, legal compliance and failsafe behavior are **not established** by the presence of a UI control.
+- API and WebSocket endpoints can affect physical equipment and are not documented here as authenticated for untrusted networks.
+
+## Contributing and project status
+
+Useful contributions include reproducible device/firmware tests, non-sensitive diagnostic logs, protocol findings, documentation corrections and compatibility reports. Include the exact drone/controller model, Android version, cable revision, TAF commit and reproduction steps. Never publish credentials, private keys, location-sensitive flight logs or personal identifiers.
+
+Please use the existing GitHub Issues workflow to report problems or propose improvements. A screenshot or short demo showing real behavior would help other developers evaluate support, but only share media you have permission to publish.
+
+## Credits
+
+PotensicProxy_TAF is derived from [sk7n4k3d/potensic-proxy](https://github.com/sk7n4k3d/potensic-proxy), with additional implementation work, review history and independent hardware research. Other references are listed in [DOCUMENTATION/UPSTREAMS.md](DOCUMENTATION/UPSTREAMS.md). Follow the applicable licensing and attribution requirements of each project component.
