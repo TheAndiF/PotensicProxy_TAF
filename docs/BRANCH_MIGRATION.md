@@ -6,7 +6,7 @@
 - `legacy-original` = bisher `master`, historische Ursprungsversion.
 - `archive-liert-review` = bisher `liert-reviewed`, historischer Review-Stand.
 
-Diese Namen sind **geplant**, bis die Umstellung im Remote-Repository tatsächlich erfolgt ist. Die unterschiedlichen Branches werden nicht gemergt, zurückgesetzt oder gelöscht.
+**Stand 29.10.2026:** Der Nutzer hat die drei neuen Remote-Branches und `main` als Default bestätigt; lokale Upstreams wurden entsprechend gesetzt. Die alten Remote-Branch-Namen können noch vorhanden sein. Die unterschiedlichen Entwicklungsstände werden nicht gemergt oder zurückgesetzt.
 
 ## Vorab prüfen
 

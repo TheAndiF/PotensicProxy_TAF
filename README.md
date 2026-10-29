@@ -4,7 +4,17 @@ Unoffizieller Android-Proxy für die Potensic ATOM / ATOM 2: USB-/AOA-Anbindung 
 
 **Dokumentationsstand:** Quellcode des bereitgestellten Entwicklungsstands (Commit `80a4229`, 15.10.2026) statisch ausgewertet. Die zentrale Versionskonfiguration `config/versions.json` und `webui/package.json` nennen **0.9846.6** (`defaultVersionCode` 68). Die vorhandene Implementierung ist **kein Beleg für erfolgreiche Geräte- oder Flugtests**.
 
-> **Aktiver Entwicklungsstand:** `usb-liveview-import` (geplanter neuer Name: `main`). Die Branch-Umbenennung auf GitHub ist noch **nicht** durchgeführt. `master` und `liert-reviewed` sind historische Referenzstände; sie werden nicht aktiv fortentwickelt.
+> **Aktiver Entwicklungsbranch: `main`.** Die historischen Referenzstände heißen `legacy-original` und `archive-liert-review`. Nur `main` wird aktiv weiterentwickelt.
+
+## Schnellstart
+
+1. Unterstützte Drohne und Fernsteuerung prüfen: [Kompatibilitätsmatrix](docs/COMPATIBILITY.md). Ein im Code vorhandenes Profil ist noch kein Hardware-Testnachweis.
+2. Android-Gerät mit passendem Datenkabel an die Fernsteuerung anschließen und die AOA-Berechtigung bestätigen. Für das spezielle ATOM-/DSRC02A-Kabel das unten verlinkte Hardwareprojekt beachten.
+3. PotensicProxy_TAF starten und den USB-/Verbindungsstatus kontrollieren.
+4. Im vertrauenswürdigen lokalen Netzwerk die Oberfläche über `http://<Android-IP>:9090` aufrufen. Die IP-Adresse ist vom Gerät/Netz abhängig.
+5. Vor Flugbefehlen zuerst Telemetrie, Verbindungszustand und Sicherheitsverhalten am Boden überprüfen.
+
+**Installationshinweis:** Ein reproduzierbarer, vollständiger Android-Installations- und Hardwaretest ist für diesen Dokumentationsstand noch nicht bestätigt. Bereits signierte Installationen können nur mit kompatibler Signatur und höherem `versionCode` aktualisiert werden.
 
 ## Verwandtes Hardwareprojekt: USB-C-Ersatzkabel
 
@@ -15,6 +25,8 @@ Unoffizieller Android-Proxy für die Potensic ATOM / ATOM 2: USB-/AOA-Anbindung 
 - Das Kabel ersetzt lediglich die physische Verbindung zwischen Fernsteuerung und Smartphone. Es vergrößert **nicht unmittelbar** die Funkreichweite zwischen Fernsteuerung und Drohne.
 
 Die Hardwareanleitung und die tatsächliche Verdrahtung sind ausschließlich im Kabel-Repository maßgeblich.
+
+Die Matrix mit getesteten und noch offenen Kombinationen steht in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
 ## Funktionen im aktiven Entwicklungsbranch
 
@@ -51,6 +63,8 @@ Die Fernsteuerung kommuniziert über USB-C/AOA mit `UsbAccessoryManager` und `Pr
 - **Port 9090:** Hauptserver (`WebServer.kt`, Bindung an `0.0.0.0`) mit unter anderem `/api/status`, `/api/video/h265`, `/api/video/mjpeg`, `/api/video/snapshot`, `/api/video/stats`, `/api/missions`, `/api/map/...`, `/api/updates/status`, `/ws/usb`, `/ws/video` und `/ws/control`.
 - **Port 9091:** bei Aktivierung separater Videoausgabe-Server (`StreamOutputServer.kt`, ebenfalls an `0.0.0.0` gebunden).
 
+Die dokumentierten HTTP-Methoden, Pfade und Warnungen für steuernde Endpunkte stehen in [docs/API.md](docs/API.md). Die ursprüngliche FE-/FF-FD-Protokollbeschreibung findet sich auch im [Upstream-PROTOCOL.md](https://github.com/sk7n4k3d/potensic-proxy/blob/master/PROTOCOL.md). TAF-spezifische Funktionen und Protokollabweichungen sind separat anhand dieses Forks zu prüfen.
+
 **Sicherheit:** Die Netzwerkserver sind nicht auf `localhost` begrenzt. Die API-Authentifizierung wurde nicht als wirksam verifiziert. Steuerungs-Endpunkte deshalb nur in einem kontrollierten, vertrauenswürdigen Netz bereitstellen und vor externem Zugriff absichern.
 
 ### Weboberfläche
@@ -74,15 +88,15 @@ Die Anwendung ist experimentell und nicht von Potensic unterstützt. Flugsteueru
 
 ## Branches und Migration
 
-Die angestrebte, kürzere Namensstruktur lautet:
+Die aktive Branch-Struktur lautet:
 
-| Aktuell | Geplant | Rolle |
+| Branch | Rolle |
 | --- | --- | --- |
-| `usb-liveview-import` | `main` | einzige aktiv fortentwickelte Version |
-| `master` | `legacy-original` | historischer Ursprungsstand |
-| `liert-reviewed` | `archive-liert-review` | historischer Review-Stand |
+| `main` | einzige aktiv fortentwickelte Version |
+| `legacy-original` | historischer Ursprungsstand |
+| `archive-liert-review` | historischer Review-Stand |
 
-**Wichtig:** Derzeit sind die Namen in der Spalte *Aktuell* gültig. Die Reihenfolge für die sichere GitHub-Umstellung sowie die Prüfung der CI-/Update-Pfade stehen in [docs/BRANCH_MIGRATION.md](docs/BRANCH_MIGRATION.md). Keine historischen Branches zusammenführen oder löschen.
+Die Umstellung ist abgeschlossen; die Historie bleibt in den drei Branches getrennt. Hinweise für bestehende lokale Klone und CI-/Update-Prüfungen: [docs/BRANCH_MIGRATION.md](docs/BRANCH_MIGRATION.md).
 
 ## Builds und Releases
 
@@ -107,6 +121,8 @@ npm run build
 ```
 
 Diese Befehle dokumentieren den Quell-/WebUI-Buildpfad. Der Android-Build verwendet Gradle und kann Signatur-Secrets benötigen; die CI-Workflows sind für die jeweiligen Buildvarianten maßgeblich. **Während dieser README-Prüfung wurden kein vollständiger Android-Build und keine Hardwaretests durchgeführt.** Signaturschlüssel und Passwörter nicht veröffentlichen.
+
+Für lokale Android-Debug-Builds ist im Projekt das Gradle-Wrapper-Skript vorhanden. Unter Windows (PowerShell) lautet der grundsätzliche Build-Aufruf `./gradlew.bat assembleDebug` und die Installation erfolgt bei vorhandenem `adb` typischerweise mit `adb install -r app/build/outputs/apk/debug/app-debug.apk`. **Der tatsächlich konfigurierte Signatur-/Buildpfad kann davon abweichen.** Keine bestehende App mit abweichender Signatur ungeprüft ersetzen; die CI-Workflows und deren Prüfungen haben Vorrang.
 
 ### Herkunft
 
